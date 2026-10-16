@@ -9,6 +9,7 @@ import { EmailStatus, NotificationTypes, ParameterKeys, Roles } from '../domain/
 import { closeByContractEnd, isOpen } from '../domain/position.js';
 import { runAlerts } from './alerts.js';
 import { buildDigest, queueDigest } from './digest.js';
+import { EmailError, sendEmail } from './email.js';
 import { links, notify } from './notifications.js';
 import { calcSettings, getInt, getText } from './parameters.js';
 import { describe } from './positions.js';
@@ -115,48 +116,47 @@ export async function runDailyJob() {
   console.log(`[rotina] rotina diária de ${formatBr(today)} concluída. ${run.summary}`);
 }
 
-/** Envia a caixa de saída; uma falha fica registrada na mensagem e é tentada de novo na próxima volta. */
+/** Pausa da caixa de saída depois de um limite ou erro de configuração do provedor (ver email.js). */
+const DEFAULT_PAUSE_SECONDS = 300;
+let outboxPausedUntil = 0;
+
+/**
+ * Envia a caixa de saída. Falha passageira gasta uma tentativa (até 5); recusa definitiva falha de vez; limite do
+ * provedor ou chave inválida pausam a caixa sem gastar tentativa — as outras mensagens bateriam no mesmo limite.
+ */
 export async function processOutbox() {
+  if (Date.now() < outboxPausedUntil) return;
   const uow = new UnitOfWork({ userId: null, ip: null });
   const pending = uow.loadAll('EmailMessage', await query(
     'SELECT * FROM email_messages WHERE status = ? AND attempts < ? ORDER BY created_at LIMIT 50',
     EmailStatus.PENDING, MAX_EMAIL_ATTEMPTS));
   for (const message of pending) {
-    message.attempts += 1;
     try {
       await sendEmail(message.toAddress, message.subject, message.htmlBody);
+      message.attempts += 1;
       message.status = EmailStatus.SENT;
       message.sentAt = utcNow();
       message.lastError = null;
     } catch (error) {
-      console.warn(`[e-mail] falha ao enviar ${message.id} (tentativa ${message.attempts}): ${error.message}`);
       message.lastError = String(error.message).slice(0, 2000);
-      if (message.attempts >= MAX_EMAIL_ATTEMPTS) message.status = EmailStatus.FAILED;
+      if (error instanceof EmailError && error.retryLater) {
+        const seconds = error.retryAfterSeconds ?? DEFAULT_PAUSE_SECONDS;
+        outboxPausedUntil = Date.now() + seconds * 1000;
+        console.warn(`[e-mail] envio pausado por ${seconds} s, sem gastar tentativa: ${error.message}`);
+        await uow.save();
+        return;
+      }
+      message.attempts += 1;
+      if (error instanceof EmailError && error.permanent) message.status = EmailStatus.FAILED;
+      else if (message.attempts >= MAX_EMAIL_ATTEMPTS) message.status = EmailStatus.FAILED;
+      console.warn(`[e-mail] falha ao enviar ${message.id} (tentativa ${message.attempts}`
+        + `${message.status === EmailStatus.FAILED ? ', definitiva' : ''}): ${error.message}`);
     }
     await uow.save();
   }
 }
 
-/**
- * Envio pela API v3 do SendGrid, com o fetch nativo do Node — sem a biblioteca do SendGrid, que traria dependências
- * para uma única chamada HTTP. Desligado (ou sem chave), o e-mail só é registrado no log.
- */
-export async function sendEmail(to, subject, html) {
-  const { enabled, apiKey, fromEmail, fromName } = config.sendgrid;
-  if (!enabled || !apiKey) {
-    console.log(`[e-mail] envio desabilitado. Para: ${to} | Assunto: ${subject}`);
-    return;
-  }
-  const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      personalizations: [{ to: [{ email: to }] }],
-      from: { email: fromEmail, name: fromName },
-      subject,
-      content: [{ type: 'text/html', value: html }],
-    }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) throw new Error(`SendGrid retornou ${response.status}: ${(await response.text()).slice(0, 500)}`);
+/** Para testes: retira a pausa da caixa de saída. */
+export function resumeOutbox() {
+  outboxPausedUntil = 0;
 }

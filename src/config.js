@@ -82,6 +82,27 @@ export function connectionStringToUrl(value) {
 
 const environment = (env.NODE_ENV || 'production').trim().toLowerCase();
 
+/** Provedores de e-mail aceitos (envio pela API HTTP de cada um, em services/jobs.js). */
+export const EMAIL_PROVIDERS = Object.freeze(['mailersend', 'sendgrid']);
+
+/**
+ * E-mail. EMAIL_PROVEDOR escolhe o serviço; sem ele, vale o MailerSend se houver MAILERSEND_API_KEY. Os nomes
+ * SENDGRID_* (e SendGrid__* da versão .NET) continuam aceitos: o serviço em homologação já foi configurado com eles.
+ */
+function emailConfig() {
+  const provider = (env.EMAIL_PROVEDOR || (env.MAILERSEND_API_KEY ? 'mailersend' : 'sendgrid')).trim().toLowerCase();
+  return {
+    provider,
+    enabled: bool(env.EMAIL_ATIVO ?? env.SENDGRID_ATIVO ?? env.SendGrid__Enabled, false),
+    apiKey: provider === 'mailersend'
+      ? env.MAILERSEND_API_KEY || ''
+      : env.SENDGRID_API_KEY || env.SendGrid__ApiKey || '',
+    fromEmail: env.EMAIL_REMETENTE || env.SENDGRID_REMETENTE || env.SendGrid__FromEmail || '',
+    fromName: env.EMAIL_NOME_REMETENTE || env.SENDGRID_NOME_REMETENTE || env.SendGrid__FromName
+      || 'Controle de Vagas - Grupo ON LINE',
+  };
+}
+
 export const config = {
   root,
   version,
@@ -131,13 +152,8 @@ export const config = {
     demoPassword: env.SENHA_DEMO || env.Seed__DemoPassword || '',
   },
 
-  // ---- e-mail (SendGrid) -----------------------------------------------------------------------------------------
-  sendgrid: {
-    enabled: bool(env.SENDGRID_ATIVO ?? env.SendGrid__Enabled, false),
-    apiKey: env.SENDGRID_API_KEY || env.SendGrid__ApiKey || '',
-    fromEmail: env.SENDGRID_REMETENTE || env.SendGrid__FromEmail || '',
-    fromName: env.SENDGRID_NOME_REMETENTE || env.SendGrid__FromName || 'Controle de Vagas - Grupo ON LINE',
-  },
+  // ---- e-mail (MailerSend ou SendGrid) -------------------------------------------------------------------------
+  email: emailConfig(),
 
   /** Rotinas em segundo plano (rotina diária e caixa de saída de e-mails). Os testes desligam. */
   jobsEnabled: bool(env.ROTINAS_ATIVAS, true),
@@ -158,6 +174,9 @@ export function assertSafeConfig() {
   if (!['sqlite', 'postgres'].includes(config.dbDriver)) {
     throw new Error(`DB_DRIVER="${config.dbDriver}" é inválido: use sqlite ou postgres.`);
   }
+  if (!EMAIL_PROVIDERS.includes(config.email.provider)) {
+    throw new Error(`EMAIL_PROVEDOR="${config.email.provider}" é inválido: use ${EMAIL_PROVIDERS.join(' ou ')}.`);
+  }
 }
 
 /** Configurações que não impedem a partida, mas desligam uma proteção: ficam visíveis no log de partida. */
@@ -169,7 +188,12 @@ export function configurationWarnings() {
   if (!config.isDevelopment && !config.baseUrl) {
     warnings.push('BASE_URL vazio: os links dos e-mails sairão sem endereço.');
   }
-  if (!config.sendgrid.enabled) warnings.push('SENDGRID_ATIVO desligado: os e-mails ficam só no log.');
+  const email = config.email;
+  if (!email.enabled) warnings.push('EMAIL_ATIVO desligado: os e-mails ficam só no log.');
+  else if (!email.apiKey || !email.fromEmail) {
+    const key = email.provider === 'mailersend' ? 'MAILERSEND_API_KEY' : 'SENDGRID_API_KEY';
+    warnings.push(`E-mail ligado sem ${!email.apiKey ? key : 'EMAIL_REMETENTE'}: os e-mails ficam só no log.`);
+  }
   if (config.dbDriver !== 'postgres' && config.platform) {
     warnings.push('BANCO_EFEMERO ligado: os dados SOMEM a cada deploy. Aceitável só para demonstração.');
   }

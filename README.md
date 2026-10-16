@@ -13,7 +13,7 @@ escrito à mão, sem etapa de build e com três dependências de runtime** (`exp
 | Front-end | JavaScript puro (módulos ESM nativos), sem framework e sem build, no padrão de front-end da aplicação financeira |
 | API | Node.js 24 + Express 4 (REST, JSON), servindo também o front-end |
 | Banco | PostgreSQL em produção; SQLite (`node:sqlite`) em desenvolvimento e testes — o mesmo SQL nos dois |
-| E-mail | API do SendGrid via `fetch` nativo, com caixa de saída (outbox) e novas tentativas |
+| E-mail | API do MailerSend (ou SendGrid) via `fetch` nativo, com caixa de saída (outbox) e novas tentativas |
 | Testes | `node --test` (domínio, API pelo HTTP real e montagem de cada tela), nos dois bancos |
 
 ## Estrutura
@@ -54,12 +54,17 @@ em produção, as variáveis de ambiente do serviço. `src/config.js` é o únic
 | `PORTA` / `PORT` | Porta HTTP (o Render informa `PORT`) |
 | `BASE_URL` | Endereço público, usado nos links dos e-mails |
 | `ADMIN_EMAIL` / `ADMIN_SENHA` | Primeiro ADMIN, criado se não houver nenhum (troca de senha obrigatória no 1º acesso) |
-| `SENDGRID_ATIVO` / `SENDGRID_API_KEY` / `SENDGRID_REMETENTE` | E-mail; desligado, os e-mails só aparecem no log |
+| `EMAIL_ATIVO` / `EMAIL_REMETENTE` / `EMAIL_NOME_REMETENTE` | E-mail; desligado, os e-mails só aparecem no log. O remetente precisa ser de domínio verificado no provedor |
+| `MAILERSEND_API_KEY` | Chave da API do MailerSend (com ela, o provedor padrão passa a ser o MailerSend) |
+| `EMAIL_PROVEDOR` | `mailersend` ou `sendgrid` (com `SENDGRID_API_KEY`); opcional |
 | `DADOS_DEMO` / `SENHA_DEMO` | Dados fictícios de demonstração (só desenvolvimento) |
 | `PROXY_CONFIAVEL` | Confia em `X-Forwarded-*` (padrão: ligado no Render e no App Service) |
 
 Os nomes da versão .NET (`ConnectionStrings__Default`, `App__BaseUrl`, `Seed__AdminEmail`, `Seed__AdminPassword`,
-`SendGrid__*`) continuam aceitos, para não quebrar um serviço já configurado.
+`SendGrid__*`) e os `SENDGRID_*` anteriores continuam aceitos, para não quebrar um serviço já configurado.
+
+Para conferir a configuração de e-mail sem esperar a rotina, `npm run email:teste -- --para voce@empresa.com.br` envia
+um e-mail na hora e mostra o motivo exato se o provedor recusar.
 
 ## Executar em desenvolvimento
 
@@ -158,7 +163,9 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
    de vigência não depende do dia em que o job rodou.
 9. **Datas futuras** são bloqueadas para marcos, exceto o último dia trabalhado (RN-13).
 10. **Anexo de evidência no SharePoint (D4)** não foi implementado (fora das fases 1–3; parâmetro `REQUEST_EVIDENCE_REQUIRED = false`).
-11. **E-mail via SendGrid**, conforme as diretrizes técnicas do projeto (a SPEC citava Microsoft 365).
+11. **E-mail via MailerSend** (por decisão do usuário em 16/10/2026; antes, SendGrid, que continua aceito). A SPEC
+    citava Microsoft 365. Limite do provedor (429) ou chave inválida pausam a caixa de saída **sem gastar tentativa**:
+    no plano gratuito do MailerSend (100 e-mails por dia), o limite diário descartava os avisos em minutos.
 12. **Aprovação do cliente:** todo pedido nasce "Aguardando aprovação do cliente"; o Comercial ou a Controladoria registra a
     aprovação (data informada, padrão hoje; retroativa exige justificativa) ou "Cliente não aprovou" (encerra as posições sem perda).
     O RH avança só até "Em recrutamento" antes da aprovação; o SLA começa na data da aprovação e os dias descobertos/R$ contam
@@ -207,4 +214,4 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
       ela aparece no resumo em "Pausas sem fim".
     - *Resumo diário*: um e-mail por pessoa dos perfis COMMERCIAL, NACC, DP, RH, RH_MANAGER, MANAGER e CONTROLLERSHIP,
       na primeira execução do dia, **sem valores em R$** (o mesmo e-mail para todos). Sem posição aberta, não é enviado.
-    - Os avisos não trazem R$ e saem como notificação interna e e-mail (com `SENDGRID_ATIVO=0`, só a notificação e o log).
+    - Os avisos não trazem R$ e saem como notificação interna e e-mail (com `EMAIL_ATIVO=0`, só a notificação e o log).

@@ -45,7 +45,7 @@ JSON da API são os mesmos, e o front-end não mudou.
 | `DATABASE_URL` | a Internal Database URL do banco, colada como está |
 | `BASE_URL` | `https://<servico>.onrender.com` (links dos e-mails) |
 | `ADMIN_EMAIL` / `ADMIN_SENHA` | o primeiro ADMIN; a senha é provisória: 8+ caracteres, maiúscula, número e especial |
-| `SENDGRID_ATIVO` | `0` até ter a chave; depois `1` com `SENDGRID_API_KEY` e `SENDGRID_REMETENTE` (remetente verificado) |
+| `EMAIL_ATIVO` | `0` até ter a chave; depois `1` com `MAILERSEND_API_KEY` e `EMAIL_REMETENTE` (de domínio verificado no MailerSend) |
 
 **Variáveis antigas:** as da configuração anterior podem ficar, porque os nomes da versão .NET continuam aceitos
 (`ConnectionStrings__Default`, `App__BaseUrl`, `Seed__AdminEmail`, `Seed__AdminPassword`, `SendGrid__*`). As que não

@@ -77,7 +77,9 @@ const listener = server.listen(config.port, config.host, () => {
   console.log(`  Banco:      ${describeDatabase()}`);
   console.log(`  Estado:     ${application ? 'operando' : 'DEGRADADO — sem banco (respondendo 503)'}`);
   console.log(`  Proxy:      ${config.trustProxy ? 'confiável (X-Forwarded-*)' : 'não confiável'}`);
-  console.log(`  E-mail:     ${config.sendgrid.enabled ? `SendGrid (${config.sendgrid.fromEmail})` : 'desligado (só log)'}`);
+  const email = config.email;
+  console.log(`  E-mail:     ${email.enabled && email.apiKey ? `${email.provider === 'mailersend' ? 'MailerSend' : 'SendGrid'} `
+    + `(${email.fromEmail})` : 'desligado (só log)'}`);
   for (const warning of configurationWarnings()) console.log(`  ATENÇÃO:    ${warning}`);
   console.log('');
   if (application) startJobs();

@@ -8,7 +8,7 @@ import { EmailStatus } from '../domain/enums.js';
 
 /**
  * Notificações internas e e-mails (seção 10.1 da SPEC). O e-mail vai para a caixa de saída na MESMA transação da
- * operação e é enviado em segundo plano (jobs.js): uma falha do SendGrid não desfaz o registro de uma admissão.
+ * operação e é enviado em segundo plano (jobs.js): uma falha do provedor de e-mail não desfaz o registro de uma admissão.
  */
 
 /** Links da aplicação nos e-mails: o front-end roteia por hash (#/rota). */
