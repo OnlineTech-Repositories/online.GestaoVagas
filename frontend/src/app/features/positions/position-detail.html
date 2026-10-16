@@ -1,0 +1,211 @@
+@if (position.isLoading() && !position.value()) {
+  <mat-progress-bar mode="indeterminate" />
+}
+@if (error()) {
+  <p class="error-text">{{ error() }}</p>
+}
+
+@if (position.value(); as p) {
+  <div class="page-header">
+    <div>
+      <a mat-button [routerLink]="['/pedidos', p.summary.orderId]"><mat-icon>arrow_back</mat-icon> Pedido {{ p.summary.orderNumber }}</a>
+      <h1>
+        Posição {{ p.summary.orderNumber }}-{{ p.summary.sequence }}
+        <small class="muted">{{ p.summary.demandType | label: labels.demand }}</small>
+      </h1>
+      <div class="chips-row">
+        <app-status-chip [status]="p.summary.status" />
+        <app-sla-chip [situation]="p.metrics.slaSituation" [stage]="p.summary.stageStatus" />
+        @if (p.summary.hasRetroactiveDates) {
+          <span class="chip chip-grey" matTooltip="Possui datas registradas retroativamente (RN-24)">Datas retroativas</span>
+        }
+      </div>
+    </div>
+    <div class="actions-bar">
+      @for (a of primaryActions(); track a) {
+        <button mat-flat-button (click)="open(a)">{{ actionLabel[a] }}</button>
+      }
+      @for (a of secondaryActions(); track a) {
+        <button mat-stroked-button (click)="open(a)">{{ actionLabel[a] }}</button>
+      }
+    </div>
+  </div>
+
+  <div class="detail-grid">
+    <mat-card appearance="outlined">
+      <mat-card-header><mat-card-title>Dados</mat-card-title></mat-card-header>
+      <mat-card-content>
+        <dl class="kv">
+          <dt>Cliente</dt><dd>{{ p.summary.clientName }}</dd>
+          <dt>Contrato</dt><dd>{{ p.summary.contractName }}</dd>
+          <dt>CNPJ do Grupo</dt><dd>{{ p.summary.groupEntityName }}</dd>
+          <dt>Modalidade</dt><dd>{{ p.summary.modality | label: labels.modality }}</dd>
+          <dt>Cargo</dt><dd>{{ p.summary.jobRoleName }}</dd>
+          <dt>Local</dt><dd>{{ p.summary.workLocationName }}</dd>
+          <dt>Vigência</dt>
+          <dd>
+            {{ p.termType | label: labels.term }}
+            @if (p.termEndDate) { até {{ p.termEndDate | dateBr }} }
+            @if (p.termDurationDays) { · {{ p.termDurationDays }} dias }
+            @if (p.termAdjustJustification) {
+              <small class="muted block">Ajustada: {{ p.termAdjustJustification }}</small>
+            }
+          </dd>
+          @if (p.orderNotes) {
+            <dt>Observações</dt><dd>{{ p.orderNotes }}</dd>
+          }
+        </dl>
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card appearance="outlined">
+      <mat-card-header><mat-card-title>Indicadores</mat-card-title></mat-card-header>
+      <mat-card-content>
+        <dl class="kv">
+          <dt>Dias descobertos</dt>
+          <dd><strong>{{ p.metrics.uncoveredDays }}</strong> <small class="muted">desde {{ p.metrics.uncoveredStart | dateBr }}</small></dd>
+          <dt>Dias em pausa</dt><dd>{{ p.metrics.pausedDays }}</dd>
+          @if (p.metrics.registrationTime !== null) {
+            <dt>Tempo de cadastro</dt><dd>{{ p.metrics.registrationTime }} dia(s)</dd>
+          }
+          @if (p.metrics.communicationTime !== null) {
+            <dt>Tempo de comunicação</dt><dd>{{ p.metrics.communicationTime }} dia(s)</dd>
+          }
+          @if (p.metrics.confirmationTime !== null) {
+            <dt>Espera pelo cliente</dt><dd>{{ p.metrics.confirmationTime }} dia(s)</dd>
+          }
+          <dt>Tempo de preenchimento</dt>
+          <dd>{{ p.metrics.fillTime === null ? '—' : p.metrics.fillTime + ' dia(s)' }} <small class="muted">(sem pausas)</small></dd>
+          <dt>Meta de SLA</dt>
+          <dd>
+            {{ p.metrics.slaTargetDays === null ? 'Sem meta' : p.metrics.slaTargetDays + ' dia(s)' }}
+            <small class="muted">· {{ p.metrics.slaTargetSource | label: labels.slaSource }}</small>
+          </dd>
+          <dt>Prazo</dt><dd>{{ p.metrics.slaDeadline | dateBr }}</dd>
+          @if (p.metrics.moneyStatus) {
+            <dt>Valor diário</dt><dd>{{ p.metrics.dailyValue | money }}</dd>
+            <dt>Faturamento perdido</dt><dd>{{ p.metrics.lost | money }}</dd>
+            <dt>Faturamento postergado</dt><dd>{{ p.metrics.deferred | money }}</dd>
+            <dt>Situação do valor</dt>
+            <dd [class.pending]="p.metrics.moneyStatus !== 'VALIDATED'">
+              {{ p.metrics.moneyStatus | label: labels.money }}
+              @if (p.metrics.moneyStatus === 'PENDING' || p.metrics.moneyStatus === 'REJECTED') {
+                <small class="muted block">Fora dos totais oficiais</small>
+              }
+            </dd>
+          }
+        </dl>
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card appearance="outlined">
+      <mat-card-header><mat-card-title>Linha do tempo</mat-card-title></mat-card-header>
+      <mat-card-content>
+        <ol class="timeline">
+          @for (item of timeline(); track item.label) {
+            <li [class.done]="!!item.date">
+              <span class="dot"></span>
+              <div>
+                <div class="t-label">{{ item.label }}</div>
+                <div class="t-date">{{ item.date | dateBr }}</div>
+                @if (item.detail) {
+                  <small class="muted">{{ item.detail }}</small>
+                }
+              </div>
+            </li>
+          }
+        </ol>
+      </mat-card-content>
+    </mat-card>
+
+    @if (p.termination; as t) {
+      <mat-card appearance="outlined">
+        <mat-card-header><mat-card-title>Desligamento que originou a reposição</mat-card-title></mat-card-header>
+        <mat-card-content>
+          <dl class="kv">
+            <dt>Colaborador</dt>
+            <dd>
+              <a [routerLink]="['/posicoes', t.originPositionId]" class="link">{{ t.originEmployeeName }}</a>
+              <small class="muted"> matr. {{ t.originEmployeeRegistration }}</small>
+            </dd>
+            <dt>Último dia</dt><dd>{{ t.lastWorkedDay | dateBr }}</dd>
+            <dt>Tipo</dt><dd>{{ t.terminationType | label: labels.type }}</dd>
+            <dt>Origem da informação</dt><dd>{{ t.source | label: labels.source }}</dd>
+            @if (t.notes) {
+              <dt>Observações</dt><dd>{{ t.notes }}</dd>
+            }
+          </dl>
+        </mat-card-content>
+      </mat-card>
+    }
+
+    @if (p.exitTermination; as t) {
+      <mat-card appearance="outlined">
+        <mat-card-header><mat-card-title>Desligamento do colaborador</mat-card-title></mat-card-header>
+        <mat-card-content>
+          <dl class="kv">
+            <dt>Último dia</dt><dd>{{ t.lastWorkedDay | dateBr }}</dd>
+            <dt>Tipo</dt><dd>{{ t.terminationType | label: labels.type }}</dd>
+            @if (t.replacementPositionId) {
+              <dt>Reposição</dt>
+              <dd><a [routerLink]="['/posicoes', t.replacementPositionId]" class="link">Abrir posição de reposição</a></dd>
+            }
+          </dl>
+        </mat-card-content>
+      </mat-card>
+    }
+
+    <mat-card appearance="outlined">
+      <mat-card-header><mat-card-title>Pausas</mat-card-title></mat-card-header>
+      <mat-card-content>
+        @if (p.pauses.length === 0) {
+          <p class="muted">Nenhuma pausa registrada.</p>
+        } @else {
+          <ul class="plain-list">
+            @for (pause of p.pauses; track pause.id) {
+              <li>
+                <strong>{{ pause.reasonName }}</strong>
+                <span>{{ pause.startDate | dateBr }} → {{ pause.endDate ? (pause.endDate | dateBr) : 'em andamento' }}</span>
+                <small class="muted">({{ pause.days }} dia(s))</small>
+              </li>
+            }
+          </ul>
+        }
+      </mat-card-content>
+    </mat-card>
+  </div>
+
+  <h2>Histórico</h2>
+  <div class="table-wrap">
+    <table mat-table [dataSource]="p.history">
+      <ng-container matColumnDef="timestamp">
+        <th mat-header-cell *matHeaderCellDef>Quando</th>
+        <td mat-cell *matCellDef="let h">{{ h.timestamp | date: 'dd/MM/yyyy HH:mm' }}</td>
+      </ng-container>
+      <ng-container matColumnDef="user">
+        <th mat-header-cell *matHeaderCellDef>Usuário</th>
+        <td mat-cell *matCellDef="let h">{{ h.userName ?? 'Sistema' }}</td>
+      </ng-container>
+      <ng-container matColumnDef="action">
+        <th mat-header-cell *matHeaderCellDef>Ação</th>
+        <td mat-cell *matCellDef="let h">{{ auditAction(h.action) }}</td>
+      </ng-container>
+      <ng-container matColumnDef="change">
+        <th mat-header-cell *matHeaderCellDef>Alteração</th>
+        <td mat-cell *matCellDef="let h">
+          @if (h.field) {
+            {{ fieldLabel(h.field) }}: {{ auditValue(h.oldValue) }} → {{ auditValue(h.newValue) }}
+          } @else {
+            <span class="muted">Registro criado</span>
+          }
+        </td>
+      </ng-container>
+      <ng-container matColumnDef="justification">
+        <th mat-header-cell *matHeaderCellDef>Justificativa</th>
+        <td mat-cell *matCellDef="let h">{{ h.justification ?? '' }}</td>
+      </ng-container>
+      <tr mat-header-row *matHeaderRowDef="historyColumns"></tr>
+      <tr mat-row *matRowDef="let row; columns: historyColumns"></tr>
+    </table>
+  </div>
+}

@@ -1,0 +1,139 @@
+<div class="page-header">
+  <div>
+    <h1>Valores por cargo</h1>
+    <p class="muted">Valor mensal de venda, versionado por data de vigência. Só entra nos totais depois de validado pela Controladoria.</p>
+  </div>
+</div>
+
+@if (canRegister()) {
+  <mat-card appearance="outlined" class="block-gap">
+    <mat-card-header>
+      <mat-card-title>{{ editing() ? 'Corrigir valor (volta para validação)' : 'Cadastrar valor' }}</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      <form [formGroup]="form" (ngSubmit)="save()" class="filters">
+        <mat-form-field class="grow">
+          <mat-label>Contrato</mat-label>
+          <mat-select formControlName="contractId">
+            @for (c of catalogs.value()?.contracts ?? []; track c.id) {
+              <mat-option [value]="c.id">{{ c.clientName }} — {{ c.name }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        <mat-form-field>
+          <mat-label>Cargo</mat-label>
+          <mat-select formControlName="jobRoleId">
+            @for (j of catalogs.value()?.jobRoles ?? []; track j.id) {
+              <mat-option [value]="j.id">{{ j.name }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        <mat-form-field>
+          <mat-label>Valor mensal (R$)</mat-label>
+          <input matInput type="number" min="0" step="0.01" formControlName="monthlyValue" />
+          <mat-hint>Não obrigatório para contrato só de R&S</mat-hint>
+        </mat-form-field>
+        <mat-form-field>
+          <mat-label>Fee R&S (R$, informativo)</mat-label>
+          <input matInput type="number" min="0" step="0.01" formControlName="feeValue" />
+        </mat-form-field>
+        <mat-form-field>
+          <mat-label>Vigente a partir de</mat-label>
+          <input matInput type="date" formControlName="validFrom" />
+        </mat-form-field>
+        <button mat-flat-button type="submit" [disabled]="saving()">{{ editing() ? 'Salvar correção' : 'Cadastrar' }}</button>
+        @if (editing()) {
+          <button mat-button type="button" (click)="edit(null)">Cancelar</button>
+        }
+      </form>
+    </mat-card-content>
+  </mat-card>
+}
+
+<div class="filters">
+  <mat-form-field class="grow">
+    <mat-label>Contrato</mat-label>
+    <mat-select [ngModel]="contractId()" (ngModelChange)="contractId.set($event)">
+      <mat-option [value]="null">Todos</mat-option>
+      @for (c of catalogs.value()?.contracts ?? []; track c.id) {
+        <mat-option [value]="c.id">{{ c.clientName }} — {{ c.name }}</mat-option>
+      }
+    </mat-select>
+  </mat-form-field>
+  <mat-form-field>
+    <mat-label>Status</mat-label>
+    <mat-select [ngModel]="status()" (ngModelChange)="status.set($event)">
+      <mat-option [value]="null">Todos</mat-option>
+      @for (o of statusOptions; track o.value) {
+        <mat-option [value]="o.value">{{ o.label }}</mat-option>
+      }
+    </mat-select>
+  </mat-form-field>
+</div>
+
+@if (rates.isLoading() || saving()) {
+  <mat-progress-bar mode="indeterminate" />
+}
+
+<div class="table-wrap">
+  <table mat-table [dataSource]="rates.value() ?? []">
+    <ng-container matColumnDef="contract">
+      <th mat-header-cell *matHeaderCellDef>Cliente / contrato</th>
+      <td mat-cell *matCellDef="let r">
+        <div>{{ r.clientName }}</div>
+        <small class="muted">{{ r.contractName }}</small>
+      </td>
+    </ng-container>
+    <ng-container matColumnDef="role">
+      <th mat-header-cell *matHeaderCellDef>Cargo</th>
+      <td mat-cell *matCellDef="let r">{{ r.jobRoleName }}</td>
+    </ng-container>
+    <ng-container matColumnDef="monthly">
+      <th mat-header-cell *matHeaderCellDef class="num">Mensal</th>
+      <td mat-cell *matCellDef="let r" class="num">{{ r.monthlyValue | money }}</td>
+    </ng-container>
+    <ng-container matColumnDef="daily">
+      <th mat-header-cell *matHeaderCellDef class="num">Diário (÷30)</th>
+      <td mat-cell *matCellDef="let r" class="num">{{ r.dailyValue | money }}</td>
+    </ng-container>
+    <ng-container matColumnDef="fee">
+      <th mat-header-cell *matHeaderCellDef class="num">Fee R&S</th>
+      <td mat-cell *matCellDef="let r" class="num">{{ r.feeValue | money }}</td>
+    </ng-container>
+    <ng-container matColumnDef="validFrom">
+      <th mat-header-cell *matHeaderCellDef>Vigência</th>
+      <td mat-cell *matCellDef="let r">{{ r.validFrom | dateBr }}</td>
+    </ng-container>
+    <ng-container matColumnDef="status">
+      <th mat-header-cell *matHeaderCellDef>Status</th>
+      <td mat-cell *matCellDef="let r">
+        <span
+          class="chip"
+          [class.chip-green]="r.status === 'VALIDATED'"
+          [class.chip-yellow]="r.status === 'PENDING'"
+          [class.chip-red]="r.status === 'REJECTED'"
+          [matTooltip]="r.rejectionReason ?? ''"
+          >{{ r.status | label: statusLabels }}</span
+        >
+        <small class="muted block">por {{ r.createdByName }}@if (r.validatedByName) { · {{ r.validatedByName }} }</small>
+      </td>
+    </ng-container>
+    <ng-container matColumnDef="actions">
+      <th mat-header-cell *matHeaderCellDef></th>
+      <td mat-cell *matCellDef="let r" class="num nowrap">
+        @if (canValidate() && r.status === 'PENDING') {
+          <button mat-icon-button matTooltip="Validar" (click)="validate(r)"><mat-icon>check_circle</mat-icon></button>
+          <button mat-icon-button matTooltip="Rejeitar" (click)="reject(r)"><mat-icon>cancel</mat-icon></button>
+        }
+        @if (canRegister() && r.status !== 'VALIDATED') {
+          <button mat-icon-button matTooltip="Corrigir" (click)="edit(r)"><mat-icon>edit</mat-icon></button>
+        }
+      </td>
+    </ng-container>
+    <tr mat-header-row *matHeaderRowDef="columns"></tr>
+    <tr mat-row *matRowDef="let row; columns: columns"></tr>
+    <tr class="mat-row" *matNoDataRow>
+      <td class="mat-cell empty" [attr.colspan]="columns.length">Nenhum valor encontrado.</td>
+    </tr>
+  </table>
+</div>

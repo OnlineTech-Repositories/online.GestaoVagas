@@ -1,0 +1,66 @@
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.chips-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+
+  li {
+    display: flex;
+    gap: 12px;
+    padding: 6px 0;
+    position: relative;
+    color: var(--mat-sys-on-surface-variant);
+
+    &.done {
+      color: var(--mat-sys-on-surface);
+
+      .dot {
+        background: var(--mat-sys-primary);
+        border-color: var(--mat-sys-primary);
+      }
+    }
+  }
+
+  .dot {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    margin-top: 5px;
+    border-radius: 50%;
+    border: 2px solid var(--mat-sys-outline);
+  }
+
+  .t-label {
+    font: var(--mat-sys-label-large);
+  }
+
+  .t-date {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.plain-list {
+  margin: 0;
+  padding-left: 18px;
+
+  li {
+    margin-bottom: 6px;
+
+    span {
+      margin: 0 6px;
+    }
+  }
+}

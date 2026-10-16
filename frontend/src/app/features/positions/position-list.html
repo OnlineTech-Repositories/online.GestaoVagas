@@ -1,0 +1,124 @@
+<div class="page-header">
+  <h1>Posições</h1>
+</div>
+
+<form [formGroup]="form" class="filters">
+  <mat-form-field class="grow">
+    <mat-label>Buscar</mat-label>
+    <mat-icon matPrefix>search</mat-icon>
+    <input matInput formControlName="search" placeholder="Colaborador, matrícula, JobConvo, cliente ou cargo" />
+  </mat-form-field>
+  <mat-form-field>
+    <mat-label>Status</mat-label>
+    <mat-select formControlName="status" multiple>
+      @for (o of statusOptions; track o.value) {
+        <mat-option [value]="o.value">{{ o.label }}</mat-option>
+      }
+    </mat-select>
+  </mat-form-field>
+  <mat-form-field>
+    <mat-label>Situação do SLA</mat-label>
+    <mat-select formControlName="sla" multiple>
+      @for (o of slaOptions; track o.value) {
+        <mat-option [value]="o.value">{{ o.label }}</mat-option>
+      }
+    </mat-select>
+  </mat-form-field>
+  <mat-checkbox formControlName="onlyOpen">Somente abertas</mat-checkbox>
+</form>
+
+<mat-expansion-panel class="more-filters">
+  <mat-expansion-panel-header>
+    <mat-panel-title>Mais filtros</mat-panel-title>
+  </mat-expansion-panel-header>
+  <form [formGroup]="form" class="filters">
+    <mat-form-field>
+      <mat-label>Cliente</mat-label>
+      <mat-select formControlName="clientId">
+        <mat-option value="">Todos</mat-option>
+        @for (c of catalogs.value()?.clients ?? []; track c.id) {
+          <mat-option [value]="c.id">{{ c.legalName }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+    <mat-form-field>
+      <mat-label>Contrato</mat-label>
+      <mat-select formControlName="contractId">
+        <mat-option value="">Todos</mat-option>
+        @for (c of catalogs.value()?.contracts ?? []; track c.id) {
+          <mat-option [value]="c.id">{{ c.clientName }} — {{ c.name }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+    <mat-form-field>
+      <mat-label>Modalidade</mat-label>
+      <mat-select formControlName="modality">
+        <mat-option value="">Todas</mat-option>
+        @for (o of modalityOptions; track o.value) {
+          <mat-option [value]="o.value">{{ o.label }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+    <mat-form-field>
+      <mat-label>Cargo</mat-label>
+      <mat-select formControlName="jobRoleId">
+        <mat-option value="">Todos</mat-option>
+        @for (j of catalogs.value()?.jobRoles ?? []; track j.id) {
+          <mat-option [value]="j.id">{{ j.name }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+    <mat-form-field>
+      <mat-label>Tipo de demanda</mat-label>
+      <mat-select formControlName="demandType">
+        <mat-option value="">Todos</mat-option>
+        @for (o of demandOptions; track o.value) {
+          <mat-option [value]="o.value">{{ o.label }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+    <mat-form-field>
+      <mat-label>CNPJ do Grupo</mat-label>
+      <mat-select formControlName="groupEntityId">
+        <mat-option value="">Todos</mat-option>
+        @for (g of catalogs.value()?.groupEntities ?? []; track g.id) {
+          <mat-option [value]="g.id">{{ g.name }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+    <mat-form-field>
+      <mat-label>Local</mat-label>
+      <mat-select formControlName="workLocationId">
+        <mat-option value="">Todos</mat-option>
+        @for (l of catalogs.value()?.workLocations ?? []; track l.id) {
+          <mat-option [value]="l.id">{{ l.name }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+    <mat-form-field>
+      <mat-label>Aberta de</mat-label>
+      <input matInput type="date" formControlName="openedFrom" />
+    </mat-form-field>
+    <mat-form-field>
+      <mat-label>Aberta até</mat-label>
+      <input matInput type="date" formControlName="openedTo" />
+    </mat-form-field>
+    <button mat-button type="button" (click)="clear()"><mat-icon>filter_alt_off</mat-icon> Limpar filtros</button>
+  </form>
+</mat-expansion-panel>
+
+@if (result.isLoading()) {
+  <mat-progress-bar mode="indeterminate" />
+}
+@if (error()) {
+  <p class="error-text">{{ error() }}</p>
+}
+
+<app-position-table [rows]="result.value()?.items ?? []" [columns]="columns()" />
+<mat-paginator
+  [length]="result.value()?.total ?? 0"
+  [pageIndex]="page().index"
+  [pageSize]="page().size"
+  [pageSizeOptions]="[25, 50, 100, 200]"
+  (page)="onPage($event)"
+/>

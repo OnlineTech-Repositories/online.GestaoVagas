@@ -1,0 +1,62 @@
+<div class="page-header">
+  <div>
+    <h1>Painel</h1>
+    @if (data.value(); as d) {
+      <p class="muted">Situação em {{ d.today | dateBr }} · indicadores do mês a partir de {{ d.monthStart | dateBr }}</p>
+    }
+  </div>
+  <button mat-stroked-button (click)="data.reload()"><mat-icon>refresh</mat-icon> Atualizar</button>
+</div>
+
+@if (data.isLoading()) {
+  <mat-progress-bar mode="indeterminate" />
+}
+@if (error()) {
+  <p class="error-text">{{ error() }}</p>
+}
+
+@if (data.value(); as d) {
+  <section class="cards">
+    <a class="card" routerLink="/posicoes" [queryParams]="{ onlyOpen: true }">
+      <span class="card-label">Posições abertas</span>
+      <span class="card-value">{{ d.openPositions }}</span>
+    </a>
+    <a class="card card-red" routerLink="/posicoes" [queryParams]="{ sla: 'OVERDUE' }">
+      <span class="card-label">Vencidas</span>
+      <span class="card-value">{{ d.overdue }}</span>
+    </a>
+    <a class="card card-yellow" routerLink="/posicoes" [queryParams]="{ sla: 'AT_RISK' }">
+      <span class="card-label">Em risco</span>
+      <span class="card-value">{{ d.atRisk }}</span>
+    </a>
+    <a class="card" routerLink="/posicoes" [queryParams]="{ status: 'AWAITING_CONFIRMATION' }">
+      <span class="card-label">Aguardando cliente</span>
+      <span class="card-value">{{ d.awaitingClient }}</span>
+    </a>
+    <a class="card" routerLink="/posicoes" [queryParams]="{ status: 'PAUSED' }">
+      <span class="card-label">Pausadas</span>
+      <span class="card-value">{{ d.paused }}</span>
+    </a>
+    <div class="card">
+      <span class="card-label">Dias descobertos no mês</span>
+      <span class="card-value">{{ d.uncoveredDaysInMonth }}</span>
+    </div>
+    @if (d.lostInMonth !== null) {
+      <div class="card">
+        <span class="card-label">Faturamento perdido no mês</span>
+        <span class="card-value money">{{ d.lostInMonth | money }}</span>
+        @if (d.pendingValidationCount > 0) {
+          <span class="card-note">+ {{ d.pendingValidationInMonth | money }} pendente(s) de validação, fora do total</span>
+        }
+      </div>
+      <div class="card">
+        <span class="card-label">Faturamento postergado no mês</span>
+        <span class="card-value money">{{ d.deferredInMonth | money }}</span>
+      </div>
+    }
+  </section>
+
+  <h2>Vencidas e em risco</h2>
+  <p class="muted">Ordenadas por dias descobertos. Indicador gerencial; não é base de cobrança.</p>
+  <app-position-table [rows]="d.critical" [columns]="columns()" />
+}

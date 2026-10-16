@@ -1,0 +1,99 @@
+@if (order.isLoading() || saving()) {
+  <mat-progress-bar mode="indeterminate" />
+}
+@if (error()) {
+  <p class="error-text">{{ error() }}</p>
+}
+
+@if (order.value(); as o) {
+  <div class="page-header">
+    <div>
+      <a mat-button routerLink="/pedidos"><mat-icon>arrow_back</mat-icon> Pedidos</a>
+      <h1>
+        Pedido {{ o.summary.number }}
+        <small class="muted">{{ o.summary.status | label: labels.status }}</small>
+      </h1>
+      @if (o.summary.isLegacy) {
+        <span class="chip chip-grey">Criado por desligamento avulso</span>
+      }
+    </div>
+  </div>
+
+  <mat-card appearance="outlined" class="block-gap">
+    <mat-card-content>
+      <dl class="kv kv-wide">
+        <dt>Cliente</dt><dd>{{ o.summary.clientName }}</dd>
+        <dt>Contrato</dt><dd>{{ o.summary.contractName }}</dd>
+        <dt>Modalidade</dt><dd>{{ o.summary.modality | label: labels.modality }}</dd>
+        <dt>Cargo</dt><dd>{{ o.summary.jobRoleName }}</dd>
+        <dt>Local</dt><dd>{{ o.summary.workLocationName }}</dd>
+        <dt>Quantidade</dt><dd>{{ o.summary.quantity }}</dd>
+        <dt>Solicitação do cliente</dt><dd>{{ o.summary.clientRequestDate | dateBr }}</dd>
+        <dt>Registro</dt><dd>{{ o.summary.registeredAt | dateBr }} @if (o.createdByName) { <small class="muted">por {{ o.createdByName }}</small> }</dd>
+        <dt>Início desejado</dt><dd>{{ o.summary.desiredStartDate | dateBr }}</dd>
+        <dt>Vigência</dt>
+        <dd>
+          {{ o.termType | label: labels.term }}
+          @if (o.termEndDate) { até {{ o.termEndDate | dateBr }} }
+          @if (o.termDurationDays) { · {{ o.termDurationDays }} dias }
+        </dd>
+        @if (o.notes) {
+          <dt>Observações</dt><dd>{{ o.notes }}</dd>
+        }
+      </dl>
+    </mat-card-content>
+  </mat-card>
+
+  @if (o.canAddPositions || o.canCorrectDates) {
+    <mat-accordion class="block-gap">
+      @if (o.canAddPositions) {
+        <mat-expansion-panel>
+          <mat-expansion-panel-header><mat-panel-title>Aumentar quantidade</mat-panel-title></mat-expansion-panel-header>
+          <form [formGroup]="addForm" (ngSubmit)="addPositions()" class="filters">
+            <mat-form-field>
+              <mat-label>Novas posições</mat-label>
+              <input matInput type="number" min="1" formControlName="quantity" />
+            </mat-form-field>
+            <mat-form-field>
+              <mat-label>Início desejado das novas posições</mat-label>
+              <input matInput type="date" formControlName="desiredStartDate" />
+            </mat-form-field>
+            <mat-form-field class="grow">
+              <mat-label>Observação (opcional)</mat-label>
+              <input matInput formControlName="justification" />
+            </mat-form-field>
+            <button mat-flat-button type="submit" [disabled]="saving()">Acrescentar</button>
+          </form>
+          <p class="muted">Para reduzir a quantidade, cancele posições individualmente (RN-05).</p>
+        </mat-expansion-panel>
+      }
+      @if (o.canCorrectDates) {
+        <mat-expansion-panel>
+          <mat-expansion-panel-header><mat-panel-title>Corrigir datas do pedido</mat-panel-title></mat-expansion-panel-header>
+          <form [formGroup]="correctionForm" (ngSubmit)="correctDate()" class="filters">
+            <mat-form-field>
+              <mat-label>Data</mat-label>
+              <mat-select formControlName="field">
+                <mat-option value="CLIENT_REQUEST_DATE">Solicitação do cliente</mat-option>
+                <mat-option value="DESIRED_START_DATE">Início desejado</mat-option>
+                <mat-option value="REGISTERED_AT">Registro do pedido</mat-option>
+              </mat-select>
+            </mat-form-field>
+            <mat-form-field>
+              <mat-label>Data correta</mat-label>
+              <input matInput type="date" formControlName="date" />
+            </mat-form-field>
+            <mat-form-field class="grow">
+              <mat-label>Justificativa</mat-label>
+              <input matInput formControlName="justification" />
+            </mat-form-field>
+            <button mat-flat-button type="submit" [disabled]="saving()">Corrigir</button>
+          </form>
+        </mat-expansion-panel>
+      }
+    </mat-accordion>
+  }
+
+  <h2>Posições</h2>
+  <app-position-table [rows]="o.positions" [columns]="columns()" />
+}

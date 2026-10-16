@@ -1,0 +1,121 @@
+<h2 mat-dialog-title>{{ title }}</h2>
+@if (saving()) {
+  <mat-progress-bar mode="indeterminate" />
+}
+<mat-dialog-content>
+  <form [formGroup]="form" class="form-grid dialog-form">
+    @if (fields.has('decision')) {
+      <mat-radio-group formControlName="decision" class="radio-row">
+        <mat-radio-button value="REPLACE">Repor o colaborador</mat-radio-button>
+        <mat-radio-button value="NOT_REPLACE">Não repor (encerra sem perda)</mat-radio-button>
+      </mat-radio-group>
+    }
+
+    @if (fields.has('correction')) {
+      <mat-form-field>
+        <mat-label>Data a corrigir</mat-label>
+        <mat-select formControlName="correction">
+          @for (c of corrections; track c.value) {
+            <mat-option [value]="c.value">{{ c.label }}</mat-option>
+          }
+        </mat-select>
+        <mat-hint>Somente o autor do registro ou um administrador pode corrigir.</mat-hint>
+      </mat-form-field>
+    }
+
+    @if (fields.has('jobconvoCode')) {
+      <mat-form-field>
+        <mat-label>Código da vaga no JobConvo</mat-label>
+        <input matInput formControlName="jobconvoCode" maxlength="100" />
+      </mat-form-field>
+    }
+
+    @if (fields.has('reason')) {
+      <mat-form-field>
+        <mat-label>Motivo (responsabilidade do cliente)</mat-label>
+        <mat-select formControlName="reasonId">
+          @for (r of activeReasons; track r.id) {
+            <mat-option [value]="r.id">{{ r.name }}</mat-option>
+          }
+        </mat-select>
+        @if (activeReasons.length === 0) {
+          <mat-hint>Nenhum motivo cadastrado. Peça ao administrador para cadastrar.</mat-hint>
+        }
+      </mat-form-field>
+    }
+
+    @if (fields.has('date')) {
+      <mat-form-field>
+        <mat-label>{{ dateLabel }}</mat-label>
+        <input matInput type="date" formControlName="date" />
+        @if (data.action === 'START_RECRUITING') {
+          <mat-hint>Opcional</mat-hint>
+        }
+      </mat-form-field>
+    }
+
+    @if (fields.has('employee')) {
+      <mat-form-field>
+        <mat-label>Nome do colaborador</mat-label>
+        <input matInput formControlName="employeeName" maxlength="200" />
+      </mat-form-field>
+      <mat-form-field>
+        <mat-label>Matrícula</mat-label>
+        <input matInput formControlName="employeeRegistration" maxlength="50" />
+      </mat-form-field>
+    }
+
+    @if (fields.has('cancelReason')) {
+      <mat-form-field>
+        <mat-label>Motivo do cancelamento</mat-label>
+        <textarea matInput rows="3" formControlName="cancelReason" maxlength="1000"></textarea>
+      </mat-form-field>
+    }
+
+    @if (fields.has('term')) {
+      <mat-form-field>
+        <mat-label>Tipo de vigência</mat-label>
+        <mat-select formControlName="termType">
+          @for (o of termOptions; track o.value) {
+            <mat-option [value]="o.value">{{ o.label }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+      @if (form.controls.termType.value === 'FIXED_END') {
+        <mat-form-field>
+          <mat-label>Data fim da vigência</mat-label>
+          <input matInput type="date" formControlName="termEndDate" />
+        </mat-form-field>
+      }
+      @if (form.controls.termType.value === 'PRESERVED_DURATION') {
+        <mat-form-field>
+          <mat-label>Duração (dias)</mat-label>
+          <input matInput type="number" min="1" formControlName="termDurationDays" />
+        </mat-form-field>
+      }
+    }
+
+    @if (data.action !== 'CANCEL') {
+      <mat-form-field>
+        <mat-label>
+          Justificativa
+          @if (!justificationRequired() && data.action !== 'ADJUST_TERM' && data.action !== 'CORRECT_DATES') {
+            (opcional)
+          }
+        </mat-label>
+        <textarea matInput rows="2" formControlName="justification" maxlength="1000"></textarea>
+        @if (justificationRequired()) {
+          <mat-hint>Obrigatória: a data é anterior a hoje (carga inicial encerrada).</mat-hint>
+        }
+      </mat-form-field>
+    }
+
+    @if (error()) {
+      <p class="error-text" role="alert">{{ error() }}</p>
+    }
+  </form>
+</mat-dialog-content>
+<mat-dialog-actions align="end">
+  <button mat-button mat-dialog-close>Voltar</button>
+  <button mat-flat-button (click)="submit()" [disabled]="saving()">Confirmar</button>
+</mat-dialog-actions>

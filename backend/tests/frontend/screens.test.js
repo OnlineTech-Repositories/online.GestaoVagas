@@ -1,0 +1,957 @@
+/**
+ * Monta cada tela do front-end de verdade, fora do navegador, contra a API real.
+ *
+ * Pega a classe de erro "a tela quebra ao abrir" (import esquecido, campo inexistente no caminho
+ * de renderização) que os testes do back-end não enxergam. Usa o DOM mínimo do padrão de front-end.
+ *
+ * Pré-requisito: a API rodando com dados de demonstração (Seed:DemoData) e a senha dos usuários
+ * de demonstração em DEMO_PASSWORD. Execução:
+ *   node --test "backend/tests/frontend/*.test.js"
+ */
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { instalarDom } from './dom-minimo.js';
+
+const API_URL = process.env.API_URL ?? 'http://localhost:5067';
+const PASSWORD = process.env.DEMO_PASSWORD;
+const FRONT = new URL('../../src/VacancyControl.Api/wwwroot/js/', import.meta.url);
+
+let skipReason = PASSWORD ? null : 'defina DEMO_PASSWORD com a senha dos usuários de demonstração';
+let dom;
+let app;
+let apiModule;
+let ui;
+// Um pote de cookies por usuário: cada um faz login uma vez só (a API limita a 10 logins por minuto por IP).
+const jars = new Map();
+let jar = new Map();
+
+/** fetch do Node com pote de cookies: sessão, antiforgery e o XSRF-TOKEN lido pelo api.js. */
+function installFetchBridge() {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (path, init = {}) => {
+    const headers = new Headers(init.headers);
+    if (jar.size) headers.set('Cookie', [...jar].map(([k, v]) => `${k}=${v}`).join('; '));
+    const response = await realFetch(API_URL + path, { ...init, headers, redirect: 'manual' });
+    for (const cookie of response.headers.getSetCookie()) {
+      const [pair] = cookie.split(';');
+      const index = pair.indexOf('=');
+      const name = pair.slice(0, index);
+      const value = pair.slice(index + 1);
+      if (!value || /expires=Thu, 01 Jan 1970/i.test(cookie)) jar.delete(name);
+      else jar.set(name, value);
+    }
+    document.cookie = [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
+    return response;
+  };
+  return () => {
+    globalThis.fetch = realFetch;
+  };
+}
+
+let restoreFetch = () => {};
+
+before(async () => {
+  if (skipReason) return;
+  try {
+    await fetch(`${API_URL}/api/saude`);
+  } catch {
+    skipReason = `API indisponível em ${API_URL}`;
+    return;
+  }
+  dom = instalarDom();
+  restoreFetch = installFetchBridge();
+  apiModule = await import(new URL('api.js', FRONT));
+  ui = await import(new URL('ui.js', FRONT));
+  app = await import(new URL('app.js', FRONT)); // a partida do app roda aqui (saúde, sessão, login)
+});
+
+after(() => {
+  restoreFetch();
+  dom?.restaurar();
+});
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const text = () => document.getElementById('app').textContent;
+
+async function signIn(email) {
+  if (jars.has(email)) {
+    jar = jars.get(email);
+    document.cookie = [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
+    app.state.user = await apiModule.api.session();
+    return;
+  }
+  jar = new Map();
+  jars.set(email, jar);
+  await apiModule.api.health();
+  app.state.user = await apiModule.api.login(email, PASSWORD);
+}
+
+/** Abre a rota e confere que a tela montou: título certo e nenhum erro de carregamento. */
+async function open(path, expectedTitle) {
+  window.location.hash = `#${path}`;
+  await app.render();
+  await wait(150); // áreas carregadas depois da montagem (ex.: busca do desligamento)
+  const root = document.getElementById('app');
+  const failure = root.querySelector('.mensagem.erro');
+  assert.equal(failure, null, `${path}: ${failure?.textContent}`);
+  assert.equal(root.querySelector('h1')?.textContent, expectedTitle, `${path}: título da página`);
+  return root;
+}
+
+const skip = (t) => {
+  if (skipReason) t.skip(skipReason);
+  return !!skipReason;
+};
+
+test('a partida sem sessão mostra o login', (t) => {
+  if (skip(t)) return;
+  assert.match(text(), /Controle de Vagas/);
+  assert.ok(document.getElementById('app').querySelector('input[name="email"]'));
+});
+
+test('Comercial: painel, listas, detalhes, novo pedido, clientes e valores', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+
+  const painel = await open('/', 'Painel');
+  assert.match(painel.textContent, /Faturamento perdido no mês/, 'o Comercial vê R$ no painel');
+
+  await open('/notificacoes', 'Notificações');
+  await open('/posicoes', 'Posições');
+  await open('/posicoes?sla=OVERDUE', 'Posições');
+  await open('/pedidos', 'Pedidos');
+  await open('/pedidos/novo', 'Novo pedido');
+  await open('/clientes', 'Clientes e contratos');
+  await open('/valores', 'Valores por cargo');
+
+  const { items } = await apiModule.api.get('/api/positions', { pageSize: 1 });
+  const detail = await open(`/posicoes/${items[0].id}`, 'Posição');
+  assert.match(detail.textContent, /Linha do tempo/);
+  await open(`/pedidos/${items[0].orderId}`, 'Pedido');
+});
+
+test('NACC: reposição aguardando o cliente, ações em janela e desligamento', async (t) => {
+  if (skip(t)) return;
+  await signIn('nacc@demo.local');
+
+  const painel = await open('/', 'Painel');
+  assert.doesNotMatch(painel.textContent, /Faturamento perdido/, 'o NACC não vê R$');
+
+  const { items } = await apiModule.api.get('/api/positions', { status: 'AWAITING_CONFIRMATION' });
+  const root = await open(`/posicoes/${items[0].id}`, 'Posição');
+
+  // Cada ação disponível abre a sua janela sem erro.
+  // O DOM mínimo não tem seletor de descendente: parte do corpo do primeiro painel (cabeçalho da posição).
+  const actions = root.querySelector('.painel-corpo').querySelectorAll('button');
+  assert.ok(actions.length > 0, 'há ações para o NACC');
+  for (const action of actions) {
+    action.click();
+    const modal = document.getElementById('modal-area').querySelector('.modal');
+    assert.ok(modal, `janela da ação "${action.textContent}"`);
+    modal.querySelector('.modal-fechar').click();
+  }
+
+  await open('/desligamentos/novo', 'Registrar desligamento');
+});
+
+test('DP, Controladoria e Gestor: telas do próprio perfil', async (t) => {
+  if (skip(t)) return;
+  await signIn('dp@demo.local');
+  await open('/desligamentos/novo', 'Registrar desligamento');
+
+  await signIn('controladoria@demo.local');
+  await open('/valores', 'Valores por cargo');
+
+  await signIn('gestor@demo.local');
+  await open('/', 'Painel');
+});
+
+test('Administrador: usuários, parâmetros e cadastros auxiliares', async (t) => {
+  if (skip(t)) return;
+  await signIn('admin@demo.local');
+  await open('/usuarios', 'Usuários e perfis');
+  await open('/parametros', 'Parâmetros e metas de SLA');
+  await open('/cadastros', 'Cadastros auxiliares');
+});
+
+test('rota sem permissão volta ao painel (a API também nega com 403)', async (t) => {
+  if (skip(t)) return;
+  await signIn('rh@demo.local');
+  await open('/', 'Painel');
+  window.location.hash = '#/usuarios';
+  await app.render();
+  assert.equal(window.location.hash, '#/');
+  await assert.rejects(apiModule.api.get('/api/users'), (e) => e.status === 403);
+});
+
+test('erro de validação marca o campo e a marca some ao corrigir', (t) => {
+  if (skip(t)) return;
+  const form = ui.el('form', {}, ui.field({ name: 'reason', label: 'Motivo' }), ui.field({ name: 'date', label: 'Data' }));
+  const summary = ui.applyErrors(form, { message: 'Informe o motivo.', fields: { reason: 'Informe o motivo.' } });
+  form.prepend(summary);
+
+  const block = form.querySelector('[data-campo="reason"]');
+  assert.ok(block.classList.contains('com-erro'));
+  assert.equal(block.querySelector('.erro-campo').textContent, 'Informe o motivo.');
+
+  block.querySelector('input').disparar('input');
+  assert.ok(!block.classList.contains('com-erro'), 'a marca sai ao digitar');
+  assert.equal(form.querySelector('.mensagem.erro'), null, 'o resumo sai junto com o último erro');
+});
+
+test('o backend aponta o campo recusado na regra de negócio', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  await assert.rejects(
+    apiModule.api.post('/api/clients', { legalName: 'Teste', cnpj: '123', active: true }),
+    (e) => e.status === 422 && e.fields.cnpj === 'CNPJ inválido.',
+  );
+});
+
+/** CNPJ válido a partir de 12 dígitos (só para dados de teste). */
+function validCnpj(base12) {
+  const digit = (digits, weights) => {
+    const rest = [...digits].reduce((sum, c, i) => sum + Number(c) * weights[i], 0) % 11;
+    return rest < 2 ? 0 : 11 - rest;
+  };
+  const d1 = digit(base12, [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+  const d2 = digit(base12 + d1, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+  return `${base12}${d1}${d2}`;
+}
+
+test('Unidades do cliente: cadastra, edita, exclui logicamente e viram locais do pedido', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const base = String(Date.now()).slice(-8).padStart(8, '0');
+
+  const created = await apiModule.api.post('/api/clients', {
+    legalName: `Rede Teste ${base}`,
+    cnpj: validCnpj(`${base}0001`),
+    active: true,
+    hasMultipleUnits: true,
+    units: [
+      { id: null, code: 'LJ-01', name: 'Loja Um', cnpj: validCnpj(`${base}0002`) },
+      { id: null, code: 'LJ-02', name: 'Loja Dois', cnpj: null },
+    ],
+  });
+  assert.equal(created.units.length, 2);
+
+  // Código repetido é recusado e aponta a seção das unidades.
+  await assert.rejects(
+    apiModule.api.put(`/api/clients/${created.id}`, { ...created, units: [...created.units, { id: null, code: 'lj-01', name: 'Outra' }] }),
+    (e) => e.status === 422 && 'units' in e.fields,
+  );
+
+  // Edita a primeira e exclui a segunda (exclusão lógica).
+  const [first, second] = created.units;
+  const updated = await apiModule.api.put(`/api/clients/${created.id}`, {
+    legalName: created.legalName, cnpj: created.cnpj, active: true, hasMultipleUnits: true,
+    units: [{ ...first, name: 'Loja Um Renomeada' }],
+  });
+  assert.deepEqual(updated.units.map((u) => u.name), ['Loja Um Renomeada']);
+
+  const locations = await apiModule.api.get('/api/catalogs/work-locations');
+  assert.ok(locations.some((l) => l.id === first.id && l.clientId === created.id), 'a unidade é um local do cliente');
+  assert.ok(!locations.some((l) => l.id === second.id), 'a unidade excluída sai das listas');
+
+  // Com unidades na lista, não dá para desmarcar a opção.
+  await assert.rejects(
+    apiModule.api.put(`/api/clients/${created.id}`, { legalName: created.legalName, cnpj: created.cnpj, active: true, hasMultipleUnits: false }),
+    (e) => e.status === 422 && 'hasMultipleUnits' in e.fields,
+  );
+
+  // A tela abre o cliente com a seção de unidades.
+  const root = await open('/clientes', 'Clientes e contratos');
+  const row = root.querySelectorAll('tr').find((tr) => tr.textContent.includes(created.legalName));
+  row.click();
+  const modal = document.getElementById('modal-area').querySelector('.modal');
+  assert.ok(modal.querySelector('[data-campo="units"]'), 'seção Unidades do cliente');
+  assert.match(modal.textContent, /Cliente possui múltiplas unidades/);
+  modal.querySelector('.modal-fechar').click();
+});
+
+test('Contrato: unidade contratante, código gerado e local fixo no pedido', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const base = String(Date.now() + 7).slice(-8).padStart(8, '0');
+  const year = new Date().getFullYear();
+  const [groups, owners, jobRoles, locations] = await Promise.all([
+    apiModule.api.get('/api/catalogs/group-entities'),
+    apiModule.api.get('/api/users/by-role/COMMERCIAL'),
+    apiModule.api.get('/api/catalogs/job-roles'),
+    apiModule.api.get('/api/catalogs/work-locations'),
+  ]);
+
+  const client = await apiModule.api.post('/api/clients', {
+    legalName: `Supermercados Teste ${base}`, cnpj: validCnpj(`${base}0001`), active: true, hasMultipleUnits: true,
+    units: [{ id: null, code: 'Loja 45', name: 'Loja Moema' }, { id: null, code: 'LJ-46', name: 'Loja Centro' }],
+  });
+  const moema = client.units.find((u) => u.code === 'Loja 45');
+  const other = client.units.find((u) => u.code === 'LJ-46');
+  const contractBody = (unitId) => ({
+    clientId: client.id, contractingUnitId: unitId, groupEntityId: groups[0].id, commercialOwnerId: owners[0].id,
+    modalities: ['MOT'], startDate: `${year}-01-01`, endDate: null, status: 'ACTIVE', slaNewDays: 10, slaReplacementDays: 5,
+  });
+
+  // Cliente com unidades: a unidade contratante é obrigatória.
+  await assert.rejects(apiModule.api.post('/api/contracts', contractBody(null)), (e) => e.status === 422 && 'contractingUnitId' in e.fields);
+
+  const first = await apiModule.api.post('/api/contracts', contractBody(moema.id));
+  const second = await apiModule.api.post('/api/contracts', contractBody(moema.id));
+  assert.equal(first.name, `CT-${year}-LOJA-45-0001`);
+  assert.equal(second.name, `CT-${year}-LOJA-45-0002`, 'sequencial por unidade e ano');
+  assert.equal(first.contractingUnitCode, 'Loja 45');
+
+  // O código não muda ao renomear a unidade; a unidade em uso não pode ser excluída.
+  const renamed = await apiModule.api.put(`/api/clients/${client.id}`, {
+    legalName: client.legalName, cnpj: client.cnpj, active: true, hasMultipleUnits: true,
+    units: client.units.map((u) => (u.id === moema.id ? { ...u, name: 'Loja Moema Renomeada' } : u)),
+  });
+  assert.ok(renamed.units.some((u) => u.name === 'Loja Moema Renomeada'));
+  assert.equal((await apiModule.api.get(`/api/contracts/${first.id}`)).name, first.name);
+  await assert.rejects(
+    apiModule.api.put(`/api/clients/${client.id}`, { legalName: client.legalName, cnpj: client.cnpj, active: true,
+      hasMultipleUnits: true, units: client.units.filter((u) => u.id !== moema.id) }),
+    (e) => e.status === 422 && 'units' in e.fields,
+  );
+
+  // Cliente e unidade ficam fixos depois de criado o contrato.
+  await assert.rejects(
+    apiModule.api.put(`/api/contracts/${first.id}`, contractBody(other.id)),
+    (e) => e.status === 422 && 'contractingUnitId' in e.fields,
+  );
+
+  // O pedido do contrato usa a unidade contratante: outro local é recusado.
+  const general = locations.find((l) => !l.clientId);
+  const order = {
+    contractId: first.id, modality: 'MOT', jobRoleId: jobRoles[0].id, quantity: 1, clientRequestDate: `${year}-01-02`,
+    desiredStartDate: `${year}-01-05`, termType: 'INDEFINITE', termEndDate: null, termDurationDays: null, notes: null,
+    registeredAt: `${year}-01-02`, justification: null,
+  };
+  // Cargo do pedido = cargo com valor VALIDADO no contrato; antes da validação, a lista vem vazia e o pedido é recusado.
+  const role = jobRoles[0];
+  assert.deepEqual(await apiModule.api.get('/api/orders/job-roles', { contractId: first.id }), []);
+  const rate = await apiModule.api.post('/api/contract-rates', {
+    contractId: first.id, jobRoleId: role.id, monthlyValue: 3000, feeValue: null, validFrom: `${year}-01-01` });
+  await assert.rejects(apiModule.api.post('/api/orders', { ...order, workLocationId: moema.id }),
+    (e) => e.status === 422 && 'jobRoleId' in e.fields);
+  await signIn('controladoria@demo.local');
+  await apiModule.api.post(`/api/contract-rates/${rate.id}/validate`);
+  await signIn('comercial@demo.local');
+  // Um reajuste ainda pendente não entra no pedido: vale a versão validada.
+  await apiModule.api.post('/api/contract-rates', {
+    contractId: first.id, jobRoleId: role.id, monthlyValue: 9000, feeValue: null, validFrom: `${year}-01-02` });
+  const available = await apiModule.api.get('/api/orders/job-roles', { contractId: first.id });
+  assert.deepEqual(available.map((j) => j.id), [role.id]);
+  // O mesmo cargo em outro contrato (sem valor validado) não aparece.
+  assert.deepEqual(await apiModule.api.get('/api/orders/job-roles', { contractId: second.id }), []);
+
+  await assert.rejects(apiModule.api.post('/api/orders', { ...order, workLocationId: general.id }),
+    (e) => e.status === 422 && 'workLocationId' in e.fields);
+  const description = ['Atividades: repor gôndolas.', '', 'Requisitos: ensino médio.', 'Desejável: experiência em varejo.'].join('\n');
+  await assert.rejects(apiModule.api.post('/api/orders', { ...order, workLocationId: moema.id, jobDescription: 'x'.repeat(4001) }),
+    (e) => e.status === 422 && 'jobDescription' in e.fields);
+  const created = await apiModule.api.post('/api/orders', { ...order, quantity: 2, workLocationId: moema.id, jobDescription: description });
+  assert.equal(created.workLocationId, moema.id);
+
+  // A descrição fica no pedido e aparece em todas as posições geradas, com os parágrafos preservados.
+  assert.equal(created.jobDescription, description);
+  for (const position of created.positions) {
+    const positionDetail = await apiModule.api.get(`/api/positions/${position.id}`);
+    assert.equal(positionDetail.jobDescription, description);
+    assert.equal(positionDetail.metrics.dailyValue, 100, 'valor diário da versão validada (3.000 / 30)');
+    assert.equal(positionDetail.metrics.moneyStatus, 'VALIDATED');
+  }
+  const detail = await open(`/posicoes/${created.positions[1].id}`, 'Posição');
+  assert.ok(detail.querySelector('.texto-livre')?.textContent.includes('Requisitos: ensino médio.'), 'descrição na tela da posição');
+  const orderScreen = await open(`/pedidos/${created.summary.id}`, 'Pedido');
+  assert.match(orderScreen.textContent, /Descrição da vaga/);
+
+  // Cliente sem unidades: o código usa o nome do cliente principal.
+  const plain = await apiModule.api.post('/api/clients', {
+    legalName: `Ácme Teste ${base}`, cnpj: validCnpj(`${base}0009`), active: true, hasMultipleUnits: false, units: [],
+  });
+  const plainContract = await apiModule.api.post('/api/contracts', { ...contractBody(null), clientId: plain.id });
+  assert.equal(plainContract.name, `CT-${year}-ACME-TESTE-${base}-0001`);
+  assert.equal(plainContract.contractingUnitId, null);
+
+  // A tela de contratos mostra a unidade contratante e o código.
+  const root = await open('/clientes', 'Clientes e contratos');
+  assert.match(root.textContent, new RegExp(first.name));
+});
+
+test('Aprovação do cliente: pedido aguardando, RH até recrutamento, aprovação e recusa notificam todos', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const todayIso = ui.today();
+  const contracts = await apiModule.api.get('/api/contracts', { onlyActive: true });
+  let contract;
+  let roles = [];
+  for (const c of contracts.filter((x) => x.contractingUnitId)) {
+    roles = await apiModule.api.get('/api/orders/job-roles', { contractId: c.id });
+    if (roles.length) { contract = c; break; }
+  }
+  assert.ok(contract, 'há contrato com cargo validado nos dados de demonstração');
+  const body = {
+    contractId: contract.id, modality: contract.modalities[0], jobRoleId: roles[0].id, quantity: 2,
+    workLocationId: contract.contractingUnitId, clientRequestDate: todayIso, desiredStartDate: todayIso, termType: 'INDEFINITE',
+    termEndDate: null, termDurationDays: null, notes: null, registeredAt: todayIso, justification: null,
+  };
+
+  // O pedido nasce aguardando: posições sem abertura e sem SLA.
+  const created = await apiModule.api.post('/api/orders', body);
+  const orderId = created.summary.id;
+  assert.equal(created.summary.approvalStatus, 'AWAITING_CLIENT_APPROVAL');
+  assert.equal(created.canDecideApproval, true);
+  for (const p of created.positions) {
+    assert.equal(p.openedAt, null);
+    assert.equal(p.slaSituation, null);
+    assert.equal(p.orderApprovalStatus, 'AWAITING_CLIENT_APPROVAL');
+  }
+  const screen = await open(`/pedidos/${orderId}`, 'Pedido');
+  assert.match(screen.textContent, /Aguardando aprovação do cliente/);
+  const buttons = [...screen.querySelector('.painel-cabecalho').querySelectorAll('button')].map((b) => b.textContent);
+  assert.ok(buttons.includes('Registrar aprovação do cliente') && buttons.includes('Cliente não aprovou'), buttons.join(', '));
+  const awaitingList = await apiModule.api.get('/api/orders', { approvalStatus: 'AWAITING_CLIENT_APPROVAL' });
+  assert.ok(awaitingList.some((o) => o.id === orderId), 'filtro de aprovação na lista');
+  await open('/pedidos?aprovacao=AWAITING_CLIENT_APPROVAL', 'Pedidos');
+
+  // A Gestora de RH distribui o pedido para a Rita.
+  await signIn('gestor.rh@demo.local');
+  const ritaUser = (await apiModule.api.get('/api/users/by-role/RH')).find((u) => u.name === 'Rita RH (demo)');
+  await apiModule.api.put(`/api/orders/${orderId}/rh-analysts`, { analystIds: [ritaUser.id] });
+  // Todos os usuários são notificados, com o link para o pedido.
+  await signIn('rh@demo.local');
+  const created1 = (await apiModule.api.get('/api/notifications')).find((n) => n.type === 'ORDER_CREATED' && n.entityId === orderId);
+  assert.ok(created1, 'RH notificado da criação');
+  assert.match(created1.message, new RegExp(`Pedido ${created.summary.number}`));
+  assert.match(created1.message, /Status: Aguardando aprovação do cliente/);
+
+  // RH prepara até "Em recrutamento"; aprovar candidato espera a aprovação do cliente.
+  const [first, second] = created.positions;
+  const rhDetail = await apiModule.api.get(`/api/positions/${first.id}`);
+  assert.ok(!rhDetail.allowedActions.includes('START_RECRUITING'), 'o recrutamento começa pela publicação no pedido');
+  await apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: true, code: 'JC-APROV-1', publishedAt: todayIso, justification: null });
+  const recruiting = await apiModule.api.get(`/api/positions/${first.id}`);
+  assert.equal(recruiting.summary.status, 'RECRUITING');
+  assert.ok(!recruiting.allowedActions.includes('APPROVE_CANDIDATE'), 'sem aprovar candidato antes da aprovação');
+  await assert.rejects(apiModule.api.post(`/api/positions/${first.id}/candidate-approval`, { date: todayIso, justification: null }),
+    (e) => e.status === 422 && /aguarda a aprovação do cliente/.test(e.message));
+  // RH não decide a aprovação do pedido.
+  await assert.rejects(apiModule.api.post(`/api/orders/${orderId}/approval`, { date: todayIso, justification: null }),
+    (e) => e.status === 403);
+  const positionScreen = await open(`/posicoes/${first.id}`, 'Posição');
+  assert.match(positionScreen.textContent, /O pedido aguarda a aprovação do cliente/);
+
+  // A Controladoria registra a aprovação: abertura e SLA a partir da data informada.
+  await signIn('controladoria@demo.local');
+  await assert.rejects(apiModule.api.post(`/api/orders/${orderId}/approval`, { date: '2000-01-01', justification: 'x' }),
+    (e) => e.status === 422 && 'date' in e.fields);
+  const approved = await apiModule.api.post(`/api/orders/${orderId}/approval`, { date: todayIso, justification: null });
+  assert.equal(approved.summary.approvalStatus, 'APPROVED');
+  assert.equal(approved.summary.clientDecisionDate, todayIso);
+  assert.equal(approved.approvalRecordedByName, 'Clara Controladoria (demo)');
+  assert.ok(approved.approvalRecordedAt);
+  for (const p of approved.positions) {
+    assert.equal(p.openedAt, todayIso);
+    assert.ok(p.slaSituation, 'SLA calculado depois da aprovação');
+  }
+  await assert.rejects(apiModule.api.post(`/api/orders/${orderId}/approval`, { date: todayIso, justification: null }),
+    (e) => e.status === 422, 'não aprova duas vezes');
+  const approvedScreen = await open(`/pedidos/${orderId}`, 'Pedido');
+  assert.match(approvedScreen.textContent, /registrada por Clara Controladoria/);
+
+  await signIn('dp@demo.local');
+  const approvedNote = (await apiModule.api.get('/api/notifications')).find((n) => n.type === 'ORDER_APPROVED' && n.entityId === orderId);
+  assert.ok(approvedNote, 'DP notificado da aprovação');
+  assert.match(approvedNote.message, /Status: Aprovado/);
+  await open('/notificacoes', 'Notificações');
+
+  // RH segue o fluxo depois da aprovação.
+  await signIn('rh@demo.local');
+  assert.ok((await apiModule.api.get(`/api/positions/${first.id}`)).allowedActions.includes('APPROVE_CANDIDATE'));
+  assert.equal((await apiModule.api.get(`/api/positions/${second.id}`)).summary.openedAt, todayIso);
+
+  // "Cliente não aprovou": encerra todas as posições, sem perda, e notifica todos.
+  await signIn('comercial@demo.local');
+  const other = await apiModule.api.post('/api/orders', { ...body, quantity: 1 });
+  await assert.rejects(apiModule.api.post(`/api/orders/${other.summary.id}/rejection`, { date: todayIso, reason: ' ' }),
+    (e) => e.status === 422 && 'reason' in e.fields);
+  const rejected = await apiModule.api.post(`/api/orders/${other.summary.id}/rejection`, { date: todayIso, reason: 'Cliente congelou as contratações' });
+  assert.equal(rejected.summary.approvalStatus, 'NOT_APPROVED');
+  assert.equal(rejected.notApprovedReason, 'Cliente congelou as contratações');
+  for (const p of rejected.positions) {
+    assert.equal(p.status, 'CLOSED_CLIENT_CANCELLED');
+    if (p.lost !== null) assert.equal(p.lost, 0);
+  }
+  await assert.rejects(apiModule.api.post(`/api/orders/${other.summary.id}/positions`, { quantity: 1, desiredStartDate: todayIso, justification: null }),
+    (e) => e.status === 422);
+  const rejectedScreen = await open(`/pedidos/${other.summary.id}`, 'Pedido');
+  assert.match(rejectedScreen.textContent, /O cliente não aprovou o pedido/);
+
+  await signIn('nacc@demo.local');
+  assert.ok((await apiModule.api.get('/api/notifications')).some((n) => n.type === 'ORDER_NOT_APPROVED' && n.entityId === other.summary.id),
+    'NACC notificado da recusa');
+
+  await signIn('gestor@demo.local');
+  const painel = await open('/', 'Painel');
+  assert.match(painel.textContent, /Aguardando aprovação do cliente/);
+});
+
+test('JobConvo no pedido: uma publicação para todas as posições, atualização refletida e herança', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const todayIso = ui.today();
+  const contracts = await apiModule.api.get('/api/contracts', { onlyActive: true });
+  let contract;
+  let roles = [];
+  for (const c of contracts.filter((x) => x.contractingUnitId)) {
+    roles = await apiModule.api.get('/api/orders/job-roles', { contractId: c.id });
+    if (roles.length) { contract = c; break; }
+  }
+  const created = await apiModule.api.post('/api/orders', {
+    contractId: contract.id, modality: contract.modalities[0], jobRoleId: roles[0].id, quantity: 2,
+    workLocationId: contract.contractingUnitId, clientRequestDate: todayIso, desiredStartDate: todayIso, termType: 'INDEFINITE',
+    termEndDate: null, termDurationDays: null, notes: null, registeredAt: todayIso, justification: null,
+  });
+  const orderId = created.summary.id;
+  assert.equal(created.jobconvo, null);
+  assert.equal(created.canRecordJobconvo, false, 'só o RH registra a publicação');
+  await assert.rejects(apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: true, code: 'X', publishedAt: todayIso }),
+    (e) => e.status === 403);
+
+  // A Gestora de RH distribui o pedido para a Rita.
+  await signIn('gestor.rh@demo.local');
+  const ritaUser = (await apiModule.api.get('/api/users/by-role/RH')).find((u) => u.name === 'Rita RH (demo)');
+  await apiModule.api.put(`/api/orders/${orderId}/rh-analysts`, { analystIds: [ritaUser.id] });
+  // RH: a ação fica no pedido; a posição não tem mais "Informar vaga no JobConvo".
+  await signIn('rh@demo.local');
+  const before = await apiModule.api.get(`/api/orders/${orderId}`);
+  assert.equal(before.canRecordJobconvo, true);
+  assert.ok(before.positions.every((p) => p.status === 'OPEN'));
+  const orderScreen = await open(`/pedidos/${orderId}`, 'Pedido');
+  assert.match(orderScreen.textContent, /Publicação ainda não informada/);
+  const publishButton = [...orderScreen.querySelectorAll('button')].find((b) => b.textContent === 'Informar publicação no JobConvo');
+  assert.ok(publishButton, 'botão no pedido');
+  publishButton.click();
+  const modal = document.getElementById('modal-area').querySelector('.modal');
+  assert.ok(modal?.querySelector('[data-campo="code"]'), 'janela da publicação');
+  modal.querySelector('.modal-fechar').click();
+  const positionBefore = await apiModule.api.get(`/api/positions/${created.positions[0].id}`);
+  assert.ok(!positionBefore.allowedActions.includes('START_RECRUITING'));
+
+  // Publicado exige código e data (não futura).
+  await assert.rejects(apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: true, code: ' ', publishedAt: todayIso }),
+    (e) => e.status === 422 && 'code' in e.fields);
+  await assert.rejects(apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: true, code: 'JC-1', publishedAt: '2999-01-01' }),
+    (e) => e.status === 422 && 'publishedAt' in e.fields);
+
+  // Uma publicação: as duas posições entram em recrutamento com o mesmo código.
+  const published = await apiModule.api.post(`/api/orders/${orderId}/jobconvo`,
+    { published: true, code: 'JC-PED-1', publishedAt: todayIso, justification: 'Publicação única para o pedido.' });
+  assert.equal(published.jobconvo.published, true);
+  assert.equal(published.jobconvo.recordedByName, 'Rita RH (demo)');
+  assert.ok(published.positions.every((p) => p.status === 'RECRUITING' && p.jobconvoCode === 'JC-PED-1'));
+  assert.equal(published.summary.jobconvoCode, 'JC-PED-1');
+
+  // Atualizar no pedido reflete em todas as posições.
+  await apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: true, code: 'JC-PED-2', publishedAt: todayIso, justification: null });
+  for (const position of created.positions) {
+    const detail = await apiModule.api.get(`/api/positions/${position.id}`);
+    assert.equal(detail.jobconvoCode, 'JC-PED-2');
+    assert.equal(detail.jobconvoPublishedAt, todayIso);
+  }
+  const found = await apiModule.api.get('/api/positions', { search: 'JC-PED-2' });
+  assert.equal(found.items.length, 2, 'busca pelo código da publicação');
+  const positionScreen = await open(`/posicoes/${created.positions[1].id}`, 'Posição');
+  assert.match(positionScreen.textContent, /JC-PED-2 · publicada em/);
+
+  // Posição acrescentada depois herda a publicação.
+  await signIn('comercial@demo.local');
+  const grown = await apiModule.api.post(`/api/orders/${orderId}/positions`, { quantity: 1, desiredStartDate: todayIso, justification: null });
+  const added = grown.positions.find((p) => !created.positions.some((c) => c.id === p.id));
+  assert.equal(added.status, 'RECRUITING');
+  assert.equal(added.jobconvoCode, 'JC-PED-2');
+
+  // Sem publicação: exige justificativa; o código sai de todas as posições.
+  await signIn('rh@demo.local');
+  await assert.rejects(apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: false, code: null, publishedAt: null, justification: '' }),
+    (e) => e.status === 422 && 'justification' in e.fields);
+  const notPublished = await apiModule.api.post(`/api/orders/${orderId}/jobconvo`,
+    { published: false, code: null, publishedAt: null, justification: 'Candidatos indicados pelo cliente.' });
+  assert.equal(notPublished.jobconvo.published, false);
+  assert.ok(notPublished.positions.every((p) => p.jobconvoCode === null && p.status === 'RECRUITING'));
+  const listScreen = await open('/pedidos', 'Pedidos');
+  assert.match(listScreen.textContent, /Sem publicação/);
+});
+
+test('RH: Gestor de RH distribui o pedido; o Analista de RH age só nos pedidos atribuídos', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const todayIso = ui.today();
+  const contracts = await apiModule.api.get('/api/contracts', { onlyActive: true });
+  let contract;
+  let roles = [];
+  for (const c of contracts.filter((x) => x.contractingUnitId)) {
+    roles = await apiModule.api.get('/api/orders/job-roles', { contractId: c.id });
+    if (roles.length) { contract = c; break; }
+  }
+  const created = await apiModule.api.post('/api/orders', {
+    contractId: contract.id, modality: contract.modalities[0], jobRoleId: roles[0].id, quantity: 1,
+    workLocationId: contract.contractingUnitId, clientRequestDate: todayIso, desiredStartDate: todayIso, termType: 'INDEFINITE',
+    termEndDate: null, termDurationDays: null, notes: null, registeredAt: todayIso, justification: null,
+  });
+  const orderId = created.summary.id;
+  const positionId = created.positions[0].id;
+  assert.equal(created.summary.awaitingRhAssignment, true);
+  assert.equal(created.canAssignRh, false, 'só o Gestor de RH distribui');
+  const commercialUsers = await apiModule.api.get('/api/users/by-role/COMMERCIAL');
+
+  // Sem responsável: a analista não executa o recrutamento do pedido.
+  await signIn('rh@demo.local');
+  const unassigned = await apiModule.api.get('/api/orders', { rh: 'UNASSIGNED' });
+  assert.ok(unassigned.some((o) => o.id === orderId), 'filtro "Aguardando atribuição do RH"');
+  const asAnalyst = await apiModule.api.get(`/api/orders/${orderId}`);
+  assert.equal(asAnalyst.canRecordJobconvo, false);
+  assert.equal(asAnalyst.canAssignRh, false);
+  await assert.rejects(apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: true, code: 'JC-RH', publishedAt: todayIso }),
+    (e) => e.status === 403 && /analistas de RH responsáveis/.test(e.message));
+  await assert.rejects(apiModule.api.put(`/api/orders/${orderId}/rh-analysts`, { analystIds: [] }), (e) => e.status === 403);
+  const unassignedScreen = await open(`/pedidos/${orderId}`, 'Pedido');
+  assert.match(unassignedScreen.textContent, /Aguardando atribuição do RH/);
+
+  // Gestora de RH: só analistas ativos; inclui duas, depois substitui.
+  await signIn('gestor.rh@demo.local');
+  const analysts = await apiModule.api.get('/api/users/by-role/RH');
+  const rita = analysts.find((u) => u.name === 'Rita RH (demo)');
+  const renato = analysts.find((u) => u.name === 'Renato RH (demo)');
+  const manager = await apiModule.api.get(`/api/orders/${orderId}`);
+  assert.equal(manager.canAssignRh, true);
+  assert.equal(manager.canRecordJobconvo, true, 'o Gestor de RH também executa');
+  await assert.rejects(apiModule.api.put(`/api/orders/${orderId}/rh-analysts`, { analystIds: [commercialUsers[0].id] }),
+    (e) => e.status === 422 && 'analystIds' in e.fields);
+  const both = await apiModule.api.put(`/api/orders/${orderId}/rh-analysts`, { analystIds: [rita.id, renato.id] });
+  assert.deepEqual(both.rhAnalysts.map((a) => a.name).sort(), ['Renato RH (demo)', 'Rita RH (demo)']);
+  assert.equal(both.summary.awaitingRhAssignment, false);
+  const replaced = await apiModule.api.put(`/api/orders/${orderId}/rh-analysts`, { analystIds: [renato.id] });
+  assert.deepEqual(replaced.rhAnalysts.map((a) => a.name), ['Renato RH (demo)']);
+  const ritaHistory = replaced.rhAssignmentHistory.find((h) => h.userId === rita.id);
+  assert.ok(ritaHistory.removedAt, 'histórico guarda a remoção');
+  assert.equal(ritaHistory.removedByName, 'Helena Gestora de RH (demo)');
+  assert.equal(ritaHistory.assignedByName, 'Helena Gestora de RH (demo)');
+  const managerScreen = await open(`/pedidos/${orderId}`, 'Pedido');
+  assert.match(managerScreen.textContent, /Histórico de responsáveis \(2\)/);
+  assert.ok([...managerScreen.querySelectorAll('button')].some((b) => b.textContent === 'Alterar analistas'));
+  const painel = await open('/', 'Painel');
+  assert.match(painel.textContent, /Aguardando atribuição do RH/);
+
+  // Rita foi avisada da inclusão e da remoção; fora da equipe, não age e a tela explica.
+  await signIn('rh@demo.local');
+  const notes = (await apiModule.api.get('/api/notifications')).filter((n) => n.entityId === orderId);
+  assert.ok(notes.some((n) => n.type === 'RH_ASSIGNED'), 'aviso de inclusão');
+  assert.ok(notes.some((n) => n.type === 'RH_UNASSIGNED'), 'aviso de remoção');
+  const outside = await apiModule.api.get(`/api/positions/${positionId}`);
+  assert.equal(outside.canActAsRh, false);
+  assert.deepEqual(outside.rhAnalysts.map((a) => a.name), ['Renato RH (demo)']);
+  const outsideScreen = await open(`/posicoes/${positionId}`, 'Posição');
+  assert.match(outsideScreen.textContent, /Você não está entre os analistas de RH responsáveis/);
+
+  // De volta à equipe, a Rita registra a publicação e vê a posição em "Meus pedidos".
+  await signIn('gestor.rh@demo.local');
+  await apiModule.api.put(`/api/orders/${orderId}/rh-analysts`, { analystIds: [renato.id, rita.id] });
+  await signIn('rh@demo.local');
+  const published = await apiModule.api.post(`/api/orders/${orderId}/jobconvo`,
+    { published: true, code: 'JC-RH-1', publishedAt: todayIso, justification: null });
+  assert.equal(published.positions[0].status, 'RECRUITING');
+  assert.deepEqual([...published.positions[0].rhAnalystNames].sort(), ['Renato RH (demo)', 'Rita RH (demo)']);
+  const mine = await apiModule.api.get('/api/positions', { rh: 'MINE' });
+  assert.ok(mine.items.some((p) => p.id === positionId), 'filtro "Meus pedidos" nas posições');
+  const mineOrders = await apiModule.api.get('/api/orders', { rh: 'MINE' });
+  assert.ok(mineOrders.some((o) => o.id === orderId));
+  await open('/posicoes?rh=MINE', 'Posições');
+});
+
+test('Candidato selecionado: dados por posição, CPF validado e único, correção com histórico e dados restritos', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const todayIso = ui.today();
+  const contracts = await apiModule.api.get('/api/contracts', { onlyActive: true });
+  let contract;
+  let roles = [];
+  for (const c of contracts.filter((x) => x.contractingUnitId)) {
+    roles = await apiModule.api.get('/api/orders/job-roles', { contractId: c.id });
+    if (roles.length) { contract = c; break; }
+  }
+  const created = await apiModule.api.post('/api/orders', {
+    contractId: contract.id, modality: contract.modalities[0], jobRoleId: roles[0].id, quantity: 2,
+    workLocationId: contract.contractingUnitId, clientRequestDate: todayIso, desiredStartDate: todayIso, termType: 'INDEFINITE',
+    termEndDate: null, termDurationDays: null, notes: null, registeredAt: todayIso, justification: null,
+  });
+  const orderId = created.summary.id;
+  const [first, second] = created.positions.map((p) => p.id);
+  await apiModule.api.post(`/api/orders/${orderId}/approval`, { date: todayIso, justification: null });
+
+  await signIn('gestor.rh@demo.local');
+  const rita = (await apiModule.api.get('/api/users/by-role/RH')).find((u) => u.name === 'Rita RH (demo)');
+  await apiModule.api.put(`/api/orders/${orderId}/rh-analysts`, { analystIds: [rita.id] });
+
+  await signIn('rh@demo.local');
+  await apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: true, code: 'JC-CAND', publishedAt: todayIso, justification: null });
+
+  // "Adicionar Candidato" abre o formulário com os dados do candidato.
+  const screen = await open(`/posicoes/${first}`, 'Posição');
+  const approveButton = [...screen.querySelectorAll('button')].find((b) => b.textContent === 'Adicionar Candidato');
+  approveButton.click();
+  const modal = document.getElementById('modal-area').querySelector('.modal');
+  for (const name of ['fullName', 'birthDate', 'sex', 'cpf']) assert.ok(modal.querySelector(`[data-campo="${name}"]`), name);
+  modal.querySelector('.modal-fechar').click();
+
+  const candidate = { fullName: 'Maria da Silva', birthDate: '1995-04-10', sex: 'FEMALE', cpf: '529.982.247-25' };
+  const approve = (id, data) => apiModule.api.post(`/api/positions/${id}/candidate-approval`,
+    { date: todayIso, justification: null, ...data });
+  await assert.rejects(approve(first, { ...candidate, cpf: '529.982.247-24' }), (e) => e.status === 422 && 'cpf' in e.fields);
+  await assert.rejects(approve(first, { ...candidate, birthDate: '2999-01-01' }), (e) => e.status === 422 && 'birthDate' in e.fields);
+  await assert.rejects(approve(first, { ...candidate, sex: null }), (e) => e.status === 422 && 'sex' in e.fields);
+
+  const approved = await approve(first, candidate);
+  assert.equal(approved.summary.status, 'CANDIDATE_APPROVED');
+  assert.equal(approved.candidate.cpf, '529.982.247-25');
+  assert.equal(approved.candidate.restricted, false);
+  assert.equal(approved.candidate.recordedByName, 'Rita RH (demo)');
+  assert.equal(approved.summary.candidateName, 'Maria da Silva');
+
+  // Um candidato por posição: o mesmo CPF não ocupa outra posição aberta.
+  await assert.rejects(approve(second, candidate),
+    (e) => e.status === 422 && 'cpf' in e.fields && /já é o candidato selecionado da posição/.test(e.message));
+  const other = await approve(second, { fullName: 'João Pereira', birthDate: '1990-01-01', sex: 'MALE', cpf: '111.444.777-35' });
+  assert.equal(other.candidate.fullName, 'João Pereira');
+
+  // Correção: quem alterou e quando; os valores anteriores ficam no histórico.
+  const corrected = await apiModule.api.put(`/api/positions/${first}/candidate`,
+    { fullName: 'Maria da Silva Santos', birthDate: '1995-04-10', sex: 'NOT_INFORMED', cpf: '52998224725', justification: 'Nome completo' });
+  assert.equal(corrected.candidate.fullName, 'Maria da Silva Santos');
+  assert.equal(corrected.candidate.updatedByName, 'Rita RH (demo)');
+  assert.ok(corrected.history.some((h) => h.action === 'CORRECT_CANDIDATE' && h.field === 'FullName'
+    && h.oldValue === 'Maria da Silva' && h.newValue === 'Maria da Silva Santos'));
+  const detailScreen = await open(`/posicoes/${first}`, 'Posição');
+  assert.match(detailScreen.textContent, /Candidato selecionado/);
+  assert.match(detailScreen.textContent, /529\.982\.247-25/);
+  assert.ok([...detailScreen.querySelectorAll('button')].some((b) => b.textContent === 'Corrigir dados'));
+
+  // Perfis fora do RH do pedido, NACC e DP: nome e CPF mascarado; nascimento e sexo restritos, também no histórico.
+  await signIn('comercial@demo.local');
+  const restricted = await apiModule.api.get(`/api/positions/${first}`);
+  assert.equal(restricted.candidate.restricted, true);
+  assert.equal(restricted.candidate.cpf, '***.982.247-**');
+  assert.equal(restricted.candidate.birthDate, null);
+  assert.equal(restricted.candidate.sex, null);
+  const sexChange = restricted.history.find((h) => h.field === 'Sex');
+  assert.equal(sexChange.newValue, '(restrito)');
+  assert.ok(!restricted.allowedActions.includes('CORRECT_CANDIDATE'));
+  const restrictedScreen = await open(`/posicoes/${first}`, 'Posição');
+  assert.match(restrictedScreen.textContent, /\*\*\*\.982\.247-\*\*/);
+  assert.doesNotMatch(restrictedScreen.textContent, /529\.982\.247-25/);
+
+  await signIn('nacc@demo.local');
+  assert.equal((await apiModule.api.get(`/api/positions/${first}`)).candidate.restricted, false, 'o NACC vê os dados');
+
+  // Desistência: o candidato vai para "anteriores" e o CPF fica livre.
+  await signIn('rh@demo.local');
+  const withdrew = await apiModule.api.post(`/api/positions/${first}/candidate-withdrawal`, { justification: null });
+  assert.equal(withdrew.candidate, null);
+  assert.equal(withdrew.previousCandidates[0].withdrawalReason, 'Candidato desistiu');
+  const again = await approve(first, { ...candidate, fullName: 'Maria da Silva Santos' });
+  assert.equal(again.candidate.cpf, '529.982.247-25');
+  assert.equal(again.previousCandidates.length, 1);
+});
+
+test('1º dia efetivo: dados do candidato e da admissão preenchidos, justificativa obrigatória e evidência anexada', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const todayIso = ui.today();
+  const contracts = await apiModule.api.get('/api/contracts', { onlyActive: true });
+  let contract;
+  let roles = [];
+  for (const c of contracts.filter((x) => x.contractingUnitId)) {
+    roles = await apiModule.api.get('/api/orders/job-roles', { contractId: c.id });
+    if (roles.length) { contract = c; break; }
+  }
+  const created = await apiModule.api.post('/api/orders', {
+    contractId: contract.id, modality: contract.modalities[0], jobRoleId: roles[0].id, quantity: 1,
+    workLocationId: contract.contractingUnitId, clientRequestDate: todayIso, desiredStartDate: todayIso, termType: 'INDEFINITE',
+    termEndDate: null, termDurationDays: null, notes: null, registeredAt: todayIso, justification: null,
+  });
+  const orderId = created.summary.id;
+  const positionId = created.positions[0].id;
+  await apiModule.api.post(`/api/orders/${orderId}/approval`, { date: todayIso, justification: null });
+
+  await signIn('gestor.rh@demo.local');
+  const rita = (await apiModule.api.get('/api/users/by-role/RH')).find((u) => u.name === 'Rita RH (demo)');
+  await apiModule.api.put(`/api/orders/${orderId}/rh-analysts`, { analystIds: [rita.id] });
+
+  // RH: candidato aprovado e admissão com a matrícula (opcional).
+  await signIn('rh@demo.local');
+  await apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: true, code: 'JC-1DIA', publishedAt: todayIso, justification: null });
+  await apiModule.api.post(`/api/positions/${positionId}/candidate-approval`, { date: todayIso, justification: null,
+    fullName: 'Francisco Teste', birthDate: '1992-07-20', sex: 'MALE', cpf: '935.411.347-80' });
+  // Admissão sem matrícula (opcional): o NACC ainda não consegue confirmar.
+  const admitted = await apiModule.api.post(`/api/positions/${positionId}/admission`,
+    { date: todayIso, registration: null, justification: null });
+  assert.equal(admitted.admissionRegistration, null);
+  assert.equal(admitted.summary.status, 'IN_ADMISSION', 'sem matrícula, a admissão não está concluída');
+  assert.ok(!admitted.allowedActions.includes('CONFIRM_FIRST_DAY'));
+
+  await signIn('nacc@demo.local');
+  const pending = await open(`/posicoes/${positionId}`, 'Posição');
+  assert.match(pending.textContent, /Dados pendentes para a confirmação do 1º dia/);
+  await assert.rejects(apiModule.api.post(`/api/positions/${positionId}/first-day`, { date: todayIso, justification: 'Ok' }),
+    (e) => e.status === 422 && 'employeeRegistration' in e.fields);
+  await assert.rejects(apiModule.api.put(`/api/positions/${positionId}/admission-registration`, { registration: 'X' }),
+    (e) => e.status === 403, 'o NACC não altera a matrícula');
+
+  // A correção é na origem: o DP (ou o RH do pedido) informa a matrícula da admissão.
+  await signIn('dp@demo.local');
+  const withRegistration = await apiModule.api.put(`/api/positions/${positionId}/admission-registration`,
+    { registration: 'M-900', justification: 'Matrícula gerada pelo DP' });
+  assert.equal(withRegistration.admissionRegistration, 'M-900');
+  assert.equal(withRegistration.summary.status, 'AWAITING_FIRST_DAY', 'admissão concluída: aguarda o 1º dia');
+  const awaitingList = await apiModule.api.get('/api/positions', { status: 'AWAITING_FIRST_DAY' });
+  assert.ok(awaitingList.items.some((p) => p.id === positionId), 'filtro pelo novo status');
+
+  // NACC: nome e matrícula da origem, somente leitura.
+  await signIn('nacc@demo.local');
+  const screen = await open(`/posicoes/${positionId}`, 'Posição');
+  [...screen.querySelectorAll('button')].find((b) => b.textContent === 'Confirmar 1º dia efetivo').click();
+  const modal = document.getElementById('modal-area').querySelector('.modal');
+  const nameInput = modal.querySelector('[data-campo="employeeName"]').querySelector('input');
+  const registrationInput = modal.querySelector('[data-campo="employeeRegistration"]').querySelector('input');
+  assert.equal(nameInput.value, 'Francisco Teste');
+  assert.equal(registrationInput.value, 'M-900');
+  assert.ok(nameInput.hasAttribute('readonly') && registrationInput.hasAttribute('readonly'), 'somente leitura');
+  assert.ok(modal.querySelector('[data-campo="evidence"]'), 'campo "Anexar evidência"');
+  modal.querySelector('.modal-fechar').click();
+
+  // Mesmo que alguém envie outro nome ou matrícula, o servidor usa os dados da origem.
+  const fields = { date: todayIso, employeeName: 'Outro Nome', employeeRegistration: 'ZZZ' };
+  await assert.rejects(apiModule.api.post(`/api/positions/${positionId}/first-day`, { ...fields, justification: ' ' }),
+    (e) => e.status === 422 && 'justification' in e.fields);
+  const formWith = (bytes, name) => {
+    const form = new FormData();
+    Object.entries({ ...fields, justification: 'Cliente confirmou a presença por e-mail.' }).forEach(([k, v]) => form.append(k, v));
+    form.append('evidence', new Blob([bytes]), name);
+    return form;
+  };
+  await assert.rejects(apiModule.api.postForm(`/api/positions/${positionId}/first-day`, formWith(new Uint8Array([0x4d, 0x5a, 0x90, 0]), 'presenca.pdf')),
+    (e) => e.status === 422 && 'evidence' in e.fields);
+  const pdf = new TextEncoder().encode('%PDF-1.4\n% evidência de teste\n');
+  const confirmed = await apiModule.api.postForm(`/api/positions/${positionId}/first-day`, formWith(pdf, 'presenca.pdf'));
+  assert.equal(confirmed.summary.status, 'FILLED');
+  assert.equal(confirmed.employeeName, 'Francisco Teste', 'nome do cadastro do candidato');
+  assert.equal(confirmed.employeeRegistration, 'M-900', 'matrícula da admissão');
+  assert.equal(confirmed.firstDay.justification, 'Cliente confirmou a presença por e-mail.');
+  assert.equal(confirmed.firstDay.confirmedByName, 'Nina NACC (demo)');
+  assert.ok(confirmed.firstDay.confirmedAt);
+  assert.equal(confirmed.firstDay.evidence.fileName, 'presenca.pdf');
+  assert.equal(confirmed.firstDay.evidence.contentType, 'application/pdf');
+  assert.equal(confirmed.firstDay.evidence.canDownload, true);
+  assert.ok(confirmed.history.some((h) => h.action === 'CONFIRM_FIRST_DAY'), 'histórico da posição');
+
+  const evidenceUrl = `/api/positions/${positionId}/evidences/${confirmed.firstDay.evidence.id}`;
+  const download = await fetch(evidenceUrl);
+  assert.equal(download.status, 200);
+  assert.equal(download.headers.get('content-type'), 'application/pdf');
+  assert.equal(new TextDecoder().decode(await download.arrayBuffer()), '%PDF-1.4\n% evidência de teste\n');
+  const filledScreen = await open(`/posicoes/${positionId}`, 'Posição');
+  assert.match(filledScreen.textContent, /Confirmação do 1º dia efetivo/);
+  assert.match(filledScreen.textContent, /presenca\.pdf/);
+
+  // Depois da confirmação, a matrícula fica preservada.
+  await signIn('dp@demo.local');
+  await assert.rejects(apiModule.api.put(`/api/positions/${positionId}/admission-registration`, { registration: 'M-901' }),
+    (e) => e.status === 422);
+
+  // Fora do RH do pedido, NACC, DP e Gestor: vê que existe evidência, sem baixar.
+  await signIn('comercial@demo.local');
+  const restricted = await apiModule.api.get(`/api/positions/${positionId}`);
+  assert.equal(restricted.firstDay.evidence.canDownload, false);
+  assert.equal((await fetch(evidenceUrl)).status, 403);
+  await signIn('gestor@demo.local');
+  assert.equal((await fetch(evidenceUrl)).status, 200, 'o Gestor baixa');
+});
+
+test('Reposição como novo ciclo da vaga: uma linha por vaga, histórico de ocupantes e indicadores', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const todayIso = ui.today();
+  const contracts = await apiModule.api.get('/api/contracts', { onlyActive: true });
+  let contract;
+  let roles = [];
+  for (const c of contracts.filter((x) => x.contractingUnitId)) {
+    roles = await apiModule.api.get('/api/orders/job-roles', { contractId: c.id });
+    if (roles.length) { contract = c; break; }
+  }
+  const created = await apiModule.api.post('/api/orders', {
+    contractId: contract.id, modality: contract.modalities[0], jobRoleId: roles[0].id, quantity: 2,
+    workLocationId: contract.contractingUnitId, clientRequestDate: todayIso, desiredStartDate: todayIso, termType: 'INDEFINITE',
+    termEndDate: null, termDurationDays: null, notes: null, registeredAt: todayIso, justification: null,
+  });
+  const orderId = created.summary.id;
+  const originId = created.positions[0].id;
+  await apiModule.api.post(`/api/orders/${orderId}/approval`, { date: todayIso, justification: null });
+
+  // Gestora de RH executa o recrutamento até a admissão com matrícula; NACC confirma o 1º dia.
+  await signIn('gestor.rh@demo.local');
+  await apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: true, code: 'JC-CICLO', publishedAt: todayIso, justification: null });
+  await apiModule.api.post(`/api/positions/${originId}/candidate-approval`, { date: todayIso, justification: null,
+    fullName: 'Primeiro Ocupante', birthDate: '1990-05-05', sex: 'MALE', cpf: '274.628.610-62' });
+  await apiModule.api.post(`/api/positions/${originId}/admission`, { date: todayIso, registration: 'M-CICLO-1', justification: null });
+  await signIn('nacc@demo.local');
+  await apiModule.api.post(`/api/positions/${originId}/first-day`, { date: todayIso, justification: 'Cliente confirmou.' });
+
+  // DP registra o desligamento: a vaga 1 abre o 2º ciclo, sem criar uma 3ª linha.
+  await signIn('dp@demo.local');
+  const termination = await apiModule.api.post('/api/terminations', {
+    originPositionId: originId, lastWorkedDay: todayIso, source: 'DP', terminationType: 'RESIGNATION',
+    notes: 'Pediu demissão', registeredAt: todayIso, justification: null,
+  });
+
+  await signIn('comercial@demo.local');
+  const order = await apiModule.api.get(`/api/orders/${orderId}`);
+  assert.equal(order.slots.length, 2, 'uma linha por vaga contratada');
+  const slot = order.slots.find((s) => s.number === 1);
+  assert.equal(slot.current.id, termination.replacementPositionId);
+  assert.equal(slot.current.slotNumber, 1);
+  assert.equal(slot.current.cycle, 2);
+  assert.equal(slot.current.status, 'AWAITING_CONFIRMATION');
+  assert.equal(slot.replacementCount, 1);
+  assert.equal(slot.occupants.length, 2);
+  const left = slot.occupants.find((x) => x.cycle === 1);
+  assert.equal(left.name, 'Primeiro Ocupante');
+  assert.equal(left.registration, 'M-CICLO-1');
+  assert.equal(left.leftAt, todayIso);
+  assert.equal(left.exitType, 'RESIGNATION');
+  assert.equal(left.exitRegisteredByName, 'Davi DP (demo)');
+  assert.equal(left.firstDayConfirmedByName, 'Nina NACC (demo)');
+  assert.equal(left.replacedByPositionId, termination.replacementPositionId);
+  assert.equal(order.summary.filledPositions, 0, 'o desligado não conta como preenchido');
+  assert.equal(order.summary.quantity, 2);
+  assert.equal(order.summary.replacementCount, 1);
+
+  // Lista geral: só o ciclo atual por padrão; os anteriores com "Incluir ciclos anteriores".
+  const current = await apiModule.api.get('/api/positions', { orderId });
+  assert.deepEqual(current.items.map((p) => `${p.slotNumber}/${p.cycle}`).sort(), ['1/2', '2/1']);
+  const all = await apiModule.api.get('/api/positions', { orderId, allCycles: true });
+  assert.equal(all.items.length, 3);
+
+  const orderScreen = await open(`/pedidos/${orderId}`, 'Pedido');
+  assert.ok([...orderScreen.querySelectorAll('button')].some((b) => b.textContent === 'Ver histórico de ocupantes (2)'));
+  assert.match(orderScreen.textContent, /2 contratadas · 0 preenchidas agora · 1 em reposição · 1 reposição\(ões\) realizada\(s\)/);
+  assert.match(orderScreen.textContent, new RegExp(`${order.summary.number}-1`));
+  assert.doesNotMatch(orderScreen.textContent, new RegExp(`${order.summary.number}-3`), 'a reposição não vira uma 3ª vaga');
+
+  // O detalhe do ciclo anterior aponta para o ciclo atual.
+  const previous = await open(`/posicoes/${originId}`, 'Posição');
+  assert.match(previous.textContent, /Ciclo anterior da vaga/);
+  const replacementScreen = await open(`/posicoes/${termination.replacementPositionId}`, 'Posição');
+  assert.match(replacementScreen.textContent, /Reposição nº 1/);
+});

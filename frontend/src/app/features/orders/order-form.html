@@ -1,0 +1,142 @@
+<div class="page-header">
+  <div>
+    <a mat-button routerLink="/pedidos"><mat-icon>arrow_back</mat-icon> Pedidos</a>
+    <h1>Novo pedido</h1>
+  </div>
+</div>
+
+@if (catalogs.isLoading() || saving()) {
+  <mat-progress-bar mode="indeterminate" />
+}
+
+<form [formGroup]="form" (ngSubmit)="submit()" class="two-columns">
+  <mat-card appearance="outlined">
+    <mat-card-content class="form-grid">
+      <mat-form-field>
+        <mat-label>Contrato</mat-label>
+        <mat-select formControlName="contractId">
+          @for (c of catalogs.value()?.contracts ?? []; track c.id) {
+            <mat-option [value]="c.id">{{ c.clientName }} — {{ c.name }}</mat-option>
+          }
+        </mat-select>
+        <mat-hint>Somente contratos ativos.</mat-hint>
+      </mat-form-field>
+
+      <div class="row">
+        <mat-form-field>
+          <mat-label>Modalidade</mat-label>
+          <mat-select formControlName="modality">
+            @for (m of contract()?.modalities ?? []; track m) {
+              <mat-option [value]="m">{{ m | label: modalityLabels }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        <mat-form-field>
+          <mat-label>Quantidade</mat-label>
+          <input matInput type="number" min="1" max="1000" formControlName="quantity" />
+        </mat-form-field>
+      </div>
+
+      <mat-form-field>
+        <mat-label>Cargo</mat-label>
+        <mat-select formControlName="jobRoleId">
+          @for (j of activeJobRoles(); track j.id) {
+            <mat-option [value]="j.id">{{ j.name }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+
+      <mat-form-field>
+        <mat-label>Local de trabalho</mat-label>
+        <mat-select formControlName="workLocationId">
+          @for (l of locations(); track l.id) {
+            <mat-option [value]="l.id">{{ l.name }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+
+      <div class="row">
+        <mat-form-field>
+          <mat-label>Data da solicitação do cliente</mat-label>
+          <input matInput type="date" formControlName="clientRequestDate" />
+        </mat-form-field>
+        <mat-form-field>
+          <mat-label>Início desejado</mat-label>
+          <input matInput type="date" formControlName="desiredStartDate" />
+        </mat-form-field>
+      </div>
+
+      <mat-form-field>
+        <mat-label>Vigência</mat-label>
+        <mat-select formControlName="termType">
+          @for (o of termOptions; track o.value) {
+            <mat-option [value]="o.value">{{ o.label }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+      @if (form.controls.termType.value === 'FIXED_END') {
+        <mat-form-field>
+          <mat-label>Data fim da vigência</mat-label>
+          <input matInput type="date" formControlName="termEndDate" />
+        </mat-form-field>
+      }
+      @if (form.controls.termType.value === 'PRESERVED_DURATION') {
+        <mat-form-field>
+          <mat-label>Duração (dias)</mat-label>
+          <input matInput type="number" min="1" formControlName="termDurationDays" />
+        </mat-form-field>
+      }
+
+      <mat-form-field>
+        <mat-label>Observações</mat-label>
+        <textarea matInput rows="3" formControlName="notes" maxlength="2000"></textarea>
+      </mat-form-field>
+
+      <mat-form-field>
+        <mat-label>Data de registro</mat-label>
+        <input matInput type="date" formControlName="registeredAt" />
+        <mat-hint>
+          @if (auth.user()?.initialLoadOpen) {
+            Carga inicial aberta: informe a data original do pedido, se for o caso.
+          } @else {
+            Padrão: hoje. Data anterior exige justificativa.
+          }
+        </mat-hint>
+      </mat-form-field>
+      @if (retroactive()) {
+        <mat-form-field>
+          <mat-label>Justificativa da data retroativa</mat-label>
+          <textarea matInput rows="2" formControlName="justification" maxlength="1000"></textarea>
+        </mat-form-field>
+      }
+
+      @if (error()) {
+        <p class="error-text" role="alert">{{ error() }}</p>
+      }
+      <div class="actions">
+        <a mat-button routerLink="/pedidos">Cancelar</a>
+        <button mat-flat-button type="submit" [disabled]="saving()">Criar pedido</button>
+      </div>
+    </mat-card-content>
+  </mat-card>
+
+  <mat-card appearance="outlined" class="preview">
+    <mat-card-header>
+      <mat-card-title>Prévia</mat-card-title>
+      <mat-card-subtitle>{{ preview().length }} posição(ões) serão criadas como "Aberta"</mat-card-subtitle>
+    </mat-card-header>
+    <mat-card-content>
+      <ul class="preview-list">
+        @for (n of preview().slice(0, 50); track n) {
+          <li>
+            Posição {{ n }} · Vaga nova · início desejado {{ form.controls.desiredStartDate.value | dateBr }} ·
+            {{ form.controls.termType.value | label: termLabels }}
+          </li>
+        }
+        @if (preview().length > 50) {
+          <li class="muted">… e mais {{ preview().length - 50 }} posição(ões)</li>
+        }
+      </ul>
+    </mat-card-content>
+  </mat-card>
+</form>

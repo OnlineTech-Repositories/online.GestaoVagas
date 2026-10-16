@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/VacancyControl.Api/VacancyControl.Api.csproj" />
+    <Project Path="src/VacancyControl.Application/VacancyControl.Application.csproj" />
+    <Project Path="src/VacancyControl.Infrastructure/VacancyControl.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/VacancyControl.Tests/VacancyControl.Tests.csproj" />
+  </Folder>
+</Solution>

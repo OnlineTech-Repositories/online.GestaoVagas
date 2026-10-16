@@ -1,0 +1,50 @@
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+  margin: 16px 0 28px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--mat-sys-surface-container-low);
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-left: 4px solid var(--mat-sys-primary);
+  color: inherit;
+  text-decoration: none;
+}
+
+a.card:hover {
+  background: var(--mat-sys-surface-container);
+}
+
+.card-red {
+  border-left-color: var(--status-red);
+}
+
+.card-yellow {
+  border-left-color: var(--status-yellow);
+}
+
+.card-label {
+  font: var(--mat-sys-label-large);
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.card-value {
+  font: var(--mat-sys-headline-medium);
+  font-variant-numeric: tabular-nums;
+
+  &.money {
+    font: var(--mat-sys-title-large);
+  }
+}
+
+.card-note {
+  font: var(--mat-sys-body-small);
+  color: var(--mat-sys-on-surface-variant);
+}

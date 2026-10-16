@@ -1,0 +1,199 @@
+<div class="page-header">
+  <h1>Registrar desligamento</h1>
+</div>
+
+@if (saving()) {
+  <mat-progress-bar mode="indeterminate" />
+}
+
+<ng-template #commonFields>
+  <form [formGroup]="form" class="form-grid">
+    <div class="row">
+      <mat-form-field>
+        <mat-label>Último dia trabalhado</mat-label>
+        <input matInput type="date" formControlName="lastWorkedDay" />
+        <mat-hint>Pode ser uma data futura.</mat-hint>
+      </mat-form-field>
+      <mat-form-field>
+        <mat-label>Tipo de desligamento</mat-label>
+        <mat-select formControlName="terminationType">
+          @for (o of typeOptions; track o.value) {
+            <mat-option [value]="o.value">{{ o.label }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+    </div>
+    <div class="row">
+      <mat-form-field>
+        <mat-label>Origem da informação</mat-label>
+        <mat-select formControlName="source">
+          @for (o of sourceOptions; track o.value) {
+            <mat-option [value]="o.value">{{ o.label }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+      <mat-form-field>
+        <mat-label>Data de registro</mat-label>
+        <input matInput type="date" formControlName="registeredAt" />
+      </mat-form-field>
+    </div>
+    @if (retroactive()) {
+      <mat-form-field>
+        <mat-label>Justificativa da data de registro retroativa</mat-label>
+        <textarea matInput rows="2" formControlName="justification"></textarea>
+      </mat-form-field>
+    }
+    <mat-form-field>
+      <mat-label>Observações</mat-label>
+      <textarea matInput rows="2" formControlName="notes" maxlength="2000"></textarea>
+    </mat-form-field>
+  </form>
+</ng-template>
+
+<mat-tab-group (selectedTabChange)="error.set(null)">
+  <mat-tab label="Colaborador cadastrado">
+    <div class="two-columns tab-body">
+      <mat-card appearance="outlined">
+        <mat-card-header>
+          <mat-card-title>1. Colaborador</mat-card-title>
+          <mat-card-subtitle>Busque por nome ou matrícula entre as posições preenchidas</mat-card-subtitle>
+        </mat-card-header>
+        <mat-card-content>
+          <mat-form-field class="full">
+            <mat-label>Nome ou matrícula</mat-label>
+            <mat-icon matPrefix>search</mat-icon>
+            <input matInput [formControl]="search" />
+          </mat-form-field>
+          <mat-selection-list [multiple]="false" class="result-list">
+            @for (r of results(); track r.positionId) {
+              <mat-list-option [selected]="selected()?.positionId === r.positionId" (click)="selected.set(r)">
+                <span matListItemTitle>{{ r.employeeName }} · matr. {{ r.employeeRegistration }}</span>
+                <span matListItemLine>
+                  {{ r.clientName }} · {{ r.jobRoleName }} · desde {{ r.firstDayAt | dateBr }} · pedido {{ r.orderNumber }}-{{ r.sequence }}
+                </span>
+              </mat-list-option>
+            } @empty {
+              <p class="muted">Nenhum colaborador encontrado.</p>
+            }
+          </mat-selection-list>
+        </mat-card-content>
+      </mat-card>
+
+      <mat-card appearance="outlined">
+        <mat-card-header>
+          <mat-card-title>2. Desligamento</mat-card-title>
+          @if (selected(); as s) {
+            <mat-card-subtitle>{{ s.employeeName }} — {{ s.clientName }}</mat-card-subtitle>
+          }
+        </mat-card-header>
+        <mat-card-content>
+          <ng-container [ngTemplateOutlet]="commonFields" />
+          @if (error()) {
+            <p class="error-text" role="alert">{{ error() }}</p>
+          }
+          <div class="actions">
+            <button mat-flat-button (click)="submitExisting()" [disabled]="saving() || !selected()">Registrar desligamento</button>
+          </div>
+        </mat-card-content>
+      </mat-card>
+    </div>
+  </mat-tab>
+
+  <mat-tab label="Desligamento avulso">
+    <div class="two-columns tab-body">
+      <mat-card appearance="outlined">
+        <mat-card-header>
+          <mat-card-title>Colaborador sem posição no sistema</mat-card-title>
+          <mat-card-subtitle>Cria um pedido avulso com a posição de origem e a reposição (D1)</mat-card-subtitle>
+        </mat-card-header>
+        <mat-card-content>
+          <form [formGroup]="legacy" class="form-grid">
+            <mat-form-field>
+              <mat-label>Contrato</mat-label>
+              <mat-select formControlName="contractId">
+                @for (c of catalogs.value()?.contracts ?? []; track c.id) {
+                  <mat-option [value]="c.id">{{ c.clientName }} — {{ c.name }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
+            <div class="row">
+              <mat-form-field>
+                <mat-label>Modalidade</mat-label>
+                <mat-select formControlName="modality">
+                  @for (m of legacyContract()?.modalities ?? []; track m) {
+                    <mat-option [value]="m">{{ m | label: modalityLabels }}</mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+              <mat-form-field>
+                <mat-label>Cargo</mat-label>
+                <mat-select formControlName="jobRoleId">
+                  @for (j of catalogs.value()?.jobRoles ?? []; track j.id) {
+                    <mat-option [value]="j.id">{{ j.name }}</mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+            </div>
+            <mat-form-field>
+              <mat-label>Local de trabalho</mat-label>
+              <mat-select formControlName="workLocationId">
+                @for (l of catalogs.value()?.workLocations ?? []; track l.id) {
+                  @if (!l.clientId || l.clientId === legacyContract()?.clientId) {
+                    <mat-option [value]="l.id">{{ l.name }}</mat-option>
+                  }
+                }
+              </mat-select>
+            </mat-form-field>
+            <div class="row">
+              <mat-form-field>
+                <mat-label>Nome do colaborador</mat-label>
+                <input matInput formControlName="employeeName" />
+              </mat-form-field>
+              <mat-form-field>
+                <mat-label>Matrícula</mat-label>
+                <input matInput formControlName="employeeRegistration" />
+              </mat-form-field>
+            </div>
+            <mat-form-field>
+              <mat-label>1º dia do colaborador (opcional)</mat-label>
+              <input matInput type="date" formControlName="firstDayAt" />
+            </mat-form-field>
+            <mat-form-field>
+              <mat-label>Vigência</mat-label>
+              <mat-select formControlName="termType">
+                @for (o of termOptions; track o.value) {
+                  <mat-option [value]="o.value">{{ o.label }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
+            @if (legacy.controls.termType.value === 'FIXED_END') {
+              <mat-form-field>
+                <mat-label>Data fim da vigência</mat-label>
+                <input matInput type="date" formControlName="termEndDate" />
+              </mat-form-field>
+            }
+            @if (legacy.controls.termType.value === 'PRESERVED_DURATION') {
+              <mat-form-field>
+                <mat-label>Duração (dias)</mat-label>
+                <input matInput type="number" min="1" formControlName="termDurationDays" />
+              </mat-form-field>
+            }
+          </form>
+        </mat-card-content>
+      </mat-card>
+
+      <mat-card appearance="outlined">
+        <mat-card-header><mat-card-title>Desligamento</mat-card-title></mat-card-header>
+        <mat-card-content>
+          <ng-container [ngTemplateOutlet]="commonFields" />
+          @if (error()) {
+            <p class="error-text" role="alert">{{ error() }}</p>
+          }
+          <div class="actions">
+            <button mat-flat-button (click)="submitLegacy()" [disabled]="saving()">Registrar desligamento avulso</button>
+          </div>
+        </mat-card-content>
+      </mat-card>
+    </div>
+  </mat-tab>
+</mat-tab-group>
