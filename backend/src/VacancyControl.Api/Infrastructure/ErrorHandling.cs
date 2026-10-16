@@ -41,7 +41,7 @@ public sealed class ApiExceptionHandler(IProblemDetailsService problemDetails, I
 }
 
 /// <summary>
-/// Proteção CSRF para a SPA: emite o cookie XSRF-TOKEN (lido pelo HttpClient do Angular) e valida o
+/// Proteção CSRF para a SPA: emite o cookie XSRF-TOKEN (lido por js/api.js) e valida o
 /// cabeçalho X-XSRF-TOKEN em toda requisição que altera dados. Complementa o cookie de sessão SameSite=Strict.
 /// </summary>
 public sealed class AntiforgeryMiddleware(RequestDelegate next, IAntiforgery antiforgery)
@@ -65,12 +65,17 @@ public sealed class AntiforgeryMiddleware(RequestDelegate next, IAntiforgery ant
 
     public static void IssueToken(HttpContext context)
     {
+        // Fora de Development os cookies exigem HTTPS e o antiforgery lança exceção numa requisição HTTP. Ela só chega
+        // assim quando não passou pelo proxy (o health check interno da plataforma), que não precisa de token.
+        var development = context.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment();
+        if (!context.Request.IsHttps && !development) return;
+
         var antiforgery = context.RequestServices.GetRequiredService<IAntiforgery>();
         var tokens = antiforgery.GetAndStoreTokens(context);
         context.Response.Cookies.Append(CookieName, tokens.RequestToken!, new CookieOptions
         {
             HttpOnly = false,
-            Secure = context.Request.IsHttps || !context.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment(),
+            Secure = context.Request.IsHttps || !development,
             SameSite = SameSiteMode.Strict,
             Path = "/",
         });

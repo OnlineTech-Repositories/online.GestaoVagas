@@ -40,12 +40,15 @@ Nenhuma credencial fica no código. Em desenvolvimento, use **user-secrets**; em
 
 | Chave | Uso |
 |---|---|
-| `ConnectionStrings:Default` | Conexão PostgreSQL |
+| `ConnectionStrings:Default` | Conexão PostgreSQL: `Host=...;Database=...` ou a URL `postgresql://...` (também lida de `DATABASE_URL`) |
 | `SendGrid:ApiKey` / `SendGrid:FromEmail` | Envio de e-mails (com `SendGrid:Enabled=false`, só registra em log) |
 | `Seed:AdminEmail` / `Seed:AdminPassword` | Cria o primeiro ADMIN se não houver nenhum (troca de senha obrigatória no 1º acesso) |
 | `App:BaseUrl` | URL da aplicação, usada nos links dos e-mails (`<BaseUrl>/#/posicoes/<id>`) |
 | `App:AllowedOrigins` | Origens permitidas no CORS (só quando front e API estão em origens diferentes) |
-| `Database:MigrateOnStartup` | Aplica as migrations ao subir (padrão: `true` em Development, `false` nos demais) |
+| `Database:MigrateOnStartup` | Aplica as migrations ao subir (padrão: `true`) |
+| `PORT` | Porta informada pela plataforma; a API escuta em `0.0.0.0:<PORT>` |
+| `Proxy:Trusted` | Confia em `X-Forwarded-For/Proto` (padrão: `true` quando `RENDER` ou `WEBSITE_SITE_NAME` existem) |
+| `Database:AllowEphemeral` | Permite banco em memória no Render/App Service (só demonstração; padrão: recusa subir) |
 
 ```bash
 cd backend/src/VacancyControl.Api
@@ -62,6 +65,11 @@ Em `Development`, `Database:Provider = InMemory` usa um banco em memória e `See
 um usuário por perfil. Os dados voltam ao estado inicial sempre que a API reinicia. As senhas vêm de
 `Seed:AdminPassword` e `Seed:DemoPassword` (variáveis de ambiente/user-secrets). Para usar o PostgreSQL, defina
 `Database:Provider = PostgreSQL` e a connection string.
+
+## Deploy
+
+No Render, sem Docker: ver [docs/DEPLOY-RENDER.md](docs/DEPLOY-RENDER.md) (configuração do serviço, variáveis e
+conferência pós-deploy). Sem banco, a API sobe mesmo assim e responde 503 com o motivo, tentando reconectar a cada 30 s.
 
 ## Executar em desenvolvimento
 

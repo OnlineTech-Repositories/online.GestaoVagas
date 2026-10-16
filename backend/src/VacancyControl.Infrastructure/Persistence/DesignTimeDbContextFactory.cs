@@ -11,8 +11,10 @@ public sealed class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<App
 {
     public AppDbContext CreateDbContext(string[] args)
     {
-        var connectionString = Environment.GetEnvironmentVariable("ConnectionStrings__Default")
-                               ?? "Host=localhost;Database=controle_vagas;Username=design_time";
+        var connectionString = PostgresConnection.Normalize(
+            Environment.GetEnvironmentVariable("ConnectionStrings__Default")
+            ?? Environment.GetEnvironmentVariable("DATABASE_URL")
+            ?? "Host=localhost;Database=controle_vagas;Username=design_time");
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseNpgsql(connectionString, npgsql => npgsql.MigrationsHistoryTable("__ef_migrations_history"))
             .UseSnakeCaseNamingConvention()

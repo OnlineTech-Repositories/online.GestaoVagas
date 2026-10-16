@@ -50,13 +50,15 @@ public sealed class SendGridEmailSender(IOptions<SendGridOptions> options, ILogg
 }
 
 /// <summary>Processa a caixa de saída de e-mails com novas tentativas (até 5).</summary>
-public sealed class EmailOutboxProcessor(IServiceScopeFactory scopeFactory, ILogger<EmailOutboxProcessor> logger) : BackgroundService
+public sealed class EmailOutboxProcessor(IServiceScopeFactory scopeFactory, DatabaseReadiness database, ILogger<EmailOutboxProcessor> logger)
+    : BackgroundService
 {
     private const int MaxAttempts = 5;
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(30);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await database.WaitAsync(stoppingToken);
         using var timer = new PeriodicTimer(Interval);
         do
         {

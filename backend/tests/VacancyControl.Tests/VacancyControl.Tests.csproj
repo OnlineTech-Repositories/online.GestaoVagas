@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\VacancyControl.Application\VacancyControl.Application.csproj" />
+    <ProjectReference Include="..\..\src\VacancyControl.Infrastructure\VacancyControl.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

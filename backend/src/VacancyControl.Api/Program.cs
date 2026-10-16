@@ -12,6 +12,12 @@ using VacancyControl.Infrastructure.Persistence;
 var builder = WebApplication.CreateBuilder(args);
 var services = builder.Services;
 var config = builder.Configuration;
+
+// ---------------------------------------------------------------- plataforma (Render): porta, proxy e guardas de partida
+var hosting = HostingSettings.From(config);
+hosting.EnsureSafe(config);
+HostingSettings.ApplyPort(builder);
+hosting.ConfigureForwardedHeaders(services);
 // Cookies exigem HTTPS fora de Development; localmente o ambiente pode rodar em http://localhost.
 var cookieSecurePolicy = builder.Environment.IsDevelopment() ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
 
@@ -73,9 +79,12 @@ services.AddCors(o => o.AddDefaultPolicy(p => p
     .AllowAnyMethod()
     .AllowCredentials()));
 
+services.SkipKeyRingWarmup();
 var app = builder.Build();
 
 // ---------------------------------------------------------------- pipeline
+// Primeiro de todos: esquema (HTTPS) e IP do usuário vêm do proxy da plataforma, quando ele é confiável.
+if (hosting.TrustProxy) app.UseForwardedHeaders();
 app.UseExceptionHandler();
 if (app.Environment.IsDevelopment())
 {
@@ -85,8 +94,10 @@ if (app.Environment.IsDevelopment())
 else
 {
     app.UseHsts();
-    app.UseHttpsRedirection();
+    // Atrás do proxy, quem redireciona HTTP para HTTPS é a plataforma; aqui só geraria um aviso por requisição.
+    if (!hosting.TrustProxy) app.UseHttpsRedirection();
 }
+app.UseMiddleware<DatabaseReadinessMiddleware>();
 
 // Front-end em JavaScript puro, sem build: os arquivos de wwwroot são publicados como estão.
 // "no-cache" faz o navegador revalidar (ETag) e pegar a versão nova logo após a cópia dos arquivos.
@@ -105,7 +116,8 @@ app.UseMiddleware<AntiforgeryMiddleware>();
 app.MapControllers();
 app.MapFallbackToFile("index.html").AllowAnonymous();
 
-await DatabaseInitializer.InitializeAsync(app.Services);
+// O banco é preparado em segundo plano (DatabaseStartupService): a API escuta a porta mesmo sem ele.
+hosting.LogStartup(app);
 await app.RunAsync();
 
 namespace VacancyControl.Api.Infrastructure

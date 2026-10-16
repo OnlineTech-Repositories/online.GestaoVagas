@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
@@ -6,7 +7,7 @@ using VacancyControl.Application.Domain.Entities;
 namespace VacancyControl.Infrastructure.Persistence;
 
 public class AppDbContext(DbContextOptions<AppDbContext> options)
-    : IdentityDbContext<AppUser, AppRole, Guid>(options)
+    : IdentityDbContext<AppUser, AppRole, Guid>(options), IDataProtectionKeyContext
 {
     public DbSet<GroupEntity> GroupEntities => Set<GroupEntity>();
     public DbSet<Client> Clients => Set<Client>();
@@ -29,6 +30,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<EmailMessage> EmailMessages => Set<EmailMessage>();
     public DbSet<JobRun> JobRuns => Set<JobRun>();
+
+    /// <summary>Chaves do Data Protection (cookie de sessão e CSRF), para sobreviverem ao deploy.</summary>
+    public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {

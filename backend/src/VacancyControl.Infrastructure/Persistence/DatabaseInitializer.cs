@@ -29,7 +29,7 @@ public static class DatabaseInitializer
             logger.LogWarning("Banco EM MEMÓRIA: os dados são perdidos ao reiniciar a API. Use somente para avaliação local.");
             await db.Database.EnsureCreatedAsync(ct);
         }
-        else if (config.GetValue("Database:MigrateOnStartup", false))
+        else if (config.GetValue("Database:MigrateOnStartup", true))
         {
             logger.LogInformation("Aplicando migrations...");
             await db.Database.MigrateAsync(ct);

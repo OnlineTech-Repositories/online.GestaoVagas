@@ -1,7 +1,9 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using VacancyControl.Application.Common;
 using VacancyControl.Application.Domain.Entities;
 using VacancyControl.Infrastructure.Email;
@@ -27,10 +29,10 @@ public static class DependencyInjection
         var useInMemory = string.Equals(configuration["Database:Provider"], "InMemory", StringComparison.OrdinalIgnoreCase);
         var connectionString = useInMemory
             ? null
-            : configuration.GetConnectionString("Default") is { Length: > 0 } cs
-                ? cs
-                : throw new InvalidOperationException(
-                    "Connection string 'Default' não configurada. Use a variável de ambiente ConnectionStrings__Default ou user-secrets.");
+            : PostgresConnection.Resolve(configuration)
+              ?? throw new InvalidOperationException(
+                  "Conexão PostgreSQL não configurada. Defina ConnectionStrings__Default (formato Host=...;Database=... ou a URL "
+                  + "postgresql://...) ou DATABASE_URL. Para avaliação local sem banco, use Database__Provider=InMemory.");
 
         services.AddDbContext<AppDbContext>((sp, options) =>
         {
@@ -62,6 +64,15 @@ public static class DependencyInjection
             .AddSignInManager()
             .AddDefaultTokenProviders();
 
+        // Chaves que assinam o cookie de sessão e o token CSRF, guardadas no banco. Na plataforma o disco do processo é
+        // descartado a cada deploy (e, no plano gratuito do Render, a cada vez que a aplicação adormece): com as chaves
+        // no disco, todos os usuários eram desconectados nessas ocasiões.
+        services.AddDataProtection()
+            .SetApplicationName("controle-vagas")
+            .PersistKeysToDbContext<AppDbContext>();
+
+        services.AddDatabaseStartup(useInMemory ? "banco em memória" : PostgresConnection.Describe(connectionString!));
+
         services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<IEvidenceStorage, DbEvidenceStorage>();
@@ -84,6 +95,20 @@ public static class DependencyInjection
             services.AddHostedService<DailyJobScheduler>();
         }
 
+        return services;
+    }
+
+    /// <summary>
+    /// O Data Protection lê as chaves ao subir, só para adiantar o trabalho. Com o banco preparado em segundo plano
+    /// (DatabaseStartupService), essa leitura corria contra a migration e registrava "relation data_protection_keys
+    /// does not exist" em todo primeiro deploy. Sem ela, as chaves são lidas na primeira requisição, que só passa depois
+    /// que o banco está pronto. Chamar depois de todos os registros: autenticação e antiforgery recadastram o serviço.
+    /// </summary>
+    public static IServiceCollection SkipKeyRingWarmup(this IServiceCollection services)
+    {
+        foreach (var d in services.Where(d => d.ServiceType == typeof(IHostedService)
+                     && d.ImplementationType?.Name == "DataProtectionHostedService").ToList())
+            services.Remove(d);
         return services;
     }
 }

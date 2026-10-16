@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
@@ -26,7 +27,7 @@ public sealed class AuditSaveChangesInterceptor(ICurrentUser currentUser, IAudit
 
     /// <summary>Tabelas técnicas que não entram no AuditLog.</summary>
     private static readonly HashSet<Type> NotAudited =
-        [typeof(Notification), typeof(EmailMessage), typeof(JobRun), typeof(EvidenceFile)];
+        [typeof(Notification), typeof(EmailMessage), typeof(JobRun), typeof(EvidenceFile), typeof(DataProtectionKey)];
 
     public override InterceptionResult<int> SavingChanges(DbContextEventData eventData, InterceptionResult<int> result)
     {

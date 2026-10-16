@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using VacancyControl.Application.Domain;
 using VacancyControl.Application.Features.Jobs;
 using VacancyControl.Application.Features.Parameters;
+using VacancyControl.Infrastructure.Persistence;
 using VacancyControl.Infrastructure.Services;
 
 namespace VacancyControl.Infrastructure.Jobs;
@@ -12,11 +13,12 @@ namespace VacancyControl.Infrastructure.Jobs;
 /// Agenda a rotina diária em dias úteis (segunda a sexta), a partir do horário DAILY_DIGEST_TIME
 /// (America/Sao_Paulo). Verifica a cada minuto; se o servidor estava fora do ar no horário, executa ao subir.
 /// </summary>
-public sealed class DailyJobScheduler(IServiceScopeFactory scopeFactory, SaoPauloClock clock, ILogger<DailyJobScheduler> logger)
-    : BackgroundService
+public sealed class DailyJobScheduler(IServiceScopeFactory scopeFactory, SaoPauloClock clock, DatabaseReadiness database,
+    ILogger<DailyJobScheduler> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await database.WaitAsync(stoppingToken);
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
         do
         {
