@@ -114,6 +114,7 @@ export const NotificationTypes = Object.freeze({
   PauseEnded: 'PAUSE_ENDED',
   RatePending: 'RATE_PENDING',
   RateRejected: 'RATE_REJECTED',
+  RateValidated: 'RATE_VALIDATED',
   ContractEnded: 'CONTRACT_ENDED',
   SlaAtRisk: 'SLA_AT_RISK',
   SlaOverdue: 'SLA_OVERDUE',

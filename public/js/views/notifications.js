@@ -3,7 +3,7 @@ import { el, clear, panelNoPadding, loading, dateTime, toast, button } from '../
 import { navigate, updateCounters } from '../app.js';
 
 const ORDER_TYPES = ['ORDER_CREATED', 'ORDER_APPROVED', 'ORDER_NOT_APPROVED', 'RH_ASSIGNED', 'RH_UNASSIGNED'];
-const RATE_TYPES = ['RATE_PENDING', 'RATE_REJECTED'];
+const RATE_TYPES = ['RATE_PENDING', 'RATE_REJECTED', 'RATE_VALIDATED'];
 
 const TITLES = {
   ORDER_CREATED: 'Novo pedido aguardando aprovação',
@@ -18,6 +18,7 @@ const TITLES = {
   PAUSE_ENDED: 'Pausa encerrada',
   RATE_PENDING: 'Valor pendente de validação',
   RATE_REJECTED: 'Valor rejeitado',
+  RATE_VALIDATED: 'Valor validado',
   CONTRACT_ENDED: 'Encerrada por fim de vigência',
   SLA_AT_RISK: 'Posição em risco de vencer o SLA',
   SLA_OVERDUE: 'Escalonamento: SLA vencido',

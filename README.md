@@ -159,6 +159,9 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
 4. **Pausa ativa** é encerrada automaticamente quando a posição é cancelada ou encerrada pelo job.
 5. **Valor da reposição** herda o valor da posição de origem (RN-14).
 6. **Valor rejeitado** pode ser corrigido pelo COMMERCIAL e volta para "Pendente". Valor validado não se altera; cadastra-se nova versão.
+   Avisos: a Controladoria é avisada do valor novo e da correção (com o texto de correção); a **rejeição e a validação**
+   avisam quem cadastrou e quem corrigiu por último. O aviso de validação não está na SPEC (10.1) e foi pedido pelo
+   usuário em 16/10/2026. Quem cadastrou **ou corrigiu** a versão em análise não pode validá-la nem rejeitá-la.
 7. **Sem valor cadastrado:** a posição mostra "Sem valor cadastrado" e fica fora dos totais. Se o valor for cadastrado depois com
    vigência anterior à abertura, as posições abertas sem valor passam a usá-lo.
 8. **Rotina diária** roda de segunda a sexta (sem calendário de feriados) e recupera os dias perdidos; a data de encerramento por fim

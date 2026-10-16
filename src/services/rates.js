@@ -61,12 +61,13 @@ export async function updateRate(ctx, id, body) {
   if (contractId !== rate.contractId || jobRoleId !== rate.jobRoleId) {
     throw new BusinessRuleError('Não é possível trocar o contrato ou o cargo de um valor já cadastrado.');
   }
+  const wasRejected = rate.status === RateStatus.REJECTED;
   await apply(ctx, rate, body, rate.id);
   rate.status = RateStatus.PENDING;
   rate.rejectionReason = null;
   rate.validatedBy = null;
   rate.validatedAt = null;
-  await notifyPending(ctx, rate);
+  await notifyPending(ctx, rate, wasRejected ? 'corrected-after-rejection' : 'corrected');
   await ctx.uow.save({ action: 'UPDATE_RATE' });
   return (await toDtos([rate]))[0];
 }
@@ -74,9 +75,20 @@ export async function updateRate(ctx, id, body) {
 export async function validateRate(ctx, id) {
   Permissions.require(ctx.user, Roles.Controllership);
   const rate = await loadPending(ctx, id);
+  const recipients = authorsOf(rate);
   rate.status = RateStatus.VALIDATED;
   rate.validatedBy = ctx.user.id;
   rate.validatedAt = utcNow();
+  // Fora da SPEC (10.1 só prevê pendente e rejeitado), a pedido do usuário em 16/10/2026: sem este aviso o Comercial
+  // só sabia que o valor foi aprovado abrindo a tela.
+  await notify(ctx.uow, {
+    type: NotificationTypes.RateValidated,
+    entityId: rate.id,
+    subject: 'Valor por cargo validado',
+    message: `O valor de ${describeRate(rate)} foi validado pela Controladoria e passa a entrar nos totais de `
+      + 'faturamento perdido e postergado.',
+    link: links.contractRates(),
+  }, { userIds: recipients });
   await ctx.uow.save({ action: 'VALIDATE_RATE' });
   return (await toDtos([rate]))[0];
 }
@@ -85,20 +97,18 @@ export async function rejectRate(ctx, id, body) {
   Permissions.require(ctx.user, Roles.Controllership);
   const reason = DateGuard.requireText(new Input(body).text('reason'), 'Informe o motivo da rejeição.', 'reason');
   const rate = await loadPending(ctx, id);
+  const recipients = authorsOf(rate);
   rate.status = RateStatus.REJECTED;
   rate.rejectionReason = reason;
   rate.validatedBy = ctx.user.id;
   rate.validatedAt = utcNow();
-  if (rate.createdBy) {
-    await notify(ctx.uow, {
-      type: NotificationTypes.RateRejected,
-      entityId: rate.id,
-      subject: 'Valor por cargo rejeitado',
-      message: `O valor de ${rate.jobRole?.name} no contrato ${rate.contract?.name} (vigência a partir de ${formatBr(rate.validFrom)}) `
-        + `foi rejeitado pela Controladoria. Motivo: ${reason}`,
-      link: links.contractRates(),
-    }, { userIds: [rate.createdBy] });
-  }
+  await notify(ctx.uow, {
+    type: NotificationTypes.RateRejected,
+    entityId: rate.id,
+    subject: 'Valor por cargo rejeitado',
+    message: `O valor de ${describeRate(rate)} foi rejeitado pela Controladoria. Motivo: ${reason}`,
+    link: links.contractRates(),
+  }, { userIds: recipients });
   await ctx.uow.save({ action: 'REJECT_RATE', justification: reason });
   return (await toDtos([rate]))[0];
 }
@@ -115,8 +125,28 @@ async function loadPending(ctx, id) {
   if (rate.status !== RateStatus.PENDING) {
     throw new BusinessRuleError('Somente valores pendentes podem ser validados ou rejeitados.');
   }
-  if (rate.createdBy === ctx.user.id) throw new ForbiddenError('Quem cadastrou o valor não pode validá-lo.');
+  // Segregação (seção 4): quem cadastra valores não os valida — vale também para quem corrigiu a versão em análise.
+  if (authorsOf(rate).includes(ctx.user.id)) {
+    throw new ForbiddenError('Quem cadastrou ou corrigiu o valor não pode validá-lo nem rejeitá-lo.');
+  }
   return rate;
+}
+
+/**
+ * Quem responde pela versão em análise: quem cadastrou e o último Comercial que a corrigiu. Enquanto o valor está
+ * pendente, updated_by só pode ser essa correção — validar e rejeitar exigem o status PENDING, e corrigir o devolve a
+ * ele. Antes, a rejeição avisava só quem cadastrou, mesmo quando outro Comercial tinha feito a correção rejeitada.
+ */
+const authorsOf = (rate) => [...new Set([rate.createdBy, rate.updatedBy].filter(Boolean))];
+
+const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+
+/** "Estoquista no contrato CT-2026-X-001 (R$ 3.000,00 mensais, vigência a partir de 01/11/2026)". */
+function describeRate(rate) {
+  const value = rate.monthlyValue !== null && rate.monthlyValue !== undefined
+    ? `${money.format(rate.monthlyValue)} mensais, `
+    : rate.feeValue !== null && rate.feeValue !== undefined ? `fee de ${money.format(rate.feeValue)}, ` : '';
+  return `${rate.jobRole?.name} no contrato ${rate.contract?.name} (${value}vigência a partir de ${formatBr(rate.validFrom)})`;
 }
 
 async function apply(ctx, rate, body, exceptId) {
@@ -147,11 +177,15 @@ async function apply(ctx, rate, body, exceptId) {
   rate.jobRole = jobRole;
 }
 
-const notifyPending = (ctx, rate) => notify(ctx.uow, {
+/** Aviso à Controladoria; a correção é dita como correção (antes saía "Novo valor" também ao corrigir). */
+const notifyPending = (ctx, rate, kind = 'new') => notify(ctx.uow, {
   type: NotificationTypes.RatePending,
   entityId: rate.id,
-  subject: 'Valor por cargo pendente de validação',
-  message: `Novo valor de ${rate.jobRole?.name} no contrato ${rate.contract?.name} aguarda validação da Controladoria.`,
+  subject: kind === 'new' ? 'Valor por cargo pendente de validação' : 'Valor por cargo corrigido, pendente de validação',
+  message: kind === 'new'
+    ? `Novo valor de ${describeRate(rate)} aguarda validação da Controladoria.`
+    : `O valor de ${describeRate(rate)} foi corrigido${kind === 'corrected-after-rejection' ? ' depois da rejeição' : ''} `
+      + 'e aguarda nova validação da Controladoria.',
   link: links.contractRates(),
 }, { roles: [Roles.Controllership] });
 
