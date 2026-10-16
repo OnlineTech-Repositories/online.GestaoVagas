@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+.git/
+.claude/
+.vscode/
+dev-local/
+docs/
+frontend/
+backend/tests/
+**/*.md
