@@ -18,7 +18,12 @@ import { db, driverName, execRaw } from './index.js';
 const here = dirname(fileURLToPath(import.meta.url));
 
 /** [tabela, coluna, tipo com DEFAULT]. Acrescentar aqui E no schema.sql. */
-const ADDED_COLUMNS = [];
+export const ADDED_COLUMNS = [];
+
+/** Banco da versão .NET: recusado aqui e no script de produção (production-script.js). */
+export const DOTNET_DATABASE_ERROR =
+  'Este banco foi criado pela versão .NET do sistema (tabela __ef_migrations_history). A versão Node usa outro '
+  + 'schema: aponte DATABASE_URL para um banco novo e vazio.';
 
 /** Tabelas de negócio: sem exclusão física (RN-26). A remoção é lógica (removed_at, withdrawn_at, inativo). */
 export const NO_DELETE_TABLES = [
@@ -33,12 +38,7 @@ export async function migrate() {
 
   // O banco da versão .NET (EF Core) tem tabelas com os mesmos nomes e colunas diferentes: o CREATE TABLE IF NOT
   // EXISTS passaria por cima em silêncio e cada tela quebraria num erro de coluna. Melhor não subir, dizendo o motivo.
-  if (await db.tableExists('__ef_migrations_history')) {
-    throw new Error(
-      'Este banco foi criado pela versão .NET do sistema (tabela __ef_migrations_history). A versão Node usa outro '
-        + 'schema: aponte DATABASE_URL para um banco novo e vazio.',
-    );
-  }
+  if (await db.tableExists('__ef_migrations_history')) throw new Error(DOTNET_DATABASE_ERROR);
 
   for (const [table, column, type] of ADDED_COLUMNS) {
     if ((await db.tableExists(table)) && !(await db.columnExists(table, column))) {
@@ -47,11 +47,21 @@ export async function migrate() {
     }
   }
 
-  let schema = readFileSync(join(here, 'schema.sql'), 'utf8');
-  if (postgres) schema = schema.replace(/\bBLOB\b/g, 'BYTEA');
-  await execRaw(schema);
+  await execRaw(readSchema(postgres));
 
   await execRaw(postgres ? postgresTriggers() : sqliteTriggers());
+}
+
+/**
+ * schema.sql no dialeto do banco de destino (os comentários ficam como estão). Fim de linha normalizado: o Git no
+ * Windows entrega o arquivo com CRLF num checkout novo, e o script de produção gerado sairia com fins de linha
+ * misturados — diferente do gerado em outra máquina.
+ */
+export function readSchema(postgres) {
+  const schema = readFileSync(join(here, 'schema.sql'), 'utf8').replace(/\r\n/g, '\n');
+  if (!postgres) return schema;
+  return schema.split('\n').map((line) => (line.trimStart().startsWith('--') ? line : line.replace(/\bBLOB\b/g, 'BYTEA')))
+    .join('\n');
 }
 
 function sqliteTriggers() {
@@ -68,7 +78,7 @@ function sqliteTriggers() {
   return statements.join('\n');
 }
 
-function postgresTriggers() {
+export function postgresTriggers() {
   const statements = [
     `CREATE OR REPLACE FUNCTION fn_audit_logs_append_only() RETURNS trigger AS $$
      BEGIN RAISE EXCEPTION 'audit_logs é somente inclusão: % não permitido', TG_OP; END; $$ LANGUAGE plpgsql;`,

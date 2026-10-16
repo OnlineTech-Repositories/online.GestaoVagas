@@ -84,6 +84,35 @@ partida (`src/db/migrations.js`): criam o que falta, acrescentam colunas novas (
 que tornam o log de auditoria somente inclusão e bloqueiam `DELETE` nas tabelas de negócio (RN-26). O backup diário
 (seção 12) é responsabilidade da hospedagem.
 
+Para criar ou atualizar o banco do servidor sem depender da partida, use `producao/criar-banco-postgres.sql`. Ele é
+**gerado** das mesmas fontes (não edite à mão), é idempotente e roda numa transação:
+
+```bash
+psql "postgresql://usuario:senha@servidor/banco" -v ON_ERROR_STOP=1 -f producao/criar-banco-postgres.sql
+```
+
+Depois de mudar `schema.sql` ou `migrations.js`, gere de novo com `npm run script:producao`. O teste
+`test/production-script.test.js` recusa o arquivo desatualizado. Parâmetros padrão e o primeiro ADMIN continuam sendo
+criados pela aplicação na primeira partida.
+
+## Usuários pela linha de comando
+
+Para a carga inicial, ou quando nenhum ADMIN consegue acessar a tela, `scripts/users.js` cria usuários com o mesmo
+serviço da tela de Administração: política de senha, e-mail único, perfis válidos, troca de senha no primeiro acesso e
+registro no log de auditoria (como "Sistema", origem `script`). O banco é o de `DATABASE_URL` (ambiente ou `.env`), e o
+destino aparece antes de qualquer gravação.
+
+```bash
+npm run usuarios -- criar --nome "Maria Silva" --email maria@empresa.com.br --perfis NACC,DP
+```
+
+```bash
+npm run usuarios -- listar
+```
+
+Sem `--senha`, uma senha provisória forte é gerada e mostrada uma única vez. Perfis: `COMMERCIAL`, `NACC`, `DP`, `RH`,
+`RH_MANAGER`, `MANAGER`, `CONTROLLERSHIP`, `ADMIN` (vários separados por vírgula).
+
 ## Testes
 
 ```bash

@@ -52,6 +52,27 @@ JSON da API são os mesmos, e o front-end não mudou.
 têm efeito podem ser apagadas: `ASPNETCORE_*` e `Database__*`. Não defina `NODE_ENV`, porque o padrão já é
 `production`.
 
+**Script do banco (opcional):** a aplicação cria e atualiza a estrutura sozinha na partida. Para preparar o banco
+antes do deploy, ou conferir a estrutura, execute `producao/criar-banco-postgres.sql` com a **External Database URL**
+(a interna só é acessível de dentro do Render), a partir da raiz do repositório:
+
+```bash
+psql "<External Database URL>" -v ON_ERROR_STOP=1 -f producao/criar-banco-postgres.sql
+```
+
+O script serve para banco novo e para atualização: não apaga nem altera dados, roda numa transação e recusa o banco da
+versão .NET. O primeiro ADMIN e os parâmetros padrão são criados pela aplicação na primeira partida.
+
+**Usuários (opcional):** além da tela de Administração, os usuários podem ser criados da sua máquina, apontando para o
+banco do Render pela External Database URL:
+
+```bash
+DATABASE_URL="<External Database URL>" npm run usuarios -- criar --nome "Maria Silva" --email maria@empresa.com.br --perfis NACC,DP
+```
+
+No PowerShell, defina antes `$env:DATABASE_URL = "<External Database URL>"` e rode o `npm run usuarios -- ...`. A senha
+provisória gerada aparece uma única vez, e o usuário a troca no primeiro acesso.
+
 ## 3. Conferência depois do deploy
 
 1. No log, o bloco "Controle de Vagas — Grupo ON LINE" deve mostrar `plataforma Render`, o banco PostgreSQL (sem a

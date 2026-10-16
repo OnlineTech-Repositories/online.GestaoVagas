@@ -9,7 +9,9 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test \"test/*.test.js\""
+    "test": "node --test \"test/*.test.js\"",
+    "script:producao": "node scripts/generate-production-script.js",
+    "usuarios": "node scripts/users.js"
   },
   "dependencies": {
     "express": "^4.21.2",
