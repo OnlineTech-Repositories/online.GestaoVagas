@@ -140,6 +140,19 @@ export function emailMissing(email = config.email) {
   return missing;
 }
 
+/**
+ * Portas SMTP que o Render bloqueia na saída dos serviços gratuitos desde setembro de 2025. A conexão não é recusada:
+ * fica sem resposta até o timeout, e o mesmo código que envia localmente falha só depois do deploy.
+ */
+export const RENDER_BLOCKED_SMTP_PORTS = Object.freeze([25, 465, 587]);
+
+/** Dica para o SMTP numa porta bloqueada pela plataforma (vazio quando não se aplica). */
+export function blockedSmtpPortHint(email = config.email) {
+  if (config.platform !== 'Render' || email.provider !== 'smtp' || !RENDER_BLOCKED_SMTP_PORTS.includes(email.smtp.port)) return '';
+  return `o plano gratuito do Render bloqueia a saída pela porta ${email.smtp.port}: use SMTP_PORTA=2525 (aceita pelo `
+    + 'MailerSend) ou o envio pela API (EMAIL_PROVEDOR=mailersend com MAILERSEND_API_KEY).';
+}
+
 /** Nome do provedor para o log e as mensagens. */
 export const emailProviderName = (provider) => ({ smtp: 'SMTP', mailersend: 'MailerSend', sendgrid: 'SendGrid' }[provider] ?? provider);
 
@@ -232,6 +245,7 @@ export function configurationWarnings() {
   }
   const missing = emailMissing();
   if (missing.length) warnings.push(`E-mail desligado, falta ${missing.join(', ')}: os e-mails ficam só no log.`);
+  else if (blockedSmtpPortHint()) warnings.push(`E-mail por SMTP não vai sair: ${blockedSmtpPortHint()}`);
   if (config.dbDriver !== 'postgres' && config.platform) {
     warnings.push('BANCO_EFEMERO ligado: os dados SOMEM a cada deploy. Aceitável só para demonstração.');
   }

@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { config, emailMissing } from '../config.js';
+import { blockedSmtpPortHint, config, emailMissing } from '../config.js';
 
 /**
  * Envio de e-mail pelo provedor configurado: SMTP (nodemailer, como na aplicação financeira — com o MailerSend em
@@ -75,7 +75,9 @@ function smtpFailure(error) {
   }
   if (error.code === 'ETLS') return new EmailError(`${detail} — o servidor não ofereceu TLS; confira SMTP_PORTA e SMTP_SEGURO.`, { retryLater: true });
   if (['ECONNECTION', 'ETIMEDOUT', 'EDNS', 'ESOCKET'].includes(error.code) && !code) {
-    return new EmailError(`${detail} — sem conexão com ${config.email.smtp.host}:${config.email.smtp.port}.`, { retryLater: true });
+    const hint = blockedSmtpPortHint();
+    return new EmailError(`${detail} — sem conexão com ${config.email.smtp.host}:${config.email.smtp.port}`
+      + `${hint ? `; ${hint}` : '.'}`, { retryLater: true });
   }
   if (code >= 400 && code < 500) return new EmailError(detail, { retryLater: true });
   if (code >= 500) return new EmailError(detail, { permanent: true });

@@ -2,7 +2,7 @@ import './env.js';
 import { after, afterEach, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
-import { assertSafeConfig, config, parseSender } from '../src/config.js';
+import { assertSafeConfig, blockedSmtpPortHint, config, configurationWarnings, parseSender } from '../src/config.js';
 import { query, queryOne } from '../src/db/index.js';
 import { entity } from '../src/db/model.js';
 import { UnitOfWork } from '../src/db/unit-of-work.js';
@@ -139,6 +139,26 @@ test('caixa de saída: limite pausa sem gastar tentativa, recusa falha de vez, e
 test('provedor inválido impede a partida', () => {
   config.email.provider = 'mailgun';
   assert.throws(() => assertSafeConfig(), /EMAIL_PROVEDOR="mailgun" é inválido: use smtp, mailersend ou sendgrid/);
+});
+
+test('no Render, SMTP nas portas 25, 465 ou 587 gera aviso na partida (bloqueadas no plano gratuito); 2525 não', () => {
+  const platform = config.platform;
+  try {
+    config.platform = 'Render';
+    for (const [port, blocked] of [[587, true], [465, true], [25, true], [2525, false]]) {
+      Object.assign(config.email, {
+        provider: 'smtp', enabled: true, fromEmail: 'avisos@empresa.com.br',
+        smtp: { host: 'smtp.mailersend.net', port, secure: false, requireTls: true, user: 'usuario-smtp', password: 'x' },
+      });
+      const warning = configurationWarnings().find((w) => w.startsWith('E-mail por SMTP não vai sair'));
+      assert.equal(Boolean(warning), blocked, `porta ${port}`);
+      if (blocked) assert.match(warning, new RegExp(`porta ${port}: use SMTP_PORTA=2525`));
+    }
+    config.platform = null;
+    assert.equal(blockedSmtpPortHint(), '', 'fora do Render não há bloqueio a avisar');
+  } finally {
+    config.platform = platform;
+  }
 });
 
 test('remetente no formato "Nome <e-mail>" (como na aplicação financeira) ou só o e-mail', () => {
