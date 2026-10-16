@@ -52,6 +52,13 @@ export function createPostgresDriver() {
         '(no Render, a Internal Database URL do banco, colada como está).',
     );
   }
+  // Sem esta conferência, o pg resolve o texto inválido contra 'postgres://base' e o erro vira "ENOTFOUND base".
+  if (!isPostgresUrl(config.databaseUrl)) {
+    throw new Error(
+      'A DATABASE_URL não está no formato postgresql://usuario:senha@servidor/banco. No Render, copie a Internal ' +
+        'Database URL do banco e cole como está, sem aspas (ela começa com postgresql://)',
+    );
+  }
 
   const pool = new pg.Pool({
     connectionString: config.databaseUrl,
@@ -102,6 +109,16 @@ export function createPostgresDriver() {
       await pool.end();
     },
   };
+}
+
+/** URL postgres:// ou postgresql:// com servidor. Exportada para teste. */
+export function isPostgresUrl(url) {
+  try {
+    const u = new URL(url);
+    return /^postgres(ql)?:$/i.test(u.protocol) && u.hostname !== '';
+  } catch {
+    return false;
+  }
 }
 
 /** Destino da conexão para o log e para a resposta 503 — nunca a senha. */

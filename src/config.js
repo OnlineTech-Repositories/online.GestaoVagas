@@ -51,11 +51,21 @@ const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).ver
  * Conexão PostgreSQL. A plataforma entrega a URL (postgresql://usuario:senha@host/banco) em DATABASE_URL. O nome da
  * versão .NET (ConnectionStrings__Default) continua aceito, como URL ou no formato Host=...;Database=...: o serviço
  * no Render já tinha sido configurado com ele, e trocar de nome sem aviso deixaria a aplicação sem banco.
+ *
+ * DATABASE_URL passa pela mesma conversão. No primeiro deploy ela chegou no formato Host=...;Database=... (o guia da
+ * versão .NET mandava montar assim) e o pg, que resolve texto sem esquema contra a base fictícia 'postgres://base',
+ * respondeu "getaddrinfo ENOTFOUND base" — um erro que não diz nada a quem lê. Aspas coladas junto com o valor no
+ * painel da plataforma produziam o mesmo efeito.
  */
-const databaseUrl = env.DATABASE_URL || connectionStringToUrl(env.ConnectionStrings__Default);
+const databaseUrl = connectionStringToUrl(env.DATABASE_URL) || connectionStringToUrl(env.ConnectionStrings__Default);
 
-function connectionStringToUrl(value) {
-  const text = String(value ?? '').trim();
+/**
+ * Normaliza a conexão para URL. Formato não reconhecido volta como veio: o driver recusa com a mensagem do que
+ * corrigir, em vez de a aplicação cair no SQLite em silêncio. Exportada para teste.
+ */
+export function connectionStringToUrl(value) {
+  let text = String(value ?? '').trim();
+  if (/^(["']).*\1$/.test(text)) text = text.slice(1, -1).trim();
   if (!text) return '';
   if (/^postgres(ql)?:\/\//i.test(text)) return text;
   const parts = Object.fromEntries(text.split(';').filter((p) => p.includes('=')).map((p) => {
@@ -63,7 +73,7 @@ function connectionStringToUrl(value) {
     return [p.slice(0, eq).trim().toLowerCase().replace(/\s+/g, ''), p.slice(eq + 1).trim()];
   }));
   const host = parts.host ?? parts.server;
-  if (!host) return '';
+  if (!host) return text;
   const user = parts.username ?? parts.userid ?? parts.user ?? '';
   const auth = user ? `${encodeURIComponent(user)}${parts.password ? `:${encodeURIComponent(parts.password)}` : ''}@` : '';
   const ssl = parts.sslmode ? `?sslmode=${parts.sslmode.toLowerCase()}` : '';
