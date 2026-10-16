@@ -1,87 +1,84 @@
 # Deploy no Render
 
-Como publicar o Controle de Vagas no Render **sem Docker**, e por que cada ajuste existe. Os ajustes seguem a
-aplicação financeira (Compras e Pagamentos), que já roda no Render: `PADRAO-BACK-END.md` e `ARQUITETURA-TECNICA.md`.
+O Controle de Vagas roda no Render como **Web Service Node**, sem Docker, no mesmo modelo da aplicação financeira
+(Compras e Pagamentos), que já está em produção ali.
 
-## 1. O que mudava entre as duas aplicações
+## 1. Por que Node
 
-| Ponto | Aplicação financeira (em produção) | Controle de Vagas (antes) | Efeito no Render | Ajuste |
-|---|---|---|---|---|
-| Runtime | Node 24, nativo no Render | .NET 10, sem runtime nativo no Render | O serviço criado como "Node" não tinha como compilar nem executar a API | `deploy/render-build.sh` instala o SDK do .NET e publica **self-contained** (runtime junto do executável); `deploy/render-start.sh` executa |
-| Porta | `PORT`, em `0.0.0.0` | `localhost:5000`/`8080` | O Render não encontrava a porta e o deploy expirava | A API lê `PORT` (`HostingSettings.ApplyPort`) |
-| Proxy (HTTPS) | `trust proxy` vindo de configuração | Ignorava `X-Forwarded-*` | Com o cookie `Secure` exigido, **todo GET em `/api` respondia 500**, inclusive `/api/saude`; o limite de login e a auditoria viam o IP do proxy | Proxy confiável quando a variável `RENDER` existe (`Proxy__Trusted` sobrepõe); o token CSRF não é emitido numa requisição HTTP que não passou pelo proxy (o health check interno) |
-| Conexão com o banco | `POSTGRES_URL` **ou** `PG*` | Só `Host=...;Database=...` | O Render entrega URL `postgresql://...`; desmontá-la à mão quebrava com caractere especial na senha | Aceita a URL como está, em `ConnectionStrings__Default` ou `DATABASE_URL` (`PostgresConnection`) |
-| Banco na partida | Sobe de qualquer forma: 503 com o motivo e reconexão a cada 30 s | Sem banco, a API encerrava | Ciclo de reinício sem o motivo visível | `DatabaseStartupService` + `DatabaseReadinessMiddleware`: 503 com o destino (sem a senha) e o erro, nova tentativa a cada 30 s |
-| Migrations | Rodam sempre na subida | Padrão `false` fora de Development | Banco vazio se a variável fosse esquecida | Padrão `true` (`Database__MigrateOnStartup=false` desliga) |
-| Disco efêmero | Recusa subir com banco local em Render/App Service | Aceitava banco em memória | Dados apagados a cada deploy ou quando o serviço adormece | Recusa `Database__Provider=InMemory` em plataforma, salvo `Database__AllowEphemeral=true` (só demonstração) |
-| Sessão | Tabela `sessoes` no banco | Chaves do cookie no disco do processo | Todos deslogados a cada deploy e a cada vez que o plano gratuito adormece | Chaves do Data Protection no banco (tabela `data_protection_keys`, migration `DataProtectionKeys`) |
-| Log de partida | Configuração + alertas de proteção desligada | Nenhum | Configuração errada só aparecia como erro adiante | Linha de configuração (sem senha) e `ALERTA:` para cada proteção desligada |
-| Testes antes de publicar | `npm test` no pipeline | — | — | `render-build.sh` roda a suíte .NET; falhou, não publica |
+A primeira versão era .NET. O Render não tem runtime .NET nativo, e o caminho sem Docker exigia instalar o SDK a cada
+build. A aplicação foi reescrita em Node.js 24 + Express, no padrão de `PADRAO-BACK-END.md`. As regras, as rotas e o
+JSON da API são os mesmos, e o front-end não mudou.
 
-Não mudou: a stack obrigatória da SPEC (.NET, PostgreSQL, EF Core, SendGrid), as regras de negócio, o front-end e a API.
+| Ponto | Como ficou |
+|---|---|
+| Runtime | Node 24 (`engines` no package.json e `.node-version`), nativo no Render |
+| Build | `npm ci`: três dependências de runtime (`express`, `pg`, `multer`), sem etapa de build |
+| Porta | Lida de `PORT`, que o Render define (10000), escutando em `0.0.0.0` |
+| HTTPS atrás do proxy | Proxy confiável detectado pela variável `RENDER`: cookies `Secure` e IP real na auditoria |
+| Banco | PostgreSQL por `DATABASE_URL`, a URL que o Render entrega, colada como está |
+| Migrações | Na partida, idempotentes (`src/db/migrations.js`): o push basta para publicar mudança de estrutura |
+| Sem banco | O servidor sobe mesmo assim, responde 503 com o motivo (sem a senha) e tenta reconectar a cada 30 s |
+| Disco efêmero | Nada fica em disco: sessões, evidências e dados no PostgreSQL. SQLite no Render é recusado na partida |
+| Log de partida | Versão, ambiente, banco (sem senha), proxy e e-mail, com um `ATENÇÃO` para cada proteção desligada |
 
 ## 2. Configuração do serviço
 
-**Banco:** crie um PostgreSQL no Render, **na mesma região** do Web Service, e copie a **Internal Database URL**.
+**Banco:** um PostgreSQL do Render, **na mesma região** do Web Service. Use a **Internal Database URL**.
 
-**Web Service** (conectado ao repositório no GitHub, branch `main`):
+> O banco usado pela tentativa com .NET não serve: a versão Node usa outro schema e recusa subir num banco que tenha a
+> tabela `__ef_migrations_history`. Crie um banco novo, ou apague o anterior se ele não tiver dados reais.
+
+**Web Service** (repositório no GitHub, branch `main`):
 
 | Campo | Valor |
 |---|---|
-| Language | `Node` (o Node não é usado; é o runtime nativo que permite rodar o script de build) |
+| Language | `Node` |
 | Root Directory | vazio |
-| Build Command | `bash deploy/render-build.sh` |
-| Start Command | `bash deploy/render-start.sh` |
+| Build Command | `npm ci` |
+| Start Command | `npm start` |
 | Health Check Path | `/api/saude` |
 
-**Environment Variables:** use o botão *Add from .env* com o conteúdo de `deploy/render.env.example`, trocando o que
-está entre `<...>`. O mínimo:
+**Environment Variables:**
 
 | Variável | Valor |
 |---|---|
-| `ConnectionStrings__Default` | a Internal Database URL, colada como está |
-| `App__BaseUrl` | `https://<servico>.onrender.com` |
-| `Seed__AdminEmail` / `Seed__AdminPassword` | primeiro ADMIN; senha provisória com 8+ caracteres, maiúscula, número e especial |
-| `SendGrid__Enabled` | `false` até ter a chave (`SendGrid__ApiKey`, `SendGrid__FromEmail`) |
+| `DATABASE_URL` | a Internal Database URL do banco, colada como está |
+| `BASE_URL` | `https://<servico>.onrender.com` (links dos e-mails) |
+| `ADMIN_EMAIL` / `ADMIN_SENHA` | o primeiro ADMIN; a senha é provisória: 8+ caracteres, maiúscula, número e especial |
+| `SENDGRID_ATIVO` | `0` até ter a chave; depois `1` com `SENDGRID_API_KEY` e `SENDGRID_REMETENTE` (remetente verificado) |
 
-Não são mais necessárias: `ASPNETCORE_HTTP_PORTS`, `ASPNETCORE_FORWARDEDHEADERS_ENABLED`, `Database__MigrateOnStartup`.
-O Render define `RENDER` e `PORT`, e a API se ajusta por elas.
+**Variáveis antigas:** as da configuração anterior podem ficar, porque os nomes da versão .NET continuam aceitos
+(`ConnectionStrings__Default`, `App__BaseUrl`, `Seed__AdminEmail`, `Seed__AdminPassword`, `SendGrid__*`). As que não
+têm efeito podem ser apagadas: `ASPNETCORE_*` e `Database__*`. Não defina `NODE_ENV`, porque o padrão já é
+`production`.
 
 ## 3. Conferência depois do deploy
 
-1. No log, a linha `Controle de Vagas 1.0.0 | ambiente Production | plataforma Render | proxy confiável sim | banco ...`
-   e, logo depois, `Banco pronto`. Cada `ALERTA:` acima dela é uma proteção desligada.
+1. No log, o bloco "Controle de Vagas — Grupo ON LINE" deve mostrar `plataforma Render`, o banco PostgreSQL (sem a
+   senha), `Estado: operando` e `Proxy: confiável`. Cada `ATENÇÃO:` é uma proteção desligada.
 2. `https://<servico>.onrender.com/api/saude` responde `{"status":"ok","versao":"1.0.0"}`.
-3. Login com o ADMIN inicial, troca de senha obrigatória e navegação pelas telas.
-4. Novo deploy (ou *Restart*): a sessão continua aberta.
-
-No primeiro deploy, uma linha `fail: ... SELECT migration_id ... FROM __ef_migrations_history` é esperada: é o EF
-Core verificando se o banco já tem migrations.
+3. Faça login com o ADMIN inicial, troque a senha obrigatoriamente e navegue pelas telas.
+4. Faça um novo deploy ou um *Restart*: a sessão continua aberta, porque fica no banco.
 
 ## 4. Problemas conhecidos
 
 | Sintoma | Causa | Saída |
 |---|---|---|
-| 503 "Banco de dados indisponível (...)" | URL errada, banco em outra região ou ainda criando | Corrigir a variável; a API tenta de novo sozinha a cada 30 s |
-| A API não sobe: "Database__Provider=InMemory em Render" | Banco em memória numa plataforma de disco efêmero | Configurar o PostgreSQL |
-| A API não sobe: "Falha ao criar o ADMIN inicial" | Senha provisória fora da política | Trocar `Seed__AdminPassword` |
-| Log: "libicu não encontrada" | Imagem sem a biblioteca de globalização | A API segue em modo invariante; nada a fazer |
-| Primeiro acesso lento | Plano gratuito adormece após inatividade | Esperado; a rotina diária recupera os dias perdidos ao acordar |
+| 503 "Banco de dados indisponível (...)" | URL errada, banco em outra região ou ainda sendo criado | Corrigir a variável; a reconexão é automática a cada 30 s |
+| 503 "criado pela versão .NET" | `DATABASE_URL` aponta para o banco da tentativa anterior | Usar um banco novo |
+| O serviço não sobe: "SQLite em Render" | `DATABASE_URL` ausente | Configurar o PostgreSQL |
+| O serviço não sobe: "Falha ao criar o ADMIN inicial" | Senha provisória fora da política | Trocar `ADMIN_SENHA` |
+| Primeiro acesso lento | O plano gratuito adormece depois de um tempo sem uso | Esperado. A rotina diária recupera os dias perdidos ao acordar |
 
-O PostgreSQL gratuito do Render expira em 30 dias e não tem backup: para uso real, plano pago (a seção 12 da SPEC
-exige backup diário).
+O PostgreSQL gratuito do Render expira em 30 dias e não tem backup. Para uso real é preciso um plano pago, porque a
+seção 12 da SPEC exige backup diário.
 
 ## 5. Validação local feita antes da publicação
 
-Executada na API publicada em modo Production, simulando o Render (`RENDER` e `PORT` definidos, requisições com
-`X-Forwarded-Proto: https`), contra um PostgreSQL 17 vazio:
-
-- todas as migrations aplicadas num banco novo (era a primeira vez num PostgreSQL real: até aqui só o banco em memória);
-- `/api/saude` responde 200 com e sem o cabeçalho do proxy; cookies `Secure`, `HttpOnly`, `SameSite=Strict`;
-- login do ADMIN inicial, bloqueio até a troca de senha, troca com CSRF, POST sem CSRF recusado, listagens;
-- sessão e token CSRF continuam válidos depois de reiniciar a API;
-- sem banco: 503 com o motivo e sem a senha; banco religado, a API volta sem reiniciar;
-- banco em memória com `RENDER` definido: a API recusa subir;
-- publicação `linux-x64` self-contained gerada; testes .NET (92) e de telas (16) passando.
-
-Não testado aqui: o build dentro do Render (download do SDK) e a execução em Linux, que só o deploy confirma.
+- **`npm test`:** 114 testes, todos passando no SQLite e no PostgreSQL 17. Cobrem a máquina de estados e os casos T1–T12
+  da seção 8.7, a API de ponta a ponta pelo HTTP real e a montagem das telas.
+- **API de ponta a ponta:** segurança, fluxo completo da vaga até a reposição, evidência do 1º dia, LGPD, concorrência
+  (409), gatilhos do banco e rotina diária.
+- **Telas:** as 16 que existiam contra a API .NET passam iguais contra a API Node.
+- **Simulação do Render:** a partida foi testada com as variáveis `RENDER` e `PORT` e o proxy. Ainda não foi testado o
+  build no próprio Render, que só o deploy confirma.

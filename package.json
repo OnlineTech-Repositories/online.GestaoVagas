@@ -1,0 +1,19 @@
+{
+  "name": "controle-de-vagas",
+  "version": "1.0.0",
+  "description": "Sistema de Controle de Vagas — Grupo ON LINE",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "multer": "^2.0.2",
+    "pg": "^8.23.0"
+  }
+}

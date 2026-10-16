@@ -483,3 +483,6 @@ $RECYCLE.BIN/
 
 # Ambiente local (credenciais e scripts de desenvolvimento)
 dev-local/
+
+# Banco SQLite local (desenvolvimento)
+dados/
