@@ -1,8 +1,9 @@
-import { config } from '../config.js';
+import nodemailer from 'nodemailer';
+import { config, emailMissing } from '../config.js';
 
 /**
- * Envio de e-mail pela API HTTP do provedor configurado (MailerSend ou SendGrid), com o fetch nativo do Node — sem a
- * biblioteca de nenhum dos dois, que traria dependências para uma única chamada HTTP. Desligado (ou sem chave), o
+ * Envio de e-mail pelo provedor configurado: SMTP (nodemailer, como na aplicação financeira — com o MailerSend em
+ * smtp.mailersend.net) ou a API HTTP do MailerSend ou do SendGrid, com o fetch nativo. Desligado ou incompleto, o
  * e-mail só é registrado no log.
  *
  * A falha diz à caixa de saída (jobs.js) o que fazer com a mensagem:
@@ -25,12 +26,67 @@ export class EmailError extends Error {
 const TIMEOUT_MS = 15_000;
 
 export async function sendEmail(to, subject, html) {
-  const { enabled, apiKey, fromEmail, provider } = config.email;
-  if (!enabled || !apiKey || !fromEmail) {
+  if (emailMissing().length) {
     console.log(`[e-mail] envio desabilitado. Para: ${to} | Assunto: ${subject}`);
     return;
   }
-  await (provider === 'mailersend' ? sendWithMailerSend : sendWithSendGrid)(to, subject, html);
+  const send = { smtp: sendWithSmtp, mailersend: sendWithMailerSend, sendgrid: sendWithSendGrid }[config.email.provider];
+  await send(to, subject, html);
+}
+
+// ---------------------------------------------------------------- SMTP
+
+let transport = null;
+let transportKey = '';
+
+/** Uma conexão (pool) por configuração: abrir uma por e-mail gastaria um handshake TLS e um login em cada aviso. */
+function smtpTransport() {
+  const { host, port, secure, requireTls, user, password } = config.email.smtp;
+  const key = JSON.stringify([host, port, secure, requireTls, user, password]);
+  if (transport && key === transportKey) return transport;
+  transport?.close();
+  transport = nodemailer.createTransport({
+    host, port, secure, requireTLS: !secure && requireTls, pool: true, maxConnections: 2,
+    auth: user ? { user, pass: password } : undefined,
+    connectionTimeout: 15_000, greetingTimeout: 15_000, socketTimeout: 30_000,
+  });
+  transportKey = key;
+  return transport;
+}
+
+async function sendWithSmtp(to, subject, html) {
+  const { fromEmail, fromName } = config.email;
+  try {
+    await smtpTransport().sendMail({ from: { name: fromName, address: fromEmail }, to, subject, html });
+  } catch (error) {
+    throw smtpFailure(error);
+  }
+}
+
+/**
+ * Erro SMTP → decisão da caixa de saída. 4xx é temporário pela RFC 5321 (inclui o limite de envio do provedor);
+ * 5xx recusa a mensagem; login, TLS e conexão são configuração ou rede — esperar não perde o aviso.
+ */
+function smtpFailure(error) {
+  const code = Number(error.responseCode) || null;
+  const detail = `SMTP ${code ?? error.code ?? 'erro'}: ${String(error.response ?? error.message).slice(0, 500)}`;
+  if (error.code === 'EAUTH' || code === 530 || code === 534 || code === 535) {
+    return new EmailError(`${detail} — confira SMTP_USUARIO e SMTP_SENHA.`, { retryLater: true });
+  }
+  if (error.code === 'ETLS') return new EmailError(`${detail} — o servidor não ofereceu TLS; confira SMTP_PORTA e SMTP_SEGURO.`, { retryLater: true });
+  if (['ECONNECTION', 'ETIMEDOUT', 'EDNS', 'ESOCKET'].includes(error.code) && !code) {
+    return new EmailError(`${detail} — sem conexão com ${config.email.smtp.host}:${config.email.smtp.port}.`, { retryLater: true });
+  }
+  if (code >= 400 && code < 500) return new EmailError(detail, { retryLater: true });
+  if (code >= 500) return new EmailError(detail, { permanent: true });
+  return new EmailError(detail);
+}
+
+/** Para os testes e o encerramento: fecha a conexão SMTP. */
+export function closeSmtp() {
+  transport?.close();
+  transport = null;
+  transportKey = '';
 }
 
 /** MailerSend: POST /v1/email, 202 com o x-message-id quando aceita. */

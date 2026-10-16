@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
-import { config } from '../src/config.js';
+import { config, emailMissing, emailProviderName } from '../src/config.js';
 import { formatBr, localTime, today } from '../src/domain/dates.js';
-import { sendEmail } from '../src/services/email.js';
+import { closeSmtp, sendEmail } from '../src/services/email.js';
 
 /**
  * Envia um e-mail de teste NA HORA, pelo provedor configurado, sem passar pela caixa de saída — para conferir a
@@ -18,15 +18,12 @@ if (!to || !/^[^\s@]+@[^\s@]+$/.test(to)) {
   process.exit(1);
 }
 
-const { provider, enabled, apiKey, fromEmail, fromName } = config.email;
-const name = provider === 'mailersend' ? 'MailerSend' : 'SendGrid';
-console.log(`\n  Provedor:  ${name}`);
-console.log(`  Remetente: ${fromName} <${fromEmail || '(EMAIL_REMETENTE vazio)'}>`);
-const missing = [
-  !enabled && 'EMAIL_ATIVO=1',
-  !apiKey && (provider === 'mailersend' ? 'MAILERSEND_API_KEY' : 'SENDGRID_API_KEY'),
-  !fromEmail && 'EMAIL_REMETENTE',
-].filter(Boolean);
+const { provider, fromEmail, fromName, smtp } = config.email;
+const name = emailProviderName(provider);
+console.log(`\n  Provedor:  ${name}${provider === 'smtp' ? ` (${smtp.host || 'SMTP_HOST vazio'}:${smtp.port}, `
+  + `${smtp.secure ? 'TLS direto' : 'STARTTLS obrigatório'}, usuário ${smtp.user || '(nenhum)'})` : ' (API)'}`);
+console.log(`  Remetente: ${fromName} <${fromEmail || '(remetente vazio)'}>`);
+const missing = emailMissing();
 if (missing.length) {
   console.error(`\n  O envio está desligado. Falta configurar: ${missing.join(', ')}.\n`);
   process.exit(1);
@@ -40,5 +37,7 @@ try {
   console.log(`\n  Aceito pelo ${name} para ${to}. Confira a caixa de entrada (e o spam, no primeiro envio).\n`);
 } catch (error) {
   console.error(`\n  O ${name} recusou o envio: ${error.message}\n`);
-  process.exit(1);
+  process.exitCode = 1;
+} finally {
+  closeSmtp();
 }

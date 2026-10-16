@@ -1,11 +1,12 @@
 import './env.js';
 import { after, afterEach, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assertSafeConfig, config } from '../src/config.js';
+import { createServer } from 'node:net';
+import { assertSafeConfig, config, parseSender } from '../src/config.js';
 import { query, queryOne } from '../src/db/index.js';
 import { entity } from '../src/db/model.js';
 import { UnitOfWork } from '../src/db/unit-of-work.js';
-import { EmailError, sendEmail } from '../src/services/email.js';
+import { closeSmtp, EmailError, sendEmail } from '../src/services/email.js';
 import { processOutbox, resumeOutbox } from '../src/services/jobs.js';
 import { startServer } from './server.js';
 
@@ -137,5 +138,134 @@ test('caixa de saída: limite pausa sem gastar tentativa, recusa falha de vez, e
 
 test('provedor inválido impede a partida', () => {
   config.email.provider = 'mailgun';
-  assert.throws(() => assertSafeConfig(), /EMAIL_PROVEDOR="mailgun" é inválido: use mailersend ou sendgrid/);
+  assert.throws(() => assertSafeConfig(), /EMAIL_PROVEDOR="mailgun" é inválido: use smtp, mailersend ou sendgrid/);
+});
+
+test('remetente no formato "Nome <e-mail>" (como na aplicação financeira) ou só o e-mail', () => {
+  assert.deepEqual(parseSender('Sistema de Gestão de Vaga <MS_2qULCB@sistemas.onlinegestao.com.br>'),
+    { name: 'Sistema de Gestão de Vaga', email: 'MS_2qULCB@sistemas.onlinegestao.com.br' });
+  assert.deepEqual(parseSender('"Controle de Vagas" <avisos@empresa.com.br>'), { name: 'Controle de Vagas', email: 'avisos@empresa.com.br' });
+  assert.deepEqual(parseSender(' avisos@empresa.com.br '), { name: '', email: 'avisos@empresa.com.br' });
+  assert.deepEqual(parseSender(undefined), { name: '', email: '' });
+});
+
+// ---------------------------------------------------------------- SMTP, contra um servidor simulado
+
+/**
+ * Servidor SMTP mínimo (RFC 5321) em porta efêmera: anuncia AUTH, guarda o que recebe e responde cada etapa com o
+ * código configurado — para exercitar o nodemailer de verdade, sem rede e sem credencial real.
+ */
+async function fakeSmtp(replies = {}) {
+  const received = [];
+  const server = createServer((socket) => {
+    const mail = { auth: null, from: null, to: [], data: '' };
+    let inData = false;
+    let buffer = '';
+    const say = (line) => socket.write(`${line}\r\n`);
+    say('220 smtp.teste ESMTP');
+    socket.on('data', (chunk) => {
+      buffer += chunk.toString('utf8');
+      let index;
+      while ((index = buffer.indexOf('\r\n')) !== -1) {
+        const line = buffer.slice(0, index);
+        buffer = buffer.slice(index + 2);
+        if (inData) {
+          if (line === '.') {
+            inData = false;
+            received.push({ ...mail });
+            say(replies.data ?? '250 2.0.0 OK enfileirada');
+          } else mail.data += `${line}\n`;
+          continue;
+        }
+        const verb = line.split(' ')[0].toUpperCase();
+        if (verb === 'EHLO') say('250-smtp.teste\r\n250-AUTH PLAIN LOGIN\r\n250 8BITMIME');
+        else if (verb === 'AUTH') {
+          mail.auth = Buffer.from(line.split(' ')[2] ?? '', 'base64').toString('utf8').split('\0').slice(1);
+          say(replies.auth ?? '235 2.7.0 Autenticado');
+        } else if (verb === 'MAIL') {
+          mail.from = line;
+          say(replies.mail ?? '250 OK');
+        } else if (verb === 'RCPT') {
+          mail.to.push(line);
+          say(replies.rcpt ?? '250 OK');
+        } else if (verb === 'DATA') {
+          inData = true;
+          say('354 Pode enviar');
+        } else if (verb === 'RSET' || verb === 'NOOP') say('250 OK');
+        else if (verb === 'QUIT') {
+          say('221 Tchau');
+          socket.end();
+        } else say('502 Comando não implementado');
+      }
+    });
+    socket.on('error', () => {});
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return { port: server.address().port, received, close: () => new Promise((resolve) => server.close(resolve)) };
+}
+
+const smtpConfig = (port, change = {}) => Object.assign(config.email, {
+  provider: 'smtp', enabled: true, apiKey: '', fromEmail: 'avisos@sistemas.empresa.com.br', fromName: 'Sistema de Gestão de Vaga',
+  // O servidor simulado não tem TLS: só aqui o STARTTLS deixa de ser exigido.
+  smtp: { host: '127.0.0.1', port, secure: false, requireTls: false, user: 'MS_teste@sistemas.empresa.com.br', password: 'segredo', ...change },
+});
+
+test('SMTP: autentica, envia com o remetente "Nome <e-mail>", destinatário, assunto e HTML', async () => {
+  const smtp = await fakeSmtp();
+  try {
+    smtpConfig(smtp.port);
+    await sendEmail('maria@empresa.com.br', 'Posição em risco', '<p>Prazo do SLA</p>');
+    assert.equal(smtp.received.length, 1);
+    const [mail] = smtp.received;
+    assert.deepEqual(mail.auth, ['MS_teste@sistemas.empresa.com.br', 'segredo']);
+    assert.match(mail.from, /^MAIL FROM:<avisos@sistemas\.empresa\.com\.br>/);
+    assert.deepEqual(mail.to, ['RCPT TO:<maria@empresa.com.br>']);
+    // Cabeçalho longo pode vir dobrado em duas linhas (RFC 5322): quebra seguida de espaço.
+    assert.match(mail.data, /^From: =\?UTF-8\?Q\?Sistema_de_Gest=C3=A3o_de_Vaga\?=\s+<avisos@sistemas\.empresa\.com\.br>$/m);
+    assert.match(mail.data, /^Subject: =\?UTF-8\?Q\?Posi=C3=A7=C3=A3o_em_risco\?=$/m);
+    assert.match(mail.data, /<p>Prazo do SLA<\/p>/);
+  } finally {
+    closeSmtp();
+    await smtp.close();
+  }
+});
+
+test('SMTP: login recusado e limite (4xx) esperam; destinatário recusado (5xx) falha de vez; sem conexão espera', async () => {
+  const outcome = async (replies, change = {}) => {
+    const smtp = await fakeSmtp(replies);
+    try {
+      smtpConfig(change.port ?? smtp.port, change);
+      await sendEmail('maria@empresa.com.br', 'Assunto', '<p>x</p>');
+      return 'ok';
+    } catch (error) {
+      assert.ok(error instanceof EmailError, error.message);
+      return error.retryLater ? 'depois' : error.permanent ? 'definitiva' : 'passageira';
+    } finally {
+      closeSmtp();
+      await smtp.close();
+    }
+  };
+  assert.equal(await outcome({}), 'ok');
+  assert.equal(await outcome({ auth: '535 5.7.8 Credenciais inválidas' }), 'depois');
+  assert.equal(await outcome({ mail: '451 4.7.1 Limite de envio atingido' }), 'depois');
+  assert.equal(await outcome({ rcpt: '550 5.1.1 Destinatário inexistente' }), 'definitiva');
+  assert.equal(await outcome({ data: '554 5.7.1 Remetente não verificado' }), 'definitiva');
+  const closedPort = await fakeSmtp().then(async (s) => {
+    await s.close();
+    return s.port;
+  });
+  assert.equal(await outcome({}, { port: closedPort }), 'depois');
+});
+
+test('SMTP exige STARTTLS por padrão: servidor sem TLS não recebe a senha', async () => {
+  const smtp = await fakeSmtp();
+  try {
+    smtpConfig(smtp.port, { requireTls: true });
+    await assert.rejects(sendEmail('maria@empresa.com.br', 'Assunto', '<p>x</p>'),
+      (error) => error instanceof EmailError && error.retryLater && /TLS/.test(error.message));
+    assert.equal(smtp.received.length, 0);
+  } finally {
+    closeSmtp();
+    await smtp.close();
+  }
 });

@@ -17,6 +17,7 @@
   "dependencies": {
     "express": "^4.21.2",
     "multer": "^2.0.2",
+    "nodemailer": "^10.0.13",
     "pg": "^8.23.0"
   }
 }

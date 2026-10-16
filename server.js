@@ -1,6 +1,6 @@
 import express from 'express';
 import { createApp } from './src/app.js';
-import { assertSafeConfig, config, configurationWarnings } from './src/config.js';
+import { assertSafeConfig, config, configurationWarnings, emailMissing, emailProviderName } from './src/config.js';
 import { connect, describeDatabase, disconnect } from './src/db/index.js';
 import { startJobs, stopJobs } from './src/services/jobs.js';
 
@@ -78,8 +78,9 @@ const listener = server.listen(config.port, config.host, () => {
   console.log(`  Estado:     ${application ? 'operando' : 'DEGRADADO — sem banco (respondendo 503)'}`);
   console.log(`  Proxy:      ${config.trustProxy ? 'confiável (X-Forwarded-*)' : 'não confiável'}`);
   const email = config.email;
-  console.log(`  E-mail:     ${email.enabled && email.apiKey ? `${email.provider === 'mailersend' ? 'MailerSend' : 'SendGrid'} `
-    + `(${email.fromEmail})` : 'desligado (só log)'}`);
+  const via = email.provider === 'smtp' ? `${email.smtp.host}:${email.smtp.port}` : 'API';
+  console.log(`  E-mail:     ${emailMissing().length ? 'desligado (só log)'
+    : `${emailProviderName(email.provider)} ${via}, remetente ${email.fromName} <${email.fromEmail}>`}`);
   for (const warning of configurationWarnings()) console.log(`  ATENÇÃO:    ${warning}`);
   console.log('');
   if (application) startJobs();

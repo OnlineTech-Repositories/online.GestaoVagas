@@ -6,14 +6,14 @@ A especificação completa está em [docs/SPEC_controle_vagas.md](docs/SPEC_cont
 ## Stack
 
 No padrão da aplicação financeira (Compras e Pagamentos), que já roda no Render: **Node.js 24, módulos ESM, Express, SQL
-escrito à mão, sem etapa de build e com três dependências de runtime** (`express`, `pg`, `multer`).
+escrito à mão, sem etapa de build e com quatro dependências de runtime** (`express`, `pg`, `multer`, `nodemailer`).
 
 | Camada | Tecnologia |
 |---|---|
 | Front-end | JavaScript puro (módulos ESM nativos), sem framework e sem build, no padrão de front-end da aplicação financeira |
 | API | Node.js 24 + Express 4 (REST, JSON), servindo também o front-end |
 | Banco | PostgreSQL em produção; SQLite (`node:sqlite`) em desenvolvimento e testes — o mesmo SQL nos dois |
-| E-mail | API do MailerSend (ou SendGrid) via `fetch` nativo, com caixa de saída (outbox) e novas tentativas |
+| E-mail | SMTP (`nodemailer`, como na aplicação financeira) ou a API do MailerSend/SendGrid via `fetch`, com caixa de saída (outbox) e novas tentativas |
 | Testes | `node --test` (domínio, API pelo HTTP real e montagem de cada tela), nos dois bancos |
 
 ## Estrutura
@@ -52,11 +52,13 @@ em produção, as variáveis de ambiente do serviço. `src/config.js` é o únic
 | `DATABASE_URL` | PostgreSQL (`postgresql://usuario:senha@host:5432/banco`). Sem ela, SQLite em `dados/` |
 | `NODE_ENV` | `development` localmente (cookies sem `Secure`); vazio = `production` |
 | `PORTA` / `PORT` | Porta HTTP (o Render informa `PORT`) |
-| `BASE_URL` | Endereço público, usado nos links dos e-mails |
+| `BASE_URL` (ou `URL_BASE`) | Endereço público, usado nos links dos e-mails |
 | `ADMIN_EMAIL` / `ADMIN_SENHA` | Primeiro ADMIN, criado se não houver nenhum (troca de senha obrigatória no 1º acesso) |
-| `EMAIL_ATIVO` / `EMAIL_REMETENTE` / `EMAIL_NOME_REMETENTE` | E-mail; desligado, os e-mails só aparecem no log. O remetente precisa ser de domínio verificado no provedor |
-| `MAILERSEND_API_KEY` | Chave da API do MailerSend (com ela, o provedor padrão passa a ser o MailerSend) |
-| `EMAIL_PROVEDOR` | `mailersend` ou `sendgrid` (com `SENDGRID_API_KEY`); opcional |
+| `SMTP_ATIVO` (ou `EMAIL_ATIVO`) | Liga o e-mail; desligado, os e-mails só aparecem no log |
+| `SMTP_HOST` / `SMTP_PORTA` / `SMTP_SEGURO` | Servidor SMTP (MailerSend: `smtp.mailersend.net`, `587`, `false` = STARTTLS, que é exigido) |
+| `SMTP_USUARIO` / `SMTP_SENHA` | Credenciais SMTP (no MailerSend, as do domínio verificado) |
+| `SMTP_REMETENTE` (ou `EMAIL_REMETENTE`) | `Nome <email@dominio>` ou só o e-mail; precisa ser de domínio verificado no provedor |
+| `MAILERSEND_API_KEY` / `EMAIL_PROVEDOR` | Alternativa ao SMTP: envio pela API do MailerSend (`EMAIL_PROVEDOR` = `smtp`, `mailersend` ou `sendgrid`; opcional) |
 | `DADOS_DEMO` / `SENHA_DEMO` | Dados fictícios de demonstração (só desenvolvimento) |
 | `PROXY_CONFIAVEL` | Confia em `X-Forwarded-*` (padrão: ligado no Render e no App Service) |
 
@@ -163,9 +165,10 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
    de vigência não depende do dia em que o job rodou.
 9. **Datas futuras** são bloqueadas para marcos, exceto o último dia trabalhado (RN-13).
 10. **Anexo de evidência no SharePoint (D4)** não foi implementado (fora das fases 1–3; parâmetro `REQUEST_EVIDENCE_REQUIRED = false`).
-11. **E-mail via MailerSend** (por decisão do usuário em 16/10/2026; antes, SendGrid, que continua aceito). A SPEC
-    citava Microsoft 365. Limite do provedor (429) ou chave inválida pausam a caixa de saída **sem gastar tentativa**:
-    no plano gratuito do MailerSend (100 e-mails por dia), o limite diário descartava os avisos em minutos.
+11. **E-mail via MailerSend por SMTP** (por decisão do usuário em 16/10/2026), com as mesmas variáveis `SMTP_*` da
+    aplicação financeira; a API do MailerSend e o SendGrid continuam aceitos. A SPEC citava Microsoft 365. Limite do
+    provedor (429 ou SMTP 4xx), login recusado ou falta de conexão pausam a caixa de saída **sem gastar tentativa**: no
+    plano gratuito do MailerSend (100 e-mails por dia), o limite diário descartava os avisos em minutos.
 12. **Aprovação do cliente:** todo pedido nasce "Aguardando aprovação do cliente"; o Comercial ou a Controladoria registra a
     aprovação (data informada, padrão hoje; retroativa exige justificativa) ou "Cliente não aprovou" (encerra as posições sem perda).
     O RH avança só até "Em recrutamento" antes da aprovação; o SLA começa na data da aprovação e os dias descobertos/R$ contam

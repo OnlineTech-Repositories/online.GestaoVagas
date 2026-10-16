@@ -12,7 +12,7 @@ JSON da API são os mesmos, e o front-end não mudou.
 | Ponto | Como ficou |
 |---|---|
 | Runtime | Node 24 (`engines` no package.json e `.node-version`), nativo no Render |
-| Build | `npm ci`: três dependências de runtime (`express`, `pg`, `multer`), sem etapa de build |
+| Build | `npm ci`: quatro dependências de runtime (`express`, `pg`, `multer`, `nodemailer`), sem etapa de build |
 | Porta | Lida de `PORT`, que o Render define (10000), escutando em `0.0.0.0` |
 | HTTPS atrás do proxy | Proxy confiável detectado pela variável `RENDER`: cookies `Secure` e IP real na auditoria |
 | Banco | PostgreSQL por `DATABASE_URL`, a URL que o Render entrega, colada como está |
@@ -45,7 +45,7 @@ JSON da API são os mesmos, e o front-end não mudou.
 | `DATABASE_URL` | a Internal Database URL do banco, colada como está |
 | `BASE_URL` | `https://<servico>.onrender.com` (links dos e-mails) |
 | `ADMIN_EMAIL` / `ADMIN_SENHA` | o primeiro ADMIN; a senha é provisória: 8+ caracteres, maiúscula, número e especial |
-| `EMAIL_ATIVO` | `0` até ter a chave; depois `1` com `MAILERSEND_API_KEY` e `EMAIL_REMETENTE` (de domínio verificado no MailerSend) |
+| `SMTP_ATIVO` | `true` com `SMTP_HOST=smtp.mailersend.net`, `SMTP_PORTA=587`, `SMTP_SEGURO=false`, `SMTP_USUARIO`, `SMTP_SENHA` e `SMTP_REMETENTE` (`Nome <e-mail>` de domínio verificado no MailerSend) |
 
 **Variáveis antigas:** as da configuração anterior podem ficar, porque os nomes da versão .NET continuam aceitos
 (`ConnectionStrings__Default`, `App__BaseUrl`, `Seed__AdminEmail`, `Seed__AdminPassword`, `SendGrid__*`). As que não
