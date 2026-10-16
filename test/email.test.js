@@ -142,8 +142,8 @@ test('provedor inválido impede a partida', () => {
 });
 
 test('remetente no formato "Nome <e-mail>" (como na aplicação financeira) ou só o e-mail', () => {
-  assert.deepEqual(parseSender('Sistema de Gestão de Vaga <MS_2qULCB@sistemas.onlinegestao.com.br>'),
-    { name: 'Sistema de Gestão de Vaga', email: 'MS_2qULCB@sistemas.onlinegestao.com.br' });
+  assert.deepEqual(parseSender('Sistema de Gestão de Vaga <avisos@sistemas.empresa.com.br>'),
+    { name: 'Sistema de Gestão de Vaga', email: 'avisos@sistemas.empresa.com.br' });
   assert.deepEqual(parseSender('"Controle de Vagas" <avisos@empresa.com.br>'), { name: 'Controle de Vagas', email: 'avisos@empresa.com.br' });
   assert.deepEqual(parseSender(' avisos@empresa.com.br '), { name: '', email: 'avisos@empresa.com.br' });
   assert.deepEqual(parseSender(undefined), { name: '', email: '' });
@@ -207,7 +207,7 @@ async function fakeSmtp(replies = {}) {
 const smtpConfig = (port, change = {}) => Object.assign(config.email, {
   provider: 'smtp', enabled: true, apiKey: '', fromEmail: 'avisos@sistemas.empresa.com.br', fromName: 'Sistema de Gestão de Vaga',
   // O servidor simulado não tem TLS: só aqui o STARTTLS deixa de ser exigido.
-  smtp: { host: '127.0.0.1', port, secure: false, requireTls: false, user: 'MS_teste@sistemas.empresa.com.br', password: 'segredo', ...change },
+  smtp: { host: '127.0.0.1', port, secure: false, requireTls: false, user: 'usuario-smtp@sistemas.empresa.com.br', password: 'segredo', ...change },
 });
 
 test('SMTP: autentica, envia com o remetente "Nome <e-mail>", destinatário, assunto e HTML', async () => {
@@ -217,7 +217,7 @@ test('SMTP: autentica, envia com o remetente "Nome <e-mail>", destinatário, ass
     await sendEmail('maria@empresa.com.br', 'Posição em risco', '<p>Prazo do SLA</p>');
     assert.equal(smtp.received.length, 1);
     const [mail] = smtp.received;
-    assert.deepEqual(mail.auth, ['MS_teste@sistemas.empresa.com.br', 'segredo']);
+    assert.deepEqual(mail.auth, ['usuario-smtp@sistemas.empresa.com.br', 'segredo']);
     assert.match(mail.from, /^MAIL FROM:<avisos@sistemas\.empresa\.com\.br>/);
     assert.deepEqual(mail.to, ['RCPT TO:<maria@empresa.com.br>']);
     // Cabeçalho longo pode vir dobrado em duas linhas (RFC 5322): quebra seguida de espaço.
