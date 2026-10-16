@@ -27,6 +27,9 @@ export const utcNow = () => nowDate().toISOString();
 /** Data de hoje em São Paulo. */
 export const today = () => isoDay.format(nowDate());
 
+/** Data em São Paulo de um instante ISO (UTC): updated_at gravado às 22h de Brasília ainda é "hoje". */
+export const localDateOf = (instant) => isoDay.format(new Date(instant));
+
 /** Hora atual em São Paulo, 'HH:MM'. */
 export const localTime = () => hourMinute.format(nowDate());
 

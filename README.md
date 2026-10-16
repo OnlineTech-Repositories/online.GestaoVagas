@@ -197,3 +197,14 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     que já roda no Render: Express, SQL manuscrito, SQLite local e PostgreSQL em produção, sem build. As rotas e o JSON
     da API ficaram iguais, e o front-end não mudou. O banco PostgreSQL da versão .NET não é aproveitado: a aplicação
     recusa subir num banco com o schema anterior.
+21. **Avisos e resumo da rotina diária (fase 2, seções 10.1 e 10.2):**
+    - *Em risco* avisa a equipe de RH do pedido (analistas responsáveis e Gestores de RH). *Vencido* escala para Gestor
+      de RH (Coordenação de RH), Gestor (Diretor Comercial) e Controladoria. Cada um dispara **uma vez por posição**
+      (tabela `position_alerts`); quem passa direto a Vencido recebe só o escalonamento.
+    - *Posição parada* (`STALE_DAYS` sem atualização): avisa quem responde pela próxima ação — NACC (decisão do cliente,
+      1º dia), responsável comercial do contrato (aprovação do cliente), equipe de RH (publicação, seleção, admissão) e
+      DP junto na matrícula. Uma vez por período parado. Posição **pausada não gera esse alerta** (a espera é do cliente);
+      ela aparece no resumo em "Pausas sem fim".
+    - *Resumo diário*: um e-mail por pessoa dos perfis COMMERCIAL, NACC, DP, RH, RH_MANAGER, MANAGER e CONTROLLERSHIP,
+      na primeira execução do dia, **sem valores em R$** (o mesmo e-mail para todos). Sem posição aberta, não é enviado.
+    - Os avisos não trazem R$ e saem como notificação interna e e-mail (com `SENDGRID_ATIVO=0`, só a notificação e o log).

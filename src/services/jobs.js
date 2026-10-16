@@ -1,13 +1,16 @@
 import { config } from '../config.js';
 import { query, queryOne } from '../db/index.js';
 import { entity } from '../db/model.js';
-import { listExpiredFixedEnd } from '../db/repository.js';
+import { listExpiredFixedEnd, listPositions } from '../db/repository.js';
 import { UnitOfWork } from '../db/unit-of-work.js';
+import { calculate, isLegacyOrigin } from '../domain/calculator.js';
 import { formatBr, localTime, localWeekday, today as todayDate, utcNow } from '../domain/dates.js';
 import { EmailStatus, NotificationTypes, ParameterKeys, Roles } from '../domain/enums.js';
-import { closeByContractEnd } from '../domain/position.js';
+import { closeByContractEnd, isOpen } from '../domain/position.js';
+import { runAlerts } from './alerts.js';
+import { buildDigest, queueDigest } from './digest.js';
 import { links, notify } from './notifications.js';
-import { getText } from './parameters.js';
+import { calcSettings, getInt, getText } from './parameters.js';
 import { describe } from './positions.js';
 
 /**
@@ -60,13 +63,20 @@ export async function hasRun(date) {
 }
 
 /**
- * Fase 1: encerra posições FIXED_END com vigência vencida. Idempotente: rodar duas vezes no mesmo dia não duplica
- * encerramentos nem notificações (a posição encerrada sai da consulta).
+ * Rotina diária (seção 10.2), nesta ordem:
+ *   1. encerra posições FIXED_END com vigência vencida;
+ *   2. recalcula a situação do SLA e avisa as transições — Em risco, Vencido (escalonamento) — e as posições sem
+ *      atualização há STALE_DAYS (alerts.js);
+ *   3. envia o resumo diário (digest.js).
+ *
+ * Idempotente: rodar de novo no mesmo dia não duplica encerramentos (a posição encerrada sai da consulta), alertas
+ * (position_alerts) nem o resumo (só sai na primeira execução concluída do dia). Tudo grava num save() só.
  */
 export async function runDailyJob() {
   const uow = new UnitOfWork({ userId: null, ip: null });
   const today = todayDate();
   let run = uow.load('JobRun', await queryOne('SELECT * FROM job_runs WHERE job_name = ? AND run_date = ?', DAILY_JOB, today));
+  const firstRunToday = !run?.finishedAt;
   if (!run) {
     run = uow.add(entity('JobRun', { jobName: DAILY_JOB, runDate: today, startedAt: utcNow(), finishedAt: null, summary: null }));
   }
@@ -85,8 +95,22 @@ export async function runDailyJob() {
       link: links.position(p.id),
     }, { roles: [Roles.Nacc], userIds: [contract.commercialOwnerId] });
   }
+
+  // As que continuam abertas (as encerradas acima já mudaram de status neste mesmo objeto).
+  const settings = await calcSettings();
+  const staleDays = await getInt(ParameterKeys.StaleDays);
+  const rows = (await listPositions(uow, { onlyOpen: true }))
+    .filter((p) => isOpen(p) && !isLegacyOrigin(p))
+    .map((p) => ({ p, m: calculate(p, today, settings) }));
+  const alerts = await runAlerts(uow, rows, today, staleDays);
+  const digestRecipients = firstRunToday ? await queueDigest(uow, buildDigest(rows, today, staleDays)) : 0;
+
   run.finishedAt = utcNow();
-  run.summary = `Posições encerradas por fim de vigência: ${closed}.`;
+  const summary = `Posições encerradas por fim de vigência: ${closed}. Em risco: ${alerts.atRisk}. `
+    + `Vencidas (escalonamento): ${alerts.overdue}. Sem atualização: ${alerts.stale}. `
+    + `Resumo diário: ${digestRecipients} destinatário(s).`;
+  // Nova execução no mesmo dia acrescenta: sobrescrever apagaria o registro do que a primeira fez (o resumo enviado).
+  run.summary = firstRunToday ? summary : `${run.summary} | Nova execução: ${summary}`.slice(0, 4000);
   await uow.save({ action: 'DAILY_JOB' });
   console.log(`[rotina] rotina diária de ${formatBr(today)} concluída. ${run.summary}`);
 }

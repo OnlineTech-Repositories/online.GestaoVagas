@@ -380,6 +380,18 @@ CREATE TABLE IF NOT EXISTS email_messages (
 );
 CREATE INDEX IF NOT EXISTS ix_email_messages_status ON email_messages (status);
 
+-- Alertas da rotina diária já disparados (seção 10.1): a mudança de situação notifica UMA vez, nunca a cada execução.
+-- Em risco e Vencido: uma vez por posição (reference vazio). Vaga parada: uma vez por período sem atualização
+-- (reference = instante da última atualização; se a posição andar e parar de novo, é outro alerta).
+CREATE TABLE IF NOT EXISTS position_alerts (
+  id TEXT PRIMARY KEY,
+  position_id TEXT NOT NULL REFERENCES positions (id),
+  kind TEXT NOT NULL,
+  reference TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_position_alerts ON position_alerts (position_id, kind, reference);
+
 CREATE TABLE IF NOT EXISTS job_runs (
   id TEXT PRIMARY KEY,
   job_name TEXT NOT NULL,
@@ -434,6 +446,8 @@ CREATE OR REPLACE TRIGGER trg_candidates_prevent_delete BEFORE DELETE ON candida
 CREATE OR REPLACE TRIGGER trg_position_evidences_prevent_delete BEFORE DELETE ON position_evidences
        FOR EACH ROW EXECUTE FUNCTION fn_prevent_delete();
 CREATE OR REPLACE TRIGGER trg_evidence_files_prevent_delete BEFORE DELETE ON evidence_files
+       FOR EACH ROW EXECUTE FUNCTION fn_prevent_delete();
+CREATE OR REPLACE TRIGGER trg_position_alerts_prevent_delete BEFORE DELETE ON position_alerts
        FOR EACH ROW EXECUTE FUNCTION fn_prevent_delete();
 
 COMMIT;

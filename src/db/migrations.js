@@ -29,7 +29,7 @@ export const DOTNET_DATABASE_ERROR =
 export const NO_DELETE_TABLES = [
   'clients', 'contracts', 'contract_rates', 'orders', 'positions', 'terminations', 'pauses', 'group_entities',
   'job_roles', 'work_locations', 'pause_reasons', 'sla_targets', 'system_parameters', 'users', 'order_rh_analysts',
-  'candidates', 'position_evidences', 'evidence_files',
+  'candidates', 'position_evidences', 'evidence_files', 'position_alerts',
 ];
 
 export async function migrate() {

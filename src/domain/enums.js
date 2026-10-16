@@ -115,4 +115,10 @@ export const NotificationTypes = Object.freeze({
   RatePending: 'RATE_PENDING',
   RateRejected: 'RATE_REJECTED',
   ContractEnded: 'CONTRACT_ENDED',
+  SlaAtRisk: 'SLA_AT_RISK',
+  SlaOverdue: 'SLA_OVERDUE',
+  PositionStale: 'POSITION_STALE',
 });
+
+/** Alertas da rotina diária registrados em position_alerts (um por posição; vaga parada, um por período parado). */
+export const AlertKind = values('AT_RISK', 'OVERDUE', 'STALE');

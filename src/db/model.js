@@ -80,6 +80,11 @@ export const ENTITIES = {
     toAddress: 'text', subject: 'text', htmlBody: 'text', status: 'text', attempts: 'int', lastError: 'text',
     sentAt: 'datetime',
   }, { audited: false }),
+  /** Alerta já disparado pela rotina diária (só inclusão: a chave única impede repetir o aviso). */
+  PositionAlert: {
+    table: 'position_alerts', columns: { id: 'text', positionId: 'text', kind: 'text', reference: 'text', createdAt: 'datetime' },
+    audited: false, plain: true,
+  },
   JobRun: define('job_runs', {
     jobName: 'text', runDate: 'date', startedAt: 'datetime', finishedAt: 'datetime', summary: 'text',
   }, { audited: false }),
@@ -101,7 +106,7 @@ export const RELATIONS = {
 export const INSERT_ORDER = [
   'User', 'GroupEntity', 'Client', 'JobRole', 'WorkLocation', 'PauseReason', 'SlaTarget', 'SystemParameter', 'Contract',
   'ContractRate', 'Order', 'Position', 'Termination', 'Pause', 'OrderRhAnalyst', 'Candidate', 'EvidenceFile',
-  'PositionEvidence', 'Notification', 'EmailMessage', 'JobRun',
+  'PositionEvidence', 'PositionAlert', 'Notification', 'EmailMessage', 'JobRun',
 ];
 
 /** Campos que não entram no histórico (técnicos ou sensíveis). */

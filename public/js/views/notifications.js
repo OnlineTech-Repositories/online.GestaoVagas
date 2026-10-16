@@ -19,6 +19,9 @@ const TITLES = {
   RATE_PENDING: 'Valor pendente de validação',
   RATE_REJECTED: 'Valor rejeitado',
   CONTRACT_ENDED: 'Encerrada por fim de vigência',
+  SLA_AT_RISK: 'Posição em risco de vencer o SLA',
+  SLA_OVERDUE: 'Escalonamento: SLA vencido',
+  POSITION_STALE: 'Posição sem atualização',
 };
 
 /** Notificações internas do usuário (seção 10.1); clicar abre o registro e marca como lida. */

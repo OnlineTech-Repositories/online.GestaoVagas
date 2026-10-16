@@ -16,7 +16,16 @@ export const links = {
   position: (id) => `${config.baseUrl}/#/posicoes/${id}`,
   order: (id) => `${config.baseUrl}/#/pedidos/${id}`,
   contractRates: () => `${config.baseUrl}/#/valores`,
+  dashboard: () => `${config.baseUrl}/#/`,
 };
+
+/** Só o e-mail, sem notificação interna (o resumo diário). Não grava: entra no save() da operação. */
+export function queueEmail(uow, recipient, subject, htmlBody) {
+  uow.add(entity('EmailMessage', {
+    toAddress: recipient.email, subject: `[Controle de Vagas] ${subject}`, htmlBody,
+    status: EmailStatus.PENDING, attempts: 0, lastError: null, sentAt: null,
+  }));
+}
 
 /**
  * Registra o evento para os usuários ativos dos perfis e/ou os usuários informados (sem duplicar quem está nos
@@ -32,10 +41,7 @@ export async function notify(uow, event, { roles = null, userIds = null } = {}) 
     uow.add(entity('Notification', {
       userId: r.id, type: event.type, entityId: event.entityId ?? null, message: event.message, readAt: null,
     }));
-    uow.add(entity('EmailMessage', {
-      toAddress: r.email, subject: `[Controle de Vagas] ${event.subject}`, htmlBody: renderEmail(r.name, event),
-      status: EmailStatus.PENDING, attempts: 0, lastError: null, sentAt: null,
-    }));
+    queueEmail(uow, r, event.subject, renderEmail(r.name, event));
   }
 }
 
@@ -77,7 +83,7 @@ function requireUser(ctx) {
   return ctx.user.id;
 }
 
-const html = (text) => String(text ?? '')
+export const html = (text) => String(text ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 function renderEmail(recipientName, event) {
