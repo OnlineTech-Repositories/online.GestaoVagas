@@ -17,7 +17,8 @@ const brand = (title) =>
   el(
     'div',
     { class: 'login-marca' },
-    el('div', { class: 'logo' }, 'OL'),
+    // Logo exibida no tamanho do arquivo (200 x 82): ampliada, ficaria borrada.
+    el('img', { class: 'logo', src: '/img/logo-online-gestao.png', alt: 'Online Gestão', width: '200', height: '82' }),
     el('div', { class: 'empresa' }, 'Grupo ON LINE · Controladoria'),
     el('div', { class: 'titulo' }, title),
   );

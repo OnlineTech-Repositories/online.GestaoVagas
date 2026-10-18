@@ -105,18 +105,11 @@ a { color: var(--azul); }
 }
 
 .login-marca .logo {
-  width: 52px;
-  height: 52px;
-  border-radius: 12px;
-  background: var(--azul);
-  color: #fff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 18px;
-  letter-spacing: -0.5px;
-  margin-bottom: 12px;
+  display: block;
+  width: 200px;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto 14px;
 }
 
 .login-marca .empresa {
