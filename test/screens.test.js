@@ -181,6 +181,29 @@ test('Administrador: usuários, parâmetros e cadastros auxiliares', async (t) =
   await open('/cadastros', 'Cadastros auxiliares');
 });
 
+test('Relatórios: as quatro abas montam com KPIs, resumo e detalhe; R$ conforme o perfil', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const root = await open('/relatorios', 'Relatórios');
+  assert.match(root.textContent, /Tempo médio de preenchimento/);
+  assert.match(root.textContent, /Faturamento perdido/, 'o Comercial vê o KPI em R$');
+  assert.match(root.textContent, /Resumo por cliente/);
+  const tabs = [...root.querySelectorAll('button')].filter((b) => String(b.className).includes('aba'));
+  assert.deepEqual(tabs.map((b) => b.textContent), ['Posições em aberto', 'SLA por período', 'Faturamento perdido', 'Reposições']);
+  for (const tab of tabs.slice(1)) {
+    tab.click();
+    await wait(250);
+    const page = document.getElementById('app');
+    assert.equal(page.querySelector('.mensagem.erro'), null, `aba ${tab.textContent}`);
+    assert.match(page.textContent, /Detalhe \(\d+\)/, `aba ${tab.textContent}`);
+  }
+
+  await signIn('nacc@demo.local');
+  const nacc = await open('/relatorios?tipo=loss', 'Relatórios');
+  assert.doesNotMatch(nacc.textContent, /R\$\s*\d/, 'o NACC vê dias, sem valores em R$');
+  assert.match(nacc.textContent, /sem os valores em R\$/);
+});
+
 test('rota sem permissão volta ao painel (a API também nega com 403)', async (t) => {
   if (skip(t)) return;
   await signIn('rh@demo.local');

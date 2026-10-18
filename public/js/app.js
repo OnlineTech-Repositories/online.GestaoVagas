@@ -10,6 +10,7 @@ import { ratesScreen } from './views/rates.js';
 import { usersScreen } from './views/users.js';
 import { parametersScreen } from './views/parameters.js';
 import { catalogsScreen } from './views/catalogs.js';
+import { reportsScreen } from './views/reports.js';
 import { notificationsScreen } from './views/notifications.js';
 
 /**
@@ -67,6 +68,7 @@ const ROUTES = [
     render: terminationScreen,
     requires: (u) => hasRole(u, 'DP', 'NACC'),
   },
+  { pattern: /^\/relatorios$/, title: 'Relatórios', section: 'Gestão', render: reportsScreen },
   {
     pattern: /^\/clientes$/,
     title: 'Clientes e contratos',
@@ -127,6 +129,8 @@ const MENU_ITEMS = [
   { href: '/pedidos', icon: '▣', label: 'Pedidos' },
   { href: '/pedidos/novo', icon: '◇', label: 'Novo pedido', visible: canCreateOrder },
   { href: '/desligamentos/novo', icon: '⊘', label: 'Registrar desligamento', visible: hasAny('DP', 'NACC') },
+  { group: 'Gestão' },
+  { href: '/relatorios', icon: '◩', label: 'Relatórios' },
   { group: 'Cadastros', visible: hasAny('COMMERCIAL', 'CONTROLLERSHIP', 'ADMIN') },
   { href: '/clientes', icon: '◈', label: 'Clientes e contratos', visible: hasAny('COMMERCIAL', 'ADMIN') },
   { href: '/valores', icon: '◫', label: 'Valores por cargo', visible: hasAny('COMMERCIAL', 'CONTROLLERSHIP', 'ADMIN') },

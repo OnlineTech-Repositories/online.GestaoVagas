@@ -77,7 +77,31 @@ export const PARAMETER_DEFAULTS = Object.freeze({
   LOSS_ON_CANCEL_AFTER_OPEN: ['true', 'Conta perda até o cancelamento de posição já aberta'],
   DAILY_DIGEST_TIME: ['07:00', 'Horário da rotina diária (HH:mm, America/Sao_Paulo)'],
   REQUEST_EVIDENCE_REQUIRED: ['false', 'Exige evidência da solicitação do cliente no pedido'],
+  // Metas dos KPIs (seção 11): vazias = "sem meta", como a SPEC pede enquanto não forem definidas.
+  KPI_TARGET_COMMUNICATION_DAYS: ['', 'Meta do KPI: tempo médio de comunicação, em dias (vazio = sem meta)'],
+  KPI_TARGET_FILL_DAYS: ['', 'Meta do KPI: tempo médio de preenchimento, em dias (vazio = sem meta)'],
+  KPI_TARGET_UNCOVERED_AVG_DAYS: ['', 'Meta do KPI: tempo médio total descoberto por posição, em dias (vazio = sem meta)'],
+  KPI_TARGET_SLA_PERCENT: ['', 'Meta do KPI: % de posições preenchidas no SLA (vazio = sem meta)'],
+  KPI_TARGET_UNCOVERED_POSITION_DAYS: ['', 'Meta do KPI: dias-posto descobertos no período (vazio = sem meta)'],
+  KPI_TARGET_LOST_VALUE: ['', 'Meta do KPI: faturamento perdido no período, em R$ (vazio = sem meta)'],
+  KPI_TARGET_OVERDUE_BACKLOG: ['', 'Meta do KPI: backlog vencido, em posições (vazio = sem meta)'],
+  KPI_TARGET_EARLY_REPLACEMENT_PERCENT: ['', 'Meta do KPI: % de reposição precoce (vazio = sem meta)'],
 });
+
+/**
+ * KPIs da seção 11, com a meta (parâmetro) e o sentido: 'down' = quanto menor, melhor; 'up' = quanto maior, melhor.
+ * A mesma lista monta os cartões da tela e a aba de indicadores do Excel.
+ */
+export const KPIS = Object.freeze([
+  { key: 'communication', label: 'Tempo médio de comunicação', unit: 'days', target: 'KPI_TARGET_COMMUNICATION_DAYS', better: 'down' },
+  { key: 'fill', label: 'Tempo médio de preenchimento', unit: 'days', target: 'KPI_TARGET_FILL_DAYS', better: 'down' },
+  { key: 'uncoveredAvg', label: 'Tempo médio total descoberto', unit: 'days', target: 'KPI_TARGET_UNCOVERED_AVG_DAYS', better: 'down' },
+  { key: 'slaPercent', label: '% no SLA', unit: 'percent', target: 'KPI_TARGET_SLA_PERCENT', better: 'up' },
+  { key: 'uncoveredPositionDays', label: 'Dias-posto descobertos', unit: 'int', target: 'KPI_TARGET_UNCOVERED_POSITION_DAYS', better: 'down' },
+  { key: 'lost', label: 'Faturamento perdido', unit: 'money', target: 'KPI_TARGET_LOST_VALUE', better: 'down', money: true },
+  { key: 'overdueBacklog', label: 'Backlog vencido', unit: 'int', target: 'KPI_TARGET_OVERDUE_BACKLOG', better: 'down' },
+  { key: 'earlyReplacement', label: 'Taxa de reposição precoce', unit: 'percent', target: 'KPI_TARGET_EARLY_REPLACEMENT_PERCENT', better: 'down' },
+]);
 
 /** Rótulos em pt-BR para mensagens e e-mails (glossário, seção 16). */
 export const Labels = Object.freeze({

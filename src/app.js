@@ -14,6 +14,7 @@ import { authRoutes, health } from './routes/auth.js';
 import { dashboardRoutes, notificationRoutes, terminationRoutes } from './routes/operations.js';
 import { orderRoutes } from './routes/orders.js';
 import { positionRoutes } from './routes/positions.js';
+import { reportRoutes } from './routes/reports.js';
 import {
   catalogRoutes, clientRoutes, contractRoutes, parameterRoutes, rateRoutes, userRoutes,
 } from './routes/registry.js';
@@ -57,6 +58,7 @@ export async function createApp() {
   app.use('/api/catalogs', catalogRoutes);
   app.use('/api/parameters', parameterRoutes);
   app.use('/api/users', userRoutes);
+  app.use('/api/reports', reportRoutes);
   app.use('/api', (_req, res) => problem(res, 404, 'Não encontrado', 'Endpoint não encontrado.'));
 
   // Front-end sem build: os arquivos de public/ são servidos como estão. "no-cache" faz o navegador revalidar (ETag)

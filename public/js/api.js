@@ -98,8 +98,34 @@ async function request(method, path, body) {
   return data;
 }
 
+/**
+ * Arquivo gerado pela API (ex.: relatório em Excel): devolve { name, blob }, com o nome que o servidor informa. Erro
+ * da API vira ApiError, como nas outras chamadas — não um arquivo com o JSON do erro dentro. Quem salva é a tela
+ * (o DOM só se cria pelo ui.js).
+ */
+async function file(path, params) {
+  let response;
+  try {
+    response = await fetch(path + query(params), { credentials: 'same-origin' });
+  } catch {
+    throw new ApiError('Não foi possível conectar ao servidor. Verifique a rede e tente novamente.', { status: 0 });
+  }
+  if (!response.ok) {
+    let problem = null;
+    try {
+      problem = await response.json();
+    } catch {
+      problem = null;
+    }
+    throw toError(response.status, problem);
+  }
+  const name = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') ?? '')?.[1] ?? 'arquivo';
+  return { name, blob: await response.blob() };
+}
+
 export const api = {
   get: (path, params) => request('GET', path + query(params)),
+  file,
   post: (path, body = {}) => request('POST', path, body),
   put: (path, body = {}) => request('PUT', path, body),
   /** POST multipart/form-data (campos + arquivo). */

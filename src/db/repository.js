@@ -217,6 +217,7 @@ export async function listPositions(uow, f = {}) {
     add('EXISTS (SELECT 1 FROM order_rh_analysts a WHERE a.order_id = p.order_id AND a.user_id = ? AND a.removed_at IS NULL)',
       f.rhAnalystId);
   }
+  if (f.commercialOwnerId) add('c.commercial_owner_id = ?', f.commercialOwnerId);
   if (f.rhUnassigned) {
     add('NOT EXISTS (SELECT 1 FROM order_rh_analysts a WHERE a.order_id = p.order_id AND a.removed_at IS NULL)');
   }

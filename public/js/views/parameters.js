@@ -6,7 +6,10 @@ import {
 import { refreshSession } from '../app.js';
 
 const BOOLEAN_KEYS = ['INITIAL_LOAD_OPEN', 'ALLOW_LEGACY_TERMINATION', 'LOSS_ON_CANCEL_AFTER_OPEN', 'REQUEST_EVIDENCE_REQUIRED'];
-const showValue = (p) => (BOOLEAN_KEYS.includes(p.key) ? (p.value === 'true' ? 'Sim' : 'Não') : p.value);
+/** Metas dos KPIs (seção 11): vazias = "sem meta". */
+const isKpiTarget = (key) => key.startsWith('KPI_TARGET_');
+const showValue = (p) => (BOOLEAN_KEYS.includes(p.key) ? (p.value === 'true' ? 'Sim' : 'Não')
+  : isKpiTarget(p.key) && !p.value ? 'Sem meta' : p.value);
 
 /** Parâmetros do sistema (D5) e metas padrão de SLA (D7), mantidos pelo ADMIN. */
 export async function parametersScreen(target) {
@@ -48,10 +51,13 @@ export async function parametersScreen(target) {
       fields: [
         isBoolean
           ? field({ name: 'value', label: 'Valor', type: 'select', value: p.value, options: [{ value: 'true', label: 'Sim' }, { value: 'false', label: 'Não' }] })
-          : field({ name: 'value', label: 'Valor', value: p.value, required: true, help: p.key === 'DAILY_DIGEST_TIME' ? 'Formato HH:mm.' : null }),
+          : field({
+            name: 'value', label: 'Valor', value: p.value, required: !isKpiTarget(p.key),
+            help: p.key === 'DAILY_DIGEST_TIME' ? 'Formato HH:mm.' : isKpiTarget(p.key) ? 'Deixe vazio para "sem meta".' : null,
+          }),
       ],
       submit: async (d) => {
-        requireFields(d, { value: 'O valor' });
+        if (!isKpiTarget(p.key)) requireFields(d, { value: 'O valor' });
         await api.put(`/api/parameters/${p.key}`, { value: d.value });
         toast('Parâmetro atualizado.', 'sucesso');
         if (p.key === 'INITIAL_LOAD_OPEN') await refreshSession();

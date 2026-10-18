@@ -221,3 +221,15 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     - *Resumo diário*: um e-mail por pessoa dos perfis COMMERCIAL, NACC, DP, RH, RH_MANAGER, MANAGER e CONTROLLERSHIP,
       na primeira execução do dia, **sem valores em R$** (o mesmo e-mail para todos). Sem posição aberta, não é enviado.
     - Os avisos não trazem R$ e saem como notificação interna e e-mail (com `EMAIL_ATIVO=0`, só a notificação e o log).
+22. **Relatórios e KPIs (fase 3, seção 11; 1ª etapa, decidida com o usuário em 18/10/2026):** tela Relatórios com posições
+    em aberto, SLA por período, faturamento perdido e reposições, os 8 KPIs e exportação para Excel (abas Indicadores,
+    Resumo, Detalhe e Filtros, gerador próprio sem dependência, adaptado da aplicação financeira).
+    - *Período*: em aberto = foto de hoje (o período vale só para os KPIs); SLA = posições preenchidas (1º dia) no
+      período; faturamento = dias descobertos que caem dentro do período; reposições = desligamentos com último dia
+      trabalhado no período.
+    - *Cortes*: os da seção 11, com "responsável" em dois filtros: analista de RH do pedido e responsável comercial do
+      contrato. O resumo agrupa pelo corte escolhido.
+    - *R$ (seção 4.2)*: por posição só para Comercial, Controladoria e Admin; o Gestor vê totais e somas por grupo;
+      NACC, DP e RH veem dias. Valor não validado fica fora dos totais e aparece como pendente (RN-21).
+    - *Metas dos KPIs*: parâmetros `KPI_TARGET_*`, vazios = "sem meta"; com meta, o KPI mostra dentro ou fora dela.
+    - Toda exportação vai para o log de auditoria (`EXPORT_REPORT`). A tela de auditoria de dados é a 2ª etapa.

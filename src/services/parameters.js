@@ -43,8 +43,28 @@ export async function calcSettings() {
 
 export const isInitialLoadOpen = () => getBool(ParameterKeys.InitialLoadOpen);
 
+/** Meta de KPI: vazia (sem meta) ou número maior ou igual a zero; percentual até 100. */
+function kpiTarget(key, value) {
+  if (value === '') return '';
+  const n = Number(value.replace(',', '.'));
+  if (!Number.isFinite(n) || n < 0) throw new BusinessRuleError('Informe um número maior ou igual a zero, ou deixe vazio para "sem meta".', 'value');
+  if (key.endsWith('_PERCENT') && n > 100) throw new BusinessRuleError('O percentual vai de 0 a 100.', 'value');
+  return String(n);
+}
+
+/** Metas dos KPIs (null = sem meta), pela chave do parâmetro. */
+export async function kpiTargets() {
+  const keys = Object.keys(PARAMETER_DEFAULTS).filter((k) => k.startsWith('KPI_TARGET_'));
+  const entries = await Promise.all(keys.map(async (k) => {
+    const v = await valueOf(k);
+    return [k, v === '' ? null : Number(v)];
+  }));
+  return Object.fromEntries(entries);
+}
+
 function validate(key, raw) {
   const value = String(raw ?? '').trim();
+  if (key.startsWith('KPI_TARGET_')) return kpiTarget(key, value);
   switch (key) {
     case ParameterKeys.AtRiskDays:
     case ParameterKeys.StaleDays:
