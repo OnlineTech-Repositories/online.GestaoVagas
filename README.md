@@ -102,6 +102,19 @@ Depois de mudar `schema.sql` ou `migrations.js`, gere de novo com `npm run scrip
 `test/production-script.test.js` recusa o arquivo desatualizado. Parâmetros padrão e o primeiro ADMIN continuam sendo
 criados pela aplicação na primeira partida.
 
+## Aplicativo instalável (PWA)
+
+`public/manifest.json` e os ícones de `public/icons/` fazem o sistema instalar como aplicativo (menu do Chrome →
+"Instalar app" ou "Adicionar à tela inicial"), com a logo e sem o selo do navegador. Os ícones são gerados da logo
+(`public/img/logo.png`) pelo System.Drawing do Windows, sem instalar nada:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-pwa-icons.ps1 -Origem public/img/logo.png
+```
+
+Saem os tamanhos 192 e 512 px, a versão *maskable* (logo na zona segura, para o recorte redondo do Android), o ícone
+do iPhone (180 px) e o favicon. `test/pwa.test.js` confere o manifesto contra os arquivos.
+
 ## Usuários pela linha de comando
 
 Para a carga inicial, ou quando nenhum ADMIN consegue acessar a tela, `scripts/users.js` cria usuários com o mesmo
