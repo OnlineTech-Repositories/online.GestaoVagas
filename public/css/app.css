@@ -924,3 +924,8 @@ table.tabela tr.linha-total > td { font-weight: 600; background: var(--neutro-fu
 .indicador.destaque-ok .meta { color: var(--sucesso); }
 .indicador.destaque-erro .meta { color: var(--erro); }
 .indicador .meta.sem-meta { color: var(--texto-fraco); font-weight: 400; }
+
+/* Importação de candidatos: erros por linha e linhas em branco na prévia */
+.lista-erros { margin: 0; padding-left: 16px; color: #8c2318; }
+.lista-erros li + li { margin-top: 2px; }
+table.tabela tr.linha-apagada > td { color: var(--texto-fraco); }

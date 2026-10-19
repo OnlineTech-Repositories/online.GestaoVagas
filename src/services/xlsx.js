@@ -10,6 +10,11 @@ import { deflateRawSync } from 'node:zlib';
  *
  * Cada aba: cabeçalho em negrito, primeira linha congelada, filtro automático e largura de coluna.
  * Tipos de coluna: text (padrão), int, decimal (1 casa), money (R$), percent (0,0%) e date ('AAAA-MM-DD').
+ *
+ * Para modelos de preenchimento (importação): `protect: true` na aba bloqueia as células, menos as das colunas com
+ * `editable: true` (texto com formato "@", para o Excel não transformar CPF em número e comer o zero à esquerda; data
+ * com dd/mm/aaaa). `validations` cria listas de seleção e validação de data; `hidden: true` oculta a coluna; `wrap:
+ * true` quebra o texto (orientações).
  */
 
 // ---------------------------------------------------------------- ZIP
@@ -37,7 +42,8 @@ function dosTime(d = new Date()) {
   return { time, date };
 }
 
-function zip(files) {
+/** ZIP de arquivos de texto ({ name, content }). Exportado também para os testes montarem planilhas "como o Excel salva". */
+export function zip(files) {
   const { time, date } = dosTime();
   const locals = [];
   const central = [];
@@ -128,7 +134,7 @@ function dateSerial(value) {
 }
 
 // Índices dos estilos em styles() — a ordem importa.
-const STYLE = { TEXT: 0, HEADER: 1, MONEY: 2, DATE: 3, INT: 4, DECIMAL: 5, PERCENT: 6 };
+const STYLE = { TEXT: 0, HEADER: 1, MONEY: 2, DATE: 3, INT: 4, DECIMAL: 5, PERCENT: 6, EDIT_TEXT: 7, EDIT_DATE: 8, WRAP: 9 };
 
 const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
@@ -141,14 +147,18 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <font><sz val="11"/><name val="Calibri"/></font>
 <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
 </fonts>
-<fills count="3">
+<fills count="4">
 <fill><patternFill patternType="none"/></fill>
 <fill><patternFill patternType="gray125"/></fill>
 <fill><patternFill patternType="solid"><fgColor rgb="FF0F62B4"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFFFF8DC"/><bgColor indexed="64"/></patternFill></fill>
 </fills>
-<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+<borders count="2">
+<border><left/><right/><top/><bottom/><diagonal/></border>
+<border><left style="thin"><color rgb="FFD0D7DE"/></left><right style="thin"><color rgb="FFD0D7DE"/></right><top style="thin"><color rgb="FFD0D7DE"/></top><bottom style="thin"><color rgb="FFD0D7DE"/></bottom><diagonal/></border>
+</borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="7">
+<cellXfs count="10">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center"/></xf>
 <xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
@@ -156,13 +166,28 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xf numFmtId="1" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
 <xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
 <xf numFmtId="10" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="49" fontId="0" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFill="1" applyBorder="1" applyProtection="1"><protection locked="0"/></xf>
+<xf numFmtId="165" fontId="0" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFill="1" applyBorder="1" applyProtection="1"><protection locked="0"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>
 </cellXfs>
 </styleSheet>`;
 
 const NUMERIC_STYLE = { int: STYLE.INT, decimal: STYLE.DECIMAL, money: STYLE.MONEY, percent: STYLE.PERCENT };
 
-function cell(ref, value, type) {
-  if (value === null || value === undefined || value === '') return `<c r="${ref}" s="${STYLE.TEXT}"/>`;
+function cell(ref, value, column) {
+  const type = column.type;
+  if (column.editable) {
+    // Célula de preenchimento: desbloqueada mesmo vazia, com fundo de destaque.
+    if (type === 'date') {
+      const serial = value ? dateSerial(value) : null;
+      return serial === null ? `<c r="${ref}" s="${STYLE.EDIT_DATE}"/>` : `<c r="${ref}" s="${STYLE.EDIT_DATE}"><v>${serial}</v></c>`;
+    }
+    return value === null || value === undefined || value === ''
+      ? `<c r="${ref}" s="${STYLE.EDIT_TEXT}"/>`
+      : `<c r="${ref}" s="${STYLE.EDIT_TEXT}" t="inlineStr"><is><t xml:space="preserve">${escape(value)}</t></is></c>`;
+  }
+  if (value === null || value === undefined || value === '') return `<c r="${ref}" s="${column.wrap ? STYLE.WRAP : STYLE.TEXT}"/>`;
+  if (column.wrap) return `<c r="${ref}" s="${STYLE.WRAP}" t="inlineStr"><is><t xml:space="preserve">${escape(value)}</t></is></c>`;
   if (type in NUMERIC_STYLE) {
     const n = Number(value);
     // Percentual chega de 0 a 100 (como na tela); o formato 0,0% do Excel espera a fração.
@@ -180,20 +205,47 @@ function cell(ref, value, type) {
   return `<c r="${ref}" s="${STYLE.TEXT}" t="inlineStr"><is><t xml:space="preserve">${escape(value)}</t></is></c>`;
 }
 
-function worksheet({ columns, rows }) {
-  const cols = columns.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${c.width ?? 18}" customWidth="1"/>`).join('');
+/** Serial do Excel para 31/12/2100: limite superior da validação de data. */
+const MAX_DATE_SERIAL = 73415;
+
+/** Listas de seleção e validação de data nas linhas de dados da coluna. */
+function dataValidations(columns, rows, validations = []) {
+  if (!validations.length || !rows.length) return '';
+  const items = validations.map((v) => {
+    const letter = columnLetter(columns.findIndex((c) => c.key === v.key));
+    const sqref = `${letter}2:${letter}${rows.length + 1}`;
+    const message = `showErrorMessage="1" errorTitle="${escape(v.errorTitle ?? 'Valor inválido')}" error="${escape(v.error ?? '')}"`;
+    if (v.type === 'list') {
+      // Lista inline: entre aspas, separada por vírgula (até 255 caracteres).
+      return `<dataValidation type="list" allowBlank="1" ${message} sqref="${sqref}"><formula1>${escape(`"${v.values.join(',')}"`)}</formula1></dataValidation>`;
+    }
+    return `<dataValidation type="date" operator="between" allowBlank="1" ${message} sqref="${sqref}"><formula1>1</formula1><formula2>${MAX_DATE_SERIAL}</formula2></dataValidation>`;
+  });
+  return `<dataValidations count="${items.length}">${items.join('')}</dataValidations>`;
+}
+
+function worksheet({ columns, rows, protect = false, validations }) {
+  const cols = columns.map((c, i) =>
+    `<col min="${i + 1}" max="${i + 1}" width="${c.width ?? 18}" customWidth="1"${c.hidden ? ' hidden="1"' : ''}/>`).join('');
   const header = `<row r="1" ht="22" customHeight="1">${columns
     .map((c, i) => `<c r="${columnLetter(i)}1" s="${STYLE.HEADER}" t="inlineStr"><is><t>${escape(c.title)}</t></is></c>`)
     .join('')}</row>`;
   const body = rows.map((row, r) => `<row r="${r + 2}">${columns
-    .map((c, i) => cell(`${columnLetter(i)}${r + 2}`, row[c.key], c.type)).join('')}</row>`).join('');
+    .map((c, i) => cell(`${columnLetter(i)}${r + 2}`, row[c.key], c)).join('')}</row>`).join('');
+  // Aba protegida (sem senha: evita erro de digitação; quem valida de verdade é o servidor). Colunas e linhas podem
+  // ser redimensionadas; inserir ou excluir linhas, não — o modelo tem uma linha por posição. Sem filtro automático,
+  // que a proteção desabilitaria.
+  const protection = protect
+    ? '<sheetProtection sheet="1" objects="1" scenarios="1" formatColumns="0" formatRows="0"/>'
+    : `<autoFilter ref="A1:${columnLetter(columns.length - 1)}${Math.max(rows.length + 1, 1)}"/>`;
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
 <sheetFormatPr defaultRowHeight="15"/>
 <cols>${cols}</cols>
 <sheetData>${header}${body}</sheetData>
-<autoFilter ref="A1:${columnLetter(columns.length - 1)}${Math.max(rows.length + 1, 1)}"/>
+${protection}
+${dataValidations(columns, rows, validations)}
 </worksheet>`;
 }
 

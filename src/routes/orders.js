@@ -1,5 +1,7 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { route } from '../middleware.js';
+import { candidateTemplate, confirmCandidateImport, previewCandidateImport } from '../services/candidate-import.js';
 import {
   addPositions, approveOrder, correctOrderDate, createOrder, getOrderDetail, listJobRolesForContract, listOrdersDto,
   recordJobconvo, rejectOrder, setRhAnalysts,
@@ -31,3 +33,22 @@ orderRoutes.post(`/:id${ID}/jobconvo`, route(async (req, res) => res.json(await 
 orderRoutes.post(`/:id${ID}/positions`, route(async (req, res) => res.json(await addPositions(req.ctx, idParam(req), req.body))));
 orderRoutes.post(`/:id${ID}/date-corrections`, route(async (req, res) =>
   res.json(await correctOrderDate(req.ctx, idParam(req), req.body))));
+
+// ---- candidatos em lote: modelo (.xlsx), prévia e confirmação (o arquivo vai nas duas, em multipart, campo "file")
+
+/** Planilha de candidatos: 2 MB cobrem com folga milhares de linhas (o modelo de 20 posições tem ~10 KB). */
+export const SPREADSHEET_MAX_BYTES = 2 * 1024 * 1024;
+const spreadsheet = multer({ storage: multer.memoryStorage(), limits: { fileSize: SPREADSHEET_MAX_BYTES + 1, files: 1 } }).single('file');
+const uploaded = (req) => (req.file?.size ? { fileName: req.file.originalname, content: req.file.buffer } : null);
+
+orderRoutes.get(`/:id${ID}/candidates-template`, route(async (req, res) => {
+  const { fileName, buffer } = await candidateTemplate(req.ctx, idParam(req));
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(buffer);
+}));
+orderRoutes.post(`/:id${ID}/candidates-import/preview`, spreadsheet, route(async (req, res) =>
+  res.json(await previewCandidateImport(req.ctx, idParam(req), uploaded(req)))));
+orderRoutes.post(`/:id${ID}/candidates-import`, spreadsheet, route(async (req, res) =>
+  res.json(await confirmCandidateImport(req.ctx, idParam(req), uploaded(req)))));

@@ -246,3 +246,16 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
       NACC, DP e RH veem dias. Valor não validado fica fora dos totais e aparece como pendente (RN-21).
     - *Metas dos KPIs*: parâmetros `KPI_TARGET_*`, vazios = "sem meta"; com meta, o KPI mostra dentro ou fora dela.
     - Toda exportação vai para o log de auditoria (`EXPORT_REPORT`). A tela de auditoria de dados é a 2ª etapa.
+23. **Candidatos em lote por planilha (melhoria pedida pelo usuário em 19/10/2026):** na tela do pedido, o RH responsável
+    (analista do pedido ou Gestor de RH) baixa o modelo e importa os candidatos selecionados.
+    - *Modelo (.xlsx)*: uma linha por posição apta — em recrutamento, de pedido aprovado, no ciclo atual e sem
+      candidato —, com Pedido e Vaga preenchidos e bloqueados (aba protegida), identificadores em colunas ocultas, Sexo em
+      lista, validação de data, CPF em formato texto e a aba "Orientações".
+    - *Prévia*: valida tudo sem gravar e aponta linha, campo e motivo. Cada linha passa pela mesma função de domínio do
+      cadastro individual (simulação descartada), mais as conferências da planilha: pedido certo, posições do pedido e
+      ainda aptas, linhas fora do modelo, CPF repetido no arquivo ou já usado em outra posição aberta.
+    - *Confirmação* (decisões do usuário): com qualquer linha com erro, nada é gravado; linha totalmente em branco é
+      ignorada e a posição continua pendente. Grava numa transação, cada candidato com a própria justificativa no log, e
+      registra a importação (quem, quando, quantos e o arquivo).
+    - O `.xlsx` enviado é lido por `src/services/xlsx-reader.js`, sem dependência, com teto de tamanho e de linhas.
+      Testado com arquivo salvo pelo Excel 16.

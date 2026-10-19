@@ -204,6 +204,34 @@ test('Relatórios: as quatro abas montam com KPIs, resumo e detalhe; R$ conforme
   assert.match(nacc.textContent, /sem os valores em R\$/);
 });
 
+test('Candidatos em lote: o RH vê o painel no pedido e a janela de importação abre; o Comercial não vê', async (t) => {
+  if (skip(t)) return;
+  await signIn('gestor.rh@demo.local');
+  const orders = await apiModule.api.get('/api/orders');
+  let target = null;
+  for (const o of orders.items ?? orders) {
+    const detail = await apiModule.api.get(`/api/orders/${o.id}`);
+    if (detail.candidateImport?.pending) {
+      target = detail;
+      break;
+    }
+  }
+  assert.ok(target, 'há pedido com posição aguardando candidato');
+  const root = await open(`/pedidos/${target.summary.id}`, 'Pedido');
+  assert.match(root.textContent, /Candidatos em lote/);
+  assert.match(root.textContent, /aguardando candidato/);
+  const importButton = [...root.querySelectorAll('button')].find((b) => b.textContent === 'Importar candidatos');
+  importButton.click();
+  const dialog = document.getElementById('modal-area').querySelector('.modal');
+  assert.ok(dialog, 'janela de importação');
+  assert.match(dialog.textContent, /Importar candidatos · pedido/);
+  dialog.querySelector('.modal-fechar').click();
+
+  await signIn('comercial@demo.local');
+  const commercial = await open(`/pedidos/${target.summary.id}`, 'Pedido');
+  assert.doesNotMatch(commercial.textContent, /Candidatos em lote/);
+});
+
 test('rota sem permissão volta ao painel (a API também nega com 403)', async (t) => {
   if (skip(t)) return;
   await signIn('rh@demo.local');

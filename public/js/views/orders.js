@@ -3,7 +3,7 @@ import {
   el, clear, field, table, panel, panelNoPadding, loading, detail, date, label, LABELS, options, termFields, formData,
   applyErrors, requireFields, orNull, intOrNull, today, toast, button, formModal, positionColumns, positionRowClass,
   locationLabel, validationError, approvalTag, dateTime, rhTeam, rhFilterOptions, checkGroup, checkedValues,
-  statusTag, cycleLabel,
+  statusTag, cycleLabel, modal, errorMessage,
 } from '../ui.js';
 import { navigate, state, canCreateOrder } from '../app.js';
 
@@ -371,6 +371,7 @@ export async function orderDetailScreen(target, id) {
       ),
       rhPanel(o, reload),
       jobconvoPanel(o, reload),
+      o.candidateImport ? candidateImportPanel(o, reload) : null,
       panel('Descrição da vaga', o.jobDescription
         ? el('div', { class: 'texto-livre' }, o.jobDescription)
         : el('p', { class: 'texto-fraco mb-0' }, 'Nenhuma descrição informada.')),
@@ -524,6 +525,135 @@ function jobconvoPanel(o, reload) {
     ? button(j ? 'Atualizar publicação' : 'Informar publicação no JobConvo', () => openJobconvo(o, reload), j ? 'secundario' : '')
     : null;
   return panel('Publicação no JobConvo', body, action);
+}
+
+// ---------------------------------------------------------------------
+// Candidatos em lote (planilha)
+// ---------------------------------------------------------------------
+
+/** Salva no computador um arquivo devolvido pela API (o DOM só se cria pelo ui.js). */
+function saveFile({ name, blob }) {
+  const url = URL.createObjectURL(blob);
+  const link = el('a', { href: url, download: name, style: { display: 'none' } });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Cadastro dos candidatos selecionados por planilha: modelo com as posições pendentes, prévia e confirmação. */
+function candidateImportPanel(o, reload) {
+  const { pending } = o.candidateImport;
+  const download = button('Baixar modelo de candidatos', async () => {
+    download.disabled = true;
+    try {
+      const file = await api.file(`/api/orders/${o.summary.id}/candidates-template`);
+      saveFile(file);
+      toast(`Modelo gerado: ${file.name}`, 'sucesso');
+    } catch (e) {
+      toast(e.message, 'erro');
+    } finally {
+      download.disabled = false;
+    }
+  }, 'secundario');
+  const importButton = button('Importar candidatos', () => openCandidateImport(o, reload));
+  const body = pending
+    ? el('p', { class: 'mb-0' },
+      `${pending} posição(ões) em recrutamento aguardando candidato. Baixe o modelo (uma linha por posição pendente), `
+      + 'preencha os candidatos selecionados e importe: o sistema mostra uma prévia com os erros antes de gravar.')
+    : el('p', { class: 'texto-fraco mb-0' },
+      'Nenhuma posição aguardando candidato: as posições "Em recrutamento" deste pedido já têm candidato selecionado.');
+  return panel('Candidatos em lote', body, pending ? [download, importButton] : null);
+}
+
+function openCandidateImport(order, reload) {
+  let file = null;
+  const result = el('div');
+  const input = el('input', {
+    type: 'file', accept: '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', name: 'file',
+    onchange: (e) => {
+      file = e.target.files?.[0] ?? null;
+      confirmButton.disabled = true;
+      clear(result);
+      if (file) runPreview();
+    },
+  });
+  const form = () => {
+    const data = new FormData();
+    data.append('file', file, file.name);
+    return data;
+  };
+
+  async function runPreview() {
+    clear(result).append(el('div', { class: 'vazio' }, el('div', { class: 'spinner', style: { margin: '0 auto' } })));
+    try {
+      const preview = await api.postForm(`/api/orders/${order.summary.id}/candidates-import/preview`, form());
+      renderPreview(preview);
+    } catch (e) {
+      clear(result).append(errorMessage(e.message));
+    }
+  }
+
+  function renderPreview(p) {
+    const s = p.summary;
+    const SITUATION = { ready: 'Pronto', blank: 'Em branco (ignorada)', error: 'Com erro' };
+    clear(result).append(
+      ...p.fileErrors.map((m) => errorMessage(m)),
+      el('div', { class: `mensagem ${s.canConfirm ? 'sucesso' : s.errors || p.fileErrors.length ? 'erro' : 'alerta'}` },
+        el('strong', {}, s.canConfirm
+          ? `${s.ready} candidato(s) prontos para importar.`
+          : s.errors ? `${s.errors} linha(s) com erro: corrija a planilha e selecione-a de novo. Nada será gravado até lá.`
+            : p.fileErrors.length ? 'A planilha não pode ser importada.' : 'Nenhuma linha preenchida.'),
+        `${s.total} linha(s) no arquivo · ${s.ready} pronta(s) · ${s.errors} com erro · ${s.blank} em branco (as posições continuam aguardando candidato).`),
+      table([
+        { title: 'Linha', cls: 'num', field: 'line' },
+        { title: 'Vaga', cls: 'nowrap', field: 'position' },
+        { title: 'Nome', field: 'fullName' },
+        { title: 'CPF', cls: 'nowrap', field: 'cpf' },
+        { title: 'Nascimento', cls: 'nowrap', render: (r) => (r.birthDate ? date(r.birthDate) : '—') },
+        { title: 'Sexo', field: 'sexLabel' },
+        { title: 'Aprovação', cls: 'nowrap', render: (r) => (r.approvedAt ? date(r.approvedAt) : '—') },
+        {
+          title: 'Situação',
+          render: (r) => (r.errors.length
+            ? el('ul', { class: 'lista-erros' }, ...r.errors.map((e) => el('li', {}, el('strong', {}, `${e.label}: `), e.message)))
+            : SITUATION[r.status]),
+        },
+      ], p.rows, {
+        rowClass: (r) => (r.status === 'error' ? 'linha-erro' : r.status === 'blank' ? 'linha-apagada' : ''),
+        empty: 'A planilha não tem linhas de candidatos.',
+        dense: true,
+      }),
+    );
+    confirmButton.disabled = !s.canConfirm;
+    confirmButton.textContent = s.canConfirm ? `Confirmar importação (${s.ready})` : 'Confirmar importação';
+  }
+
+  const confirmButton = button('Confirmar importação', async () => {
+    confirmButton.disabled = true;
+    try {
+      const done = await api.postForm(`/api/orders/${order.summary.id}/candidates-import`, form());
+      reference.close();
+      toast(`${done.imported} candidato(s) cadastrado(s) no pedido ${order.summary.number}.`, 'sucesso');
+      await reload(done.order);
+    } catch (e) {
+      clear(result).append(errorMessage(e.message));
+      toast(e.message, 'erro');
+    }
+  });
+  confirmButton.disabled = true;
+
+  const reference = modal({
+    title: `Importar candidatos · pedido ${order.summary.number}`,
+    wide: true,
+    body: el('div', {},
+      el('div', { class: 'mensagem info' },
+        'Selecione a planilha preenchida a partir do modelo deste pedido. A prévia confere cada linha com as mesmas regras do cadastro '
+        + 'individual; a importação só é liberada quando todas as linhas preenchidas estiverem corretas.'),
+      el('div', { class: 'campo' }, el('label', {}, 'Planilha (.xlsx)'), input),
+      result),
+    footer: [button('Cancelar', () => reference.close(), 'secundario'), confirmButton],
+  });
 }
 
 function openJobconvo(order, reload) {

@@ -171,7 +171,9 @@ export function handleErrors(error, req, res, _next) {
     return problem(res, 400, 'Requisição inválida', 'O corpo da requisição não é um JSON válido.');
   }
   if (error?.code === 'LIMIT_FILE_SIZE') {
-    return problem(res, 422, 'Regra de negócio', 'A evidência deve ter no máximo 10 MB.', { campos: { evidence: 'A evidência deve ter no máximo 10 MB.' } });
+    // O campo do upload diz qual arquivo passou do limite: a evidência do 1º dia ou a planilha de candidatos.
+    const message = error.field === 'file' ? 'A planilha deve ter no máximo 2 MB.' : 'A evidência deve ter no máximo 10 MB.';
+    return problem(res, 422, 'Regra de negócio', message, { campos: { [error.field ?? 'evidence']: message } });
   }
   if (isUniqueViolation(error)) {
     // Violação de unicidade que escapou da validação (duas requisições simultâneas).

@@ -15,6 +15,7 @@ import {
 import * as O from '../domain/order.js';
 import * as P from '../domain/position.js';
 import { Input, isId } from './input.js';
+import { canImportCandidates, eligiblePositions } from './candidate-import.js';
 import { links, notify } from './notifications.js';
 import { calcSettings, isInitialLoadOpen } from './parameters.js';
 import { toSummary } from './position-views.js';
@@ -327,6 +328,7 @@ export async function getOrderDetail(ctx, id) {
         removedByName: a.removedBy ? names.get(a.removedBy) ?? null : null,
       })),
     canAssignRh: hasRole(ctx.user, Roles.RhManager) && order.approvalStatus !== OrderApprovalStatus.NOT_APPROVED,
+    candidateImport: canImportCandidates(ctx.user, order) ? { pending: eligiblePositions(order).length } : null,
     slots: buildSlots(order, metrics, names, showMoney),
   };
 }
