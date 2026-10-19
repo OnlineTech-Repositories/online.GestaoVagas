@@ -1,6 +1,7 @@
 import { transaction } from '../db/index.js';
 import { findOpenWithCandidateCpf, getOrder } from '../db/repository.js';
 import { UnitOfWork } from '../db/unit-of-work.js';
+import { positionDateIssues, retroactiveMessage } from '../domain/date-checks.js';
 import { today as todayDate, formatBr } from '../domain/dates.js';
 import { BusinessRuleError, ForbiddenError, NotFoundError } from '../domain/errors.js';
 import { CandidateSex, PositionStatus as S } from '../domain/enums.js';
@@ -90,7 +91,7 @@ export async function candidateTemplate(ctx, orderId) {
     ['Como usar', `Uma linha por posição do pedido ${order.number} aguardando candidato (${positions.length}). Preencha os campos em amarelo. Linha deixada totalmente em branco é ignorada: a posição continua aguardando candidato.`],
     ['Pedido e Vaga', 'Já preenchidos e bloqueados: identificam a posição. Não inclua, exclua nem reordene linhas.'],
     ['Campos com *', 'Obrigatórios em toda linha preenchida.'],
-    ['Data de aprovação *', 'Data em que o candidato foi aprovado, no formato dd/mm/aaaa. Não pode ser futura.'],
+    ['Data de aprovação *', 'Data em que o candidato foi aprovado, no formato dd/mm/aaaa. Data passada, futura ou anterior à abertura da posição é aceita com aviso na prévia.'],
     ['Nome completo *', 'Nome completo do candidato.'],
     ['Data de nascimento *', 'Formato dd/mm/aaaa. Não pode ser futura.'],
     ['Sexo *', `Escolha na lista: ${sexList.join(', ')}.`],
@@ -174,6 +175,8 @@ async function validate(order, buffer) {
       approvedAt: null, fullName: cellText(raw.fullName), birthDate: null, sex: null, cpf: '', justification: cellText(raw.justification) || null,
       status: 'ready',
       errors: [],
+      // Datas fora do esperado (passada, futura, antes da abertura): avisam e não impedem a importação.
+      warnings: [],
     };
     const fail = (field, message) => row.errors.push({ field, label: LABEL[field] ?? field, message });
     rows.push(row);
@@ -195,7 +198,6 @@ async function validate(order, buffer) {
     row.approvedAt = cellDate(raw.approvedAt);
     if (row.approvedAt === null) fail('approvedAt', 'Informe a data de aprovação.');
     else if (row.approvedAt === undefined) fail('approvedAt', 'Data inválida: use o formato dd/mm/aaaa.');
-    else if (row.approvedAt > today) fail('approvedAt', 'A data de aprovação não pode ser futura.');
     else if (!loadOpen && row.approvedAt < today && !row.justification) {
       fail('justification', `A data de aprovação (${formatBr(row.approvedAt)}) é anterior a hoje: informe a justificativa.`);
     }
@@ -225,8 +227,10 @@ async function validate(order, buffer) {
     // As regras do cadastro individual, na mesma função de domínio (simulação: o pedido em memória muda).
     if (!row.errors.length) {
       try {
+        const before = new Set(positionDateIssues(p, today).map((i) => i.message));
         P.approveCandidate(p, row.approvedAt, { fullName: row.fullName, birthDate: row.birthDate, sex: row.sex, cpf: row.cpf }, today);
-        if (DateGuard.checkRetroactive(row.approvedAt, today, loadOpen, row.justification, 'A data de aprovação')) P.markRetroactive(p);
+        if (row.approvedAt < today) row.warnings.push(retroactiveMessage('A data de aprovação', row.approvedAt));
+        row.warnings.push(...positionDateIssues(p, today).filter((i) => !before.has(i.message)).map((i) => i.message));
       } catch (error) {
         if (!(error instanceof BusinessRuleError)) throw error;
         fail(error.field && LABEL[error.field] ? error.field : 'position', error.message);
@@ -241,7 +245,10 @@ const summarize = (rows, fileErrors) => {
   const count = (status) => rows.filter((r) => r.status === status).length;
   const ready = count('ready');
   const errors = count('error');
-  return { total: rows.length, ready, errors, blank: count('blank'), canConfirm: !fileErrors.length && !errors && ready > 0 };
+  return {
+    total: rows.length, ready, errors, blank: count('blank'), warnings: rows.filter((r) => r.warnings?.length).length,
+    canConfirm: !fileErrors.length && !errors && ready > 0,
+  };
 };
 
 const toDto = (row) => ({
@@ -285,7 +292,8 @@ export async function confirmCandidateImport(ctx, orderId, file) {
     for (const row of ready) {
       const p = byId.get(row.positionId);
       P.approveCandidate(p, row.approvedAt, { fullName: row.fullName, birthDate: row.birthDate, sex: row.sex, cpf: row.cpf }, today);
-      if (DateGuard.checkRetroactive(row.approvedAt, today, loadOpen, row.justification, 'A data de aprovação')) P.markRetroactive(p);
+      // RN-24: fora da carga inicial, a data passada (com a justificativa já conferida na validação) sinaliza a posição.
+      if (!loadOpen && row.approvedAt < today) P.markRetroactive(p);
       await ctx.uow.save({ action: 'IMPORT_CANDIDATES', justification: DateGuard.clean(row.justification) });
     }
     ctx.uow.log({

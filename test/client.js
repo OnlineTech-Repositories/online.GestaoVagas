@@ -5,8 +5,12 @@ export class Client {
     this.jar = new Map();
   }
 
-  async request(method, path, body, { form = null, headers = {} } = {}) {
-    const h = { Accept: 'application/json', ...headers };
+  /**
+   * `confirm`: confirma os avisos de data (como o "Salvar mesmo assim" da tela). Ligado por padrão — os testes de regra
+   * tratam do resultado; os de aviso passam `confirm: false` para ver a resposta que pede confirmação.
+   */
+  async request(method, path, body, { form = null, headers = {}, confirm = true } = {}) {
+    const h = { Accept: 'application/json', ...(confirm ? { 'X-Confirm-Warnings': '1' } : {}), ...headers };
     if (this.jar.size) h.Cookie = [...this.jar].map(([k, v]) => `${k}=${v}`).join('; ');
     if (method !== 'GET' && this.jar.has('XSRF-TOKEN')) h['X-XSRF-TOKEN'] ??= this.jar.get('XSRF-TOKEN');
     let payload;

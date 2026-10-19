@@ -16,6 +16,26 @@ export class ApiError extends Error {
 /** Avisa o app.js de sessão expirada (401 fora do login). */
 export const events = new EventTarget();
 
+/**
+ * Avisos de data (datas passadas, futuras ou fora de sequência): o servidor responde 422 com `avisos` sem gravar. O
+ * app.js registra aqui a janela de confirmação (o DOM se cria só pelo ui.js); confirmados, o mesmo envio é refeito
+ * com o cabeçalho X-Confirm-Warnings e a justificativa, quando o retroativo a exige.
+ */
+let warningHandler = null;
+export const setWarningHandler = (handler) => {
+  warningHandler = handler;
+};
+
+/** Junta a justificativa digitada na janela de avisos ao envio original (JSON ou multipart). */
+function withJustification(body, required, text) {
+  if (!required?.campo || !text) return body;
+  if (typeof FormData !== 'undefined' && body instanceof FormData) {
+    body.set(required.campo, text);
+    return body;
+  }
+  return { ...(body ?? {}), [required.campo]: text };
+}
+
 /** Monta a query string descartando valores vazios, nulos e indefinidos. */
 export function query(params) {
   if (!params) return '';
@@ -61,8 +81,9 @@ function toError(status, problem) {
   return new ApiError(message, { status, fields, code: problem?.title });
 }
 
-async function request(method, path, body) {
+async function request(method, path, body, confirmed = false) {
   const headers = { Accept: 'application/json' };
+  if (confirmed) headers['X-Confirm-Warnings'] = '1';
   // FormData (arquivo anexado): o navegador monta o multipart com o boundary.
   const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
   if (body !== undefined && !isForm) headers['Content-Type'] = 'application/json';
@@ -94,7 +115,16 @@ async function request(method, path, body) {
     }
   }
 
-  if (!response.ok) throw toError(response.status, data);
+  if (!response.ok) {
+    if (response.status === 422 && data?.avisos?.length && !confirmed && warningHandler) {
+      const answer = await warningHandler(data);
+      if (!answer) {
+        throw new ApiError('Nada foi salvo: confira as datas e salve novamente.', { status: 422, code: 'cancelled' });
+      }
+      return request(method, path, withJustification(body, data.justificativa, answer.justification), true);
+    }
+    throw toError(response.status, data);
+  }
   return data;
 }
 

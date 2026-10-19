@@ -3,6 +3,7 @@ import {
   findOpenWithCandidateCpf, getById, getPosition, listPositions as listPositionRows, userNames,
 } from '../db/repository.js';
 import { calculate, isLegacyOrigin } from '../domain/calculator.js';
+import { positionDateIssues } from '../domain/date-checks.js';
 import { addDays, formatBr, today as todayDate, utcNow } from '../domain/dates.js';
 import { BusinessRuleError, ForbiddenError, NotFoundError } from '../domain/errors.js';
 import {
@@ -14,11 +15,12 @@ import { activeRhAnalysts } from '../domain/order.js';
 import * as P from '../domain/position.js';
 import { Input, isId } from './input.js';
 import { links, notify } from './notifications.js';
-import { calcSettings, isInitialLoadOpen } from './parameters.js';
+import { calcSettings } from './parameters.js';
 import {
   Actions, actionsFor, candidateDto, canDownloadEvidence, canSeeFullCandidate, ensureRole, terminationDto, toMetrics,
   toSummary,
 } from './position-views.js';
+import { DateReview } from './date-review.js';
 import { slaFor } from './snapshots.js';
 
 /** Posições: lista, detalhe e as ações da seção 6 (transições, pausas, vigência e correção de datas). */
@@ -46,6 +48,8 @@ export async function listPositionsDto(ctx, q) {
   // "NOT_STARTED": vaga ainda sem contagem de SLA (vem do Painel de RH, como a etapa).
   const situations = input.options('slaSituation', { ...SlaSituation, NOT_STARTED: 'NOT_STARTED' });
   const stage = input.option('stage', RhStage, { required: false });
+  // Selo de data (vem do Painel de RH): FUTURE = data futura; SEQUENCE = fora de sequência.
+  const flag = input.option('flag', { FUTURE: 'FUTURE', SEQUENCE: 'SEQUENCE' }, { required: false });
   const sort = input.text('sort');
   const rh = input.text('rh');
   const page = Math.max(1, input.int('page') ?? 1);
@@ -65,6 +69,7 @@ export async function listPositionsDto(ctx, q) {
     .map((p) => toSummary(p, calculate(p, today, settings), showMoney));
   if (situations.length) rows = rows.filter((r) => situations.includes(r.slaSituation ?? 'NOT_STARTED'));
   if (stage) rows = rows.filter((r) => r.rhStage === stage);
+  if (flag) rows = rows.filter((r) => (flag === 'FUTURE' ? r.dateFlags.future : r.dateFlags.sequence));
   rows.sort(sort === 'uncovered'
     ? (a, b) => b.uncoveredDays - a.uncoveredDays || a.orderNumber - b.orderNumber
     : (a, b) => b.orderNumber - a.orderNumber || a.slotNumber - b.slotNumber || a.cycle - b.cycle);
@@ -119,6 +124,7 @@ export async function getPositionDetail(ctx, id) {
     })),
     metrics: toMetrics(p, metrics, showMoney),
     allowedActions: actionsFor(p, ctx.user),
+    dateIssues: positionDateIssues(p, today).map((i) => ({ kind: i.kind, message: i.summary })),
     history: await history(p, fullCandidate),
     rhAnalysts: activeRhAnalysts(order).map((a) => ({ id: a.userId, name: a.userName })),
     canActAsRh: RhAccess.canAct(ctx.user, order),
@@ -187,16 +193,16 @@ async function execute(ctx, id, action, justification, operation) {
   const p = await getPosition(ctx.uow, id);
   if (!p) throw new NotFoundError('Posição não encontrada.');
   ensureRole(p, ctx.user, action);
-  const auditAction = await operation(p);
+  const review = new DateReview(ctx).watchPosition(p);
+  const auditAction = await operation(p, review);
+  review.settle();
   await ctx.uow.save({ action: auditAction, justification: DateGuard.clean(justification) });
   return getPositionDetail(ctx, id);
 }
 
-/** Bloqueia datas futuras e aplica a RN-24 (data retroativa exige justificativa e sinaliza a posição). */
-async function checkDate(p, date, label, justification, field) {
-  const today = todayDate();
-  DateGuard.notFuture(date, today, label, field);
-  if (DateGuard.checkRetroactive(date, today, await isInitialLoadOpen(), justification, label)) P.markRetroactive(p);
+/** Data de evento: passada avisa e, fora da carga inicial, exige justificativa e sinaliza a posição (RN-24). */
+async function checkDate(review, p, date, label, justification) {
+  if (await review.retroactive(date, label, justification)) P.markRetroactive(p);
 }
 
 export function decide(ctx, id, body) {
@@ -205,14 +211,11 @@ export function decide(ctx, id, body) {
   const decisionAt = input.date('decisionAt', { message: 'Informe a data da decisão.' });
   const justification = input.text('justification');
   input.done();
-  return execute(ctx, id, Actions.Decide, justification, async (p) => {
+  return execute(ctx, id, Actions.Decide, justification, async (p, review) => {
     if (!p.termination) {
       throw new BusinessRuleError(`Ação não permitida: a posição está "${Labels.positionStatus[p.status]}".`);
     }
-    if (decisionAt < p.termination.registeredAt) {
-      throw new BusinessRuleError('A decisão do cliente não pode ser anterior ao registro do desligamento.', 'decisionAt');
-    }
-    await checkDate(p, decisionAt, 'A data da decisão', justification, 'decisionAt');
+    await checkDate(review, p, decisionAt, 'A data da decisão', justification);
     if (decision === ClientDecision.REPLACE) {
       const order = p.order;
       const sla = await slaFor(order.contract, order.modality, DemandType.REPLACEMENT, decisionAt);
@@ -244,8 +247,8 @@ export function approveCandidate(ctx, id, body) {
   const data = candidateData(input);
   const justification = input.text('justification');
   input.done();
-  return execute(ctx, id, Actions.ApproveCandidate, justification, async (p) => {
-    await checkDate(p, date, 'A data de aprovação', justification, 'date');
+  return execute(ctx, id, Actions.ApproveCandidate, justification, async (p, review) => {
+    await checkDate(review, p, date, 'A data de aprovação', justification);
     const candidate = P.approveCandidate(p, date, data, todayDate());
     await ensureCpfFree(p, candidate.cpf);
     return 'APPROVE_CANDIDATE';
@@ -280,8 +283,8 @@ export function registerAdmission(ctx, id, body) {
   const registration = input.text('registration');
   const justification = input.text('justification');
   input.done();
-  return execute(ctx, id, Actions.RegisterAdmission, justification, async (p) => {
-    await checkDate(p, date, 'A data de admissão', justification, 'date');
+  return execute(ctx, id, Actions.RegisterAdmission, justification, async (p, review) => {
+    await checkDate(review, p, date, 'A data de admissão', justification);
     P.registerAdmission(p, date, registration);
     await notifyPosition(ctx, p, NotificationTypes.AdmissionRegistered, 'Admissão registrada',
       p.status === PositionStatus.AWAITING_FIRST_DAY
@@ -302,9 +305,9 @@ export function confirmFirstDay(ctx, id, body, evidence = null) {
   const date = input.date('date');
   const justification = input.text('justification');
   input.done();
-  return execute(ctx, id, Actions.ConfirmFirstDay, justification, async (p) => {
+  return execute(ctx, id, Actions.ConfirmFirstDay, justification, async (p, review) => {
     const file = evidence ? EvidenceFiles.validate(evidence) : null;
-    await checkDate(p, date, 'O 1º dia efetivo', justification, 'date');
+    await checkDate(review, p, date, 'O 1º dia efetivo', justification);
     P.confirmFirstDay(p, date, justification, ctx.user.id, utcNow());
     if (file) P.attachEvidence(p, EvidenceKind.FIRST_DAY, file.fileName, file.contentType, evidence.content);
     return 'CONFIRM_FIRST_DAY';
@@ -362,10 +365,10 @@ export function startPause(ctx, id, body) {
   const startDate = input.date('startDate', { message: 'Informe a data de início da pausa.' });
   const justification = input.text('justification');
   input.done();
-  return execute(ctx, id, Actions.StartPause, justification, async (p) => {
+  return execute(ctx, id, Actions.StartPause, justification, async (p, review) => {
     const reason = await getById(ctx.uow, 'PauseReason', 'pause_reasons', reasonId);
     if (!reason?.active) throw new BusinessRuleError('Selecione um motivo de pausa cadastrado e ativo.', 'reasonId');
-    await checkDate(p, startDate, 'A data de início da pausa', justification, 'startDate');
+    await checkDate(review, p, startDate, 'A data de início da pausa', justification);
     P.startPause(p, reason, startDate);
     await notifyPosition(ctx, p, NotificationTypes.PauseStarted, 'Posição pausada',
       `Posição pausada a partir de ${formatBr(startDate)}. Motivo: ${reason.name}.`, [Roles.Rh]);
@@ -378,8 +381,8 @@ export function endPause(ctx, id, body) {
   const date = input.date('date');
   const justification = input.text('justification');
   input.done();
-  return execute(ctx, id, Actions.EndPause, justification, async (p) => {
-    await checkDate(p, date, 'A data de fim da pausa', justification, 'date');
+  return execute(ctx, id, Actions.EndPause, justification, async (p, review) => {
+    await checkDate(review, p, date, 'A data de fim da pausa', justification);
     P.endPause(p, date);
     await notifyPosition(ctx, p, NotificationTypes.PauseEnded, 'Pausa encerrada',
       `A pausa da posição foi encerrada em ${formatBr(date)}. Status atual: ${Labels.positionStatus[p.status]}.`, [Roles.Rh]);
@@ -393,7 +396,6 @@ export function cancelPosition(ctx, id, body) {
   const reason = input.text('reason');
   input.done();
   return execute(ctx, id, Actions.Cancel, reason, async (p) => {
-    DateGuard.notFuture(date, todayDate(), 'A data de cancelamento', 'date');
     P.cancel(p, date, reason);
     return 'CANCEL';
   });
@@ -434,7 +436,6 @@ export function correctDate(ctx, id, body) {
   input.done();
   return execute(ctx, id, Actions.CorrectDates, justification, async (p) => {
     DateGuard.requireText(justification, 'Informe a justificativa da correção.', 'justification');
-    if (field !== CORRECTABLE.LAST_WORKED_DAY) DateGuard.notFuture(date, todayDate(), 'A data corrigida', 'date');
     const target = targetOf(p, field, pauseId);
     if (!target.current) throw new BusinessRuleError('Esta data ainda não foi registrada; não há o que corrigir.');
     await ensureAuthor(ctx, target);
@@ -497,9 +498,6 @@ function applyCorrection(p, field, pauseId, date) {
       p.admissionAt = date;
       break;
     case CORRECTABLE.FIRST_DAY_AT:
-      if (p.openedAt && date < p.openedAt) {
-        throw new BusinessRuleError('O 1º dia efetivo não pode ser anterior à data de abertura da posição.', 'date');
-      }
       p.firstDayAt = date;
       break;
     case CORRECTABLE.CLOSED_AT:
@@ -507,12 +505,6 @@ function applyCorrection(p, field, pauseId, date) {
       break;
     case CORRECTABLE.CLIENT_DECISION_AT: {
       const t = p.termination;
-      if (date < t.registeredAt) {
-        throw new BusinessRuleError('A decisão do cliente não pode ser anterior ao registro do desligamento.', 'date');
-      }
-      if (p.firstDayAt && date > p.firstDayAt) {
-        throw new BusinessRuleError('A decisão do cliente não pode ser posterior ao 1º dia efetivo.', 'date');
-      }
       t.clientDecisionAt = date;
       if (t.clientDecision === ClientDecision.REPLACE) p.openedAt = date;
       else p.closedAt = date;
@@ -523,9 +515,6 @@ function applyCorrection(p, field, pauseId, date) {
       p.desiredStartDate = addDays(date, 1);
       break;
     case CORRECTABLE.TERMINATION_REGISTERED_AT:
-      if (p.termination.clientDecisionAt && date > p.termination.clientDecisionAt) {
-        throw new BusinessRuleError('O registro do desligamento não pode ser posterior à decisão do cliente.', 'date');
-      }
       p.termination.registeredAt = date;
       break;
     default: {

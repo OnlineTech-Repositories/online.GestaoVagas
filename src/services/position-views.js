@@ -1,3 +1,5 @@
+import { dateFlags } from '../domain/date-checks.js';
+import { today as todayDate } from '../domain/dates.js';
 import { activeRhAnalysts, isApproved } from '../domain/order.js';
 import {
   activeCandidate, canRegisterMissingCandidate, isAdmitted, isCurrentCycle, isOpen, notReplaced, rhStage, stageStatus,
@@ -98,6 +100,7 @@ function statusAllows(p, action) {
 
 export function toSummary(p, m, showMoney) {
   const order = p.order;
+  const today = todayDate();
   const contract = order.contract;
   return {
     id: p.id,
@@ -113,7 +116,7 @@ export function toSummary(p, m, showMoney) {
     demandType: p.demandType,
     status: p.status,
     stageStatus: stageStatus(p),
-    rhStage: rhStage(p),
+    rhStage: rhStage(p, today),
     openedAt: p.openedAt,
     uncoveredStart: m.uncoveredStart,
     uncoveredDays: m.uncoveredDays,
@@ -136,6 +139,8 @@ export function toSummary(p, m, showMoney) {
     cycle: p.cycle,
     isCurrentCycle: isCurrentCycle(p),
     notReplaced: notReplaced(p),
+    // Selos calculados a cada leitura: "Data futura" some sozinho quando a data chega.
+    dateFlags: dateFlags(p, today),
   };
 }
 

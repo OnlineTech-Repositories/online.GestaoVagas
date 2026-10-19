@@ -69,6 +69,9 @@ before(async () => {
   apiModule = await import(new URL('api.js', FRONT));
   ui = await import(new URL('ui.js', FRONT));
   app = await import(new URL('app.js', FRONT)); // a partida do app roda aqui (saúde, sessão, login)
+  // Os avisos de data abrem uma janela que espera um clique: aqui são confirmados sozinhos e registrados (o teste
+  // "Avisos de data" clica na janela de verdade).
+  apiModule.setWarningHandler(autoConfirm);
 });
 
 after(async () => {
@@ -78,6 +81,11 @@ after(async () => {
 });
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const warningsSeen = [];
+const autoConfirm = async (problem) => {
+  warningsSeen.push(problem);
+  return { justification: 'Confirmado no teste.' };
+};
 const text = () => document.getElementById('app').textContent;
 
 async function signIn(email) {
@@ -224,6 +232,59 @@ test('Painel de RH: a gestão vê a equipe e os gráficos; o analista, só os se
   await signIn('comercial@demo.local');
   await open('/', 'Painel');
   assert.doesNotMatch(document.querySelector('.menu')?.textContent ?? '', /Painel de RH/);
+});
+
+test('Avisos de data: a janela lista o motivo, pede a justificativa e o envio segue confirmado', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const contracts = await apiModule.api.get('/api/contracts', { onlyActive: true });
+  const contract = contracts.find((c) => c.modalities.includes('MOT'));
+  const roles = await apiModule.api.get('/api/orders/job-roles', { contractId: contract.id });
+  const day = (n) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+
+  // A janela de verdade: avisos com o tipo e a mensagem; sem justificativa obrigatória, "Salvar mesmo assim" conclui.
+  const shown = ui.confirmWarnings({
+    avisos: [{ tipo: 'FUTURE', mensagem: 'A data da aprovação (01/01/2099) é uma data futura.' },
+      { tipo: 'SEQUENCE', mensagem: 'O 1º dia efetivo é anterior à etapa precedente.' }],
+    justificativa: { campo: 'justification', obrigatoria: true },
+  });
+  await wait(20);
+  const box = document.getElementById('modal-area');
+  assert.match(box.textContent, /Registro futuro/);
+  assert.match(box.textContent, /Sequência divergente/);
+  const save = [...box.querySelectorAll('button')].find((b) => b.textContent === 'Salvar mesmo assim');
+  save.click();
+  assert.match(box.textContent, /Informe a justificativa/, 'retroativo fora da carga inicial: justificativa obrigatória');
+  box.querySelector('textarea').value = 'Cliente aprovou por e-mail.';
+  save.click();
+  assert.deepEqual(await shown, { justification: 'Cliente aprovou por e-mail.' });
+
+  // Pelo cliente da API: registro antes da solicitação avisa, a confirmação refaz o envio e o pedido é criado.
+  warningsSeen.length = 0;
+  const created = await apiModule.api.post('/api/orders', {
+    contractId: contract.id, modality: 'MOT', jobRoleId: roles[0].id, quantity: 1, workLocationId: contract.contractingUnitId,
+    clientRequestDate: day(-2), desiredStartDate: day(5), registeredAt: day(-3), termType: 'INDEFINITE',
+  });
+  assert.equal(created.summary.approvalStatus, 'AWAITING_CLIENT_APPROVAL');
+  assert.equal(warningsSeen.length, 1);
+  assert.deepEqual(warningsSeen[0].avisos.map((a) => a.tipo).sort(), ['RETROACTIVE', 'SEQUENCE']);
+
+  // Desistir na janela: nada é gravado e a tela recebe a mensagem.
+  apiModule.setWarningHandler(async () => null);
+  await assert.rejects(apiModule.api.post(`/api/orders/${created.summary.id}/approval`, { date: day(3) }),
+    /Nada foi salvo: confira as datas/);
+  apiModule.setWarningHandler(autoConfirm);
+  const order = await apiModule.api.get(`/api/orders/${created.summary.id}`);
+  assert.equal(order.summary.approvalStatus, 'AWAITING_CLIENT_APPROVAL');
+
+  // Aprovação futura confirmada: a posição fica "Data futura", com o SLA ainda não iniciado.
+  const approved = await apiModule.api.post(`/api/orders/${created.summary.id}/approval`, { date: day(3) });
+  const position = await apiModule.api.get(`/api/positions/${approved.positions[0].id}`);
+  assert.equal(position.summary.dateFlags.future, true);
+  assert.equal(position.summary.slaSituation, null);
+  const screen = await open(`/posicoes/${approved.positions[0].id}`, 'Posição');
+  assert.match(screen.textContent, /Data futura/);
+  assert.match(screen.textContent, /Datas a conferir/);
 });
 
 test('Candidatos em lote: o RH vê o painel no pedido e a janela de importação abre; o Comercial não vê', async (t) => {
@@ -525,8 +586,11 @@ test('Aprovação do cliente: pedido aguardando, RH até recrutamento, aprovaç�
 
   // A Controladoria registra a aprovação: abertura e SLA a partir da data informada.
   await signIn('controladoria@demo.local');
+  // Data antes da solicitação: aviso antes de salvar; quem desiste na janela não grava nada.
+  apiModule.setWarningHandler(async () => null);
   await assert.rejects(apiModule.api.post(`/api/orders/${orderId}/approval`, { date: '2000-01-01', justification: 'x' }),
-    (e) => e.status === 422 && 'date' in e.fields);
+    (e) => e.status === 422 && e.code === 'cancelled');
+  apiModule.setWarningHandler(autoConfirm);
   const approved = await apiModule.api.post(`/api/orders/${orderId}/approval`, { date: todayIso, justification: null });
   assert.equal(approved.summary.approvalStatus, 'APPROVED');
   assert.equal(approved.summary.clientDecisionDate, todayIso);
@@ -620,11 +684,13 @@ test('JobConvo no pedido: uma publicação para todas as posições, atualizaç�
   const positionBefore = await apiModule.api.get(`/api/positions/${created.positions[0].id}`);
   assert.ok(!positionBefore.allowedActions.includes('START_RECRUITING'));
 
-  // Publicado exige código e data (não futura).
+  // Publicado exige código e data; data futura avisa antes de salvar (aqui a janela é recusada: nada gravado).
   await assert.rejects(apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: true, code: ' ', publishedAt: todayIso }),
     (e) => e.status === 422 && 'code' in e.fields);
+  apiModule.setWarningHandler(async () => null);
   await assert.rejects(apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: true, code: 'JC-1', publishedAt: '2999-01-01' }),
-    (e) => e.status === 422 && 'publishedAt' in e.fields);
+    (e) => e.status === 422 && e.code === 'cancelled');
+  apiModule.setWarningHandler(autoConfirm);
 
   // Uma publicação: as duas posições entram em recrutamento com o mesmo código.
   const published = await apiModule.api.post(`/api/orders/${orderId}/jobconvo`,

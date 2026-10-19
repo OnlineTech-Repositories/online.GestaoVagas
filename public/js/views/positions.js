@@ -22,6 +22,7 @@ export async function positionsScreen(target, _params, query) {
     search: '',
     status: query?.get('status') ?? '',
     stage: query?.get('etapa') ?? '',
+    flag: query?.get('sinal') ?? '',
     orderId: query?.get('pedido') ?? '',
     slaSituation: query?.get('sla') ?? '',
     onlyOpen: query?.get('onlyOpen') === 'true',
@@ -147,6 +148,7 @@ export async function positionsScreen(target, _params, query) {
         search,
         filterSelect('status', 'Status', options(LABELS.positionStatus, 'Todos')),
         filterSelect('stage', 'Etapa', options(LABELS.rhStage, 'Todas')),
+        filterSelect('flag', 'Datas', options({ FUTURE: 'Com data futura', SEQUENCE: 'Fora de sequência' }, 'Todas')),
         filterSelect('slaSituation', 'Situação do SLA', options(LABELS.slaFilter, 'Todas')),
         filterSelect('rh', 'Analistas de RH', rhFilterOptions(analysts, state.user)),
         onlyOpen,
@@ -307,7 +309,16 @@ function renderDetail(p, reasons, reload) {
         slaTag(m.slaSituation, s.stageStatus, s.orderApprovalStatus),
         s.orderApprovalStatus !== 'APPROVED' ? approvalTag(s.orderApprovalStatus) : null,
         s.hasRetroactiveDates ? el('span', { class: 'etiqueta cinza', title: 'Datas registradas retroativamente (RN-24)' }, 'Datas retroativas') : null,
+        s.dateFlags?.future ? el('span', { class: 'etiqueta azul', title: 'Há evento com data futura' }, 'Data futura') : null,
+        s.dateFlags?.sequence ? el('span', { class: 'etiqueta amarela', title: 'Há etapa com data antes da etapa precedente' }, 'Fora de sequência') : null,
       ),
+      // Datas fora do esperado: aceitas com aviso ao salvar; ficam listadas aqui enquanto a situação durar.
+      p.dateIssues?.length
+        ? el('div', { class: 'mensagem alerta avisos-datas' },
+          el('strong', {}, 'Datas a conferir.'),
+          el('ul', {}, ...p.dateIssues.map((i) => el('li', {}, i.message))),
+          el('div', { class: 'texto-pequeno' }, 'Os tempos e o SLA contam até hoje e só os dias de pausa dentro da contagem; corrija a data se ela estiver errada.'))
+        : null,
       // Ciclo anterior: o ocupante foi desligado e a vaga seguiu numa reposição.
       !s.isCurrentCycle && p.exitTermination
         ? el('div', { class: 'mensagem info' },

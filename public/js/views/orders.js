@@ -604,7 +604,8 @@ function openCandidateImport(order, reload) {
           ? `${s.ready} candidato(s) prontos para importar.`
           : s.errors ? `${s.errors} linha(s) com erro: corrija a planilha e selecione-a de novo. Nada será gravado até lá.`
             : p.fileErrors.length ? 'A planilha não pode ser importada.' : 'Nenhuma linha preenchida.'),
-        `${s.total} linha(s) no arquivo · ${s.ready} pronta(s) · ${s.errors} com erro · ${s.blank} em branco (as posições continuam aguardando candidato).`),
+        `${s.total} linha(s) no arquivo · ${s.ready} pronta(s) · ${s.errors} com erro · ${s.blank} em branco (as posições continuam aguardando candidato).`
+        + (s.warnings ? ` ${s.warnings} linha(s) com aviso de data: confira; elas podem ser importadas.` : '')),
       table([
         { title: 'Linha', cls: 'num', field: 'line' },
         { title: 'Vaga', cls: 'nowrap', field: 'position' },
@@ -617,10 +618,12 @@ function openCandidateImport(order, reload) {
           title: 'Situação',
           render: (r) => (r.errors.length
             ? el('ul', { class: 'lista-erros' }, ...r.errors.map((e) => el('li', {}, el('strong', {}, `${e.label}: `), e.message)))
-            : SITUATION[r.status]),
+            : el('div', {}, SITUATION[r.status],
+              r.warnings?.length ? el('ul', { class: 'lista-avisos-linha' }, ...r.warnings.map((w) => el('li', {}, w))) : null)),
         },
       ], p.rows, {
-        rowClass: (r) => (r.status === 'error' ? 'linha-erro' : r.status === 'blank' ? 'linha-apagada' : ''),
+        rowClass: (r) => (r.status === 'error' ? 'linha-erro' : r.status === 'blank' ? 'linha-apagada'
+          : r.warnings?.length ? 'linha-alerta' : ''),
         empty: 'A planilha não tem linhas de candidatos.',
         dense: true,
       }),

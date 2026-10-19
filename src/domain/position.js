@@ -33,8 +33,9 @@ export const notReplaced = (p) =>
 export const stageStatus = (p) => (p.status === S.PAUSED && p.previousStatus ? p.previousStatus : p.status);
 /** Admissão registrada, com ou sem matrícula, e o 1º dia ainda não confirmado. */
 /** Etapa do acompanhamento do RH (RhStage); nula para a vaga encerrada sem preenchimento. */
-export function rhStage(p) {
-  if (p.status === S.FILLED) return RhStage.FILLED;
+export function rhStage(p, today = null) {
+  // 1º dia agendado para o futuro: ainda não é vaga preenchida — fica em "Aguardando 1º dia" até a data chegar.
+  if (p.status === S.FILLED) return today && p.firstDayAt > today ? RhStage.AWAITING_FIRST_DAY : RhStage.FILLED;
   if (isClosed(p)) return null;
   if (p.status === S.PAUSED) return RhStage.PAUSED;
   if (p.status === S.AWAITING_CONFIRMATION) return RhStage.AWAITING_CLIENT;
@@ -46,7 +47,11 @@ export const isAdmitted = (p) => p.status === S.IN_ADMISSION || p.status === S.A
 export const canRegisterMissingCandidate = (p) => !activeCandidate(p)
   && [S.CANDIDATE_APPROVED, S.IN_ADMISSION, S.AWAITING_FIRST_DAY].includes(stageStatus(p));
 /** Seção 8.2: coalesce(end_date, today) - start_date. */
-export const pauseDays = (pause, today) => Math.max(0, dayDiff(pause.startDate, pause.endDate ?? today));
+/** Dias de uma pausa até hoje (pausa ou fim lançados com data futura não contam dias que ainda não passaram). */
+export const pauseDays = (pause, today) => {
+  const end = pause.endDate && pause.endDate < today ? pause.endDate : today;
+  return Math.max(0, dayDiff(pause.startDate, end));
+};
 
 const dayDiff = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
 
@@ -298,7 +303,7 @@ const MISSING_REGISTRATION =
   'A matrícula não foi informada na admissão: o RH do pedido ou o DP deve informá-la antes da confirmação.';
 
 /**
- * RN-07/RN-08: 1º dia efetivo (≥ abertura). Nome e matrícula não são digitados aqui: vêm do candidato selecionado e
+ * RN-07/RN-08: 1º dia efetivo. Nome e matrícula não são digitados aqui: vêm do candidato selecionado e
  * da admissão, e ficam preservados. Faltando algum, a correção é feita na origem antes da confirmação.
  */
 export function confirmFirstDay(p, firstDayAt, justification, confirmedBy, confirmedAt) {
@@ -313,9 +318,7 @@ export function confirmFirstDay(p, firstDayAt, justification, confirmedBy, confi
   }
   if (!p.admissionRegistration) throw new BusinessRuleError(MISSING_REGISTRATION, 'employeeRegistration');
   if (!justification?.trim()) throw new BusinessRuleError('Informe a justificativa da confirmação do 1º dia.', 'justification');
-  if (p.openedAt && firstDayAt < p.openedAt) {
-    throw new BusinessRuleError('O 1º dia efetivo não pode ser anterior à data de abertura da posição.', 'date');
-  }
+  // 1º dia antes da abertura ou da admissão não bloqueia: vira aviso antes de salvar (date-checks.js).
   p.firstDayAt = firstDayAt;
   p.firstDayJustification = justification.trim();
   p.firstDayConfirmedAt = confirmedAt;

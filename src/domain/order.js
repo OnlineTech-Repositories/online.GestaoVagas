@@ -30,14 +30,11 @@ export function computeStatus(positions) {
 }
 
 /**
- * Aprovação formal do cliente. Devolve as vagas novas ainda sem abertura: quem chama grava a meta de SLA de cada
- * uma na data da aprovação (openOnApproval).
+ * Aprovação formal do cliente (data antes da solicitação avisa, não bloqueia: date-checks.js). Devolve as vagas
+ * novas ainda sem abertura: quem chama grava a meta de SLA de cada uma na data da aprovação (openOnApproval).
  */
 export function approve(o, decisionDate, recordedBy, recordedAt) {
   ensureAwaitingApproval(o);
-  if (decisionDate < o.clientRequestDate) {
-    throw new BusinessRuleError('A aprovação não pode ser anterior à solicitação do cliente.', 'date');
-  }
   o.approvalStatus = A.APPROVED;
   o.clientDecisionDate = decisionDate;
   o.approvalRecordedAt = recordedAt;
@@ -50,9 +47,6 @@ export function reject(o, decisionDate, reason, recordedBy, recordedAt) {
   ensureAwaitingApproval(o);
   const text = reason?.trim();
   if (!text) throw new BusinessRuleError('Informe o motivo da não aprovação.', 'reason');
-  if (decisionDate < o.clientRequestDate) {
-    throw new BusinessRuleError('A decisão não pode ser anterior à solicitação do cliente.', 'date');
-  }
   o.approvalStatus = A.NOT_APPROVED;
   o.clientDecisionDate = decisionDate;
   o.approvalRecordedAt = recordedAt;
@@ -77,9 +71,6 @@ export function recordJobconvo(o, published, code, publishedAt, notes, recordedB
   if (published) {
     if (!code?.trim()) throw new BusinessRuleError('Informe o código da vaga no JobConvo.', 'code');
     if (!publishedAt) throw new BusinessRuleError('Informe a data da publicação.', 'publishedAt');
-    if (publishedAt < o.clientRequestDate) {
-      throw new BusinessRuleError('A publicação não pode ser anterior à solicitação do cliente.', 'publishedAt');
-    }
     o.jobconvoCode = code.trim();
     o.jobconvoPublishedAt = publishedAt;
   } else {

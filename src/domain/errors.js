@@ -54,3 +54,19 @@ export class ConflictError extends Error {
     this.title = 'Conflito';
   }
 }
+
+/**
+ * Datas fora do esperado aguardando confirmação (422): nada foi gravado. A tela mostra os avisos e reenvia com o
+ * cabeçalho X-Confirm-Warnings: 1 (e a justificativa, quando o lançamento retroativo a exige).
+ * @param {{ kind: string, message: string }[]} warnings
+ * @param {string|null} justificationField campo da justificativa que falta, ou null
+ */
+export class WarningsPendingError extends Error {
+  constructor(warnings, justificationField = null) {
+    super(warnings.length === 1 ? warnings[0].message : `${warnings.length} datas pedem confirmação antes de salvar.`);
+    this.warnings = warnings;
+    this.justificationField = justificationField;
+    this.status = 422;
+    this.title = 'Confirmação necessária';
+  }
+}

@@ -275,3 +275,17 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
       de um analista aparece como "compartilhado" na linha de cada um; o total conta cada pedido e cada vaga uma vez.
     - Gráficos de barras empilhadas em HTML (sem biblioteca, por causa da CSP), com dica ao passar o mouse, legenda e a
       tabela correspondente. Clicar no pedido ou num segmento abre a lista de posições filtrada (pedido, etapa e SLA).
+25. **Datas flexíveis com avisos (melhoria pedida pelo usuário em 19/10/2026):** datas passadas, futuras e fora da
+    sequência das etapas não bloqueiam mais: a API responde 422 com `avisos` sem gravar, a tela mostra cada aviso (data
+    e motivo) e "Salvar mesmo assim" reenvia com o cabeçalho `X-Confirm-Warnings: 1`. Na importação de candidatos, os
+    avisos aparecem por linha na prévia e não impedem a confirmação.
+    - *Retroativo* (decisão do usuário): fora da carga inicial, continua exigindo justificativa (RN-24), pedida na
+      própria janela de avisos; na carga inicial, só o aviso.
+    - *Continua bloqueando* o impossível no próprio registro: fim antes do início (pausa, vigência, contrato), início
+      desejado antes da solicitação (o banco também confere), pausas sobrepostas, nascimento futuro, formato e
+      obrigatório.
+    - *Indicadores*: tempos contados até o evento já ocorrido ou até hoje (nunca negativos); 1º dia ou cancelamento
+      futuros contam como agendados; só os dias de pausa entre a abertura e o 1º dia descontam do SLA; abertura futura
+      = "SLA não iniciado".
+    - *Selos* calculados a cada leitura (`src/domain/date-checks.js`): "Data futura" (some quando a data chega) e "Fora
+      de sequência", na lista e no detalhe da posição, no filtro "Datas" e em dois cards do Painel de RH.

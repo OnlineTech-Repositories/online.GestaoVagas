@@ -1,5 +1,5 @@
-import { api, events } from './api.js';
-import { el, clear, initials, toast, loading, LABELS } from './ui.js';
+import { api, events, setWarningHandler } from './api.js';
+import { el, clear, initials, toast, loading, LABELS, confirmWarnings } from './ui.js';
 import { loginScreen, changePasswordScreen, openChangePassword } from './views/login.js';
 import { dashboardScreen } from './views/dashboard.js';
 import { positionsScreen, positionDetailScreen } from './views/positions.js';
@@ -342,6 +342,9 @@ async function logout() {
   window.location.hash = '';
   clear(root).append(loginScreen(login));
 }
+
+// Datas passadas, futuras ou fora de sequência: a janela de avisos decide se o envio segue (api.js refaz confirmado).
+setWarningHandler(confirmWarnings);
 
 events.addEventListener('session-expired', () => {
   if (!state.user) return;

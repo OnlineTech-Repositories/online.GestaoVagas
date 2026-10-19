@@ -375,6 +375,65 @@ export function confirm({ title, message, confirmText = 'Confirmar', danger = fa
   });
 }
 
+const WARNING_TITLE = { RETROACTIVE: 'Registro retroativo', FUTURE: 'Registro futuro', SEQUENCE: 'Sequência divergente' };
+
+/**
+ * Avisos de data antes de salvar (resposta 422 com `avisos`): lista cada um com a data e o motivo e deixa concluir.
+ * Quando o lançamento retroativo exige justificativa (fora da carga inicial), ela é pedida aqui mesmo. Resolve com
+ * `{ justification }` ao confirmar ou `null` ao desistir.
+ */
+export function confirmWarnings(problem) {
+  return new Promise((resolve) => {
+    let decided = false;
+    const needsJustification = Boolean(problem.justificativa?.obrigatoria);
+    const justification = needsJustification
+      ? field({ name: 'avisoJustificativa', label: 'Justificativa da data retroativa', type: 'textarea', required: true,
+        help: 'Obrigatória fora da carga inicial: fica no histórico junto com a data informada.' })
+      : null;
+
+    const decide = (value) => {
+      decided = true;
+      reference.close();
+      resolve(value);
+    };
+    const confirmButton = element('button', { class: 'btn', type: 'button', onclick: () => {
+      const text = justification?.querySelector('textarea').value.trim() ?? '';
+      if (needsJustification && !text) {
+        justification.classList.add('com-erro');
+        justification.querySelector('.erro-campo')?.remove();
+        justification.append(element('div', { class: 'erro-campo' }, 'Informe a justificativa.'));
+        return;
+      }
+      decide({ justification: text || null });
+    } }, 'Salvar mesmo assim');
+
+    const reference = modal({
+      title: 'Confira as datas antes de salvar',
+      body: [
+        element('ul', { class: 'lista-avisos' }, ...problem.avisos.map((a) => element('li', { class: `aviso-${a.tipo.toLowerCase()}` },
+          element('strong', {}, WARNING_TITLE[a.tipo] ?? 'Aviso'), element('span', {}, a.mensagem)))),
+        justification,
+      ],
+      footer: [
+        element('button', { class: 'btn secundario', type: 'button', onclick: () => decide(null) }, 'Voltar e corrigir'),
+        confirmButton,
+      ],
+      onClose: () => {
+        if (!decided) resolve(null);
+      },
+    });
+  });
+}
+
+/** Selos de data da posição: "datas retroativas" (RN-24), "data futura" e "fora de sequência". */
+export function dateBadges(p) {
+  return [
+    p.hasRetroactiveDates ? element('div', { class: 'selo-data', title: 'Possui datas registradas retroativamente (RN-24)' }, 'datas retroativas') : null,
+    p.dateFlags?.future ? element('div', { class: 'selo-data futura', title: 'Há evento com data futura: os tempos contam até hoje' }, 'data futura') : null,
+    p.dateFlags?.sequence ? element('div', { class: 'selo-data sequencia', title: 'Há etapa com data antes da etapa precedente' }, 'fora de sequência') : null,
+  ];
+}
+
 /**
  * Janela de formulário: monta o modal, envia, marca os campos recusados e fecha
  * só quando a operação dá certo. `submit(data)` recebe o formulário lido.
@@ -781,8 +840,7 @@ export function positionColumns({ money: showMoney = false, employee = false, cl
     { title: 'Tipo', render: (p) => LABELS.demandType[p.demandType] },
     {
       title: 'Status',
-      render: (p) => element('div', {}, statusTag(p.status, p.notReplaced),
-        p.hasRetroactiveDates ? element('div', { class: 'texto-fraco texto-pequeno', title: 'Possui datas retroativas (RN-24)' }, 'datas retroativas') : null),
+      render: (p) => element('div', {}, statusTag(p.status, p.notReplaced), dateBadges(p)),
     },
     {
       title: 'SLA',

@@ -1014,3 +1014,15 @@ button.legenda-item:hover, .legenda-item.selecionado { background: var(--neutro-
 }
 .filtro-ativo button { border: 0; background: none; color: inherit; cursor: pointer; font: inherit; padding: 0 6px; border-radius: 999px; }
 .filtro-ativo button:hover { background: rgba(15, 98, 180, 0.15); }
+
+/* Avisos de data (passada, futura, fora de sequência): janela antes de salvar, selos e quadro no detalhe */
+.lista-avisos { margin: 0 0 12px; padding: 0; list-style: none; display: grid; gap: 8px; }
+.lista-avisos li { display: grid; gap: 2px; padding: 10px 12px; border-radius: var(--raio); border-left: 3px solid var(--alerta); background: var(--alerta-fundo); font-size: 13.5px; }
+.lista-avisos li.aviso-future { border-left-color: var(--azul); background: var(--azul-claro); }
+.lista-avisos li strong { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--texto-suave); }
+.selo-data { font-size: 11.5px; color: var(--texto-fraco); }
+.selo-data.futura { color: var(--azul-escuro); }
+.selo-data.sequencia { color: var(--alerta); font-weight: 600; }
+.avisos-datas ul { margin: 6px 0; padding-left: 18px; }
+.avisos-datas li + li { margin-top: 3px; }
+.lista-avisos-linha { margin: 4px 0 0; padding-left: 16px; font-size: 12px; color: #7a4d00; }

@@ -9,6 +9,7 @@ import { Cpf, EvidenceFiles, RhAccess } from '../src/domain/guards.js';
 import {
   activeRhAnalysts, awaitingRhAssignment, computeStatus, currentPositions, recordJobconvo, reject, setRhAnalysts,
 } from '../src/domain/order.js';
+import { orderDateIssues } from '../src/domain/date-checks.js';
 import * as P from '../src/domain/position.js';
 import { Actions, actionsFor, ensureRole } from '../src/services/position-views.js';
 import { candidate, fill, NOW, newPosition, order, reason, recruit, replacement } from './builders.js';
@@ -45,12 +46,14 @@ test('publicado: toda posição aberta passa a "Em recrutamento"', () => {
   assert.equal(o.jobconvoPublished, true);
 });
 
-test('publicado exige código e data, não anterior à solicitação', () => {
+test('publicado exige código e data; antes da solicitação, só sinaliza', () => {
   const { o, positions } = orderWith(1);
   assert.equal(ruleField(() => recordJobconvo(o, true, '', '2026-11-03', null, null, NOW)), 'code');
   assert.equal(ruleField(() => recordJobconvo(o, true, 'JC', null, null, null, NOW)), 'publishedAt');
-  assert.equal(ruleField(() => recordJobconvo(o, true, 'JC', '2026-10-30', null, null, NOW)), 'publishedAt');
   assert.equal(positions[0].status, S.OPEN);
+  recordJobconvo(o, true, 'JC', '2026-10-30', null, null, NOW);
+  assert.equal(positions[0].status, S.RECRUITING);
+  assert.ok(orderDateIssues(o, '2026-11-20').some((i) => i.key === 'order:jobconvo<request'));
 });
 
 test('não publicado exige justificativa e também inicia o recrutamento', () => {

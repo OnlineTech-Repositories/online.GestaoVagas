@@ -7,12 +7,13 @@ import {
   ContractStatus, Modality, NotificationTypes, OrderApprovalStatus, ParameterKeys, Roles, TermType, TerminationSource,
   TerminationType,
 } from '../domain/enums.js';
-import { DateGuard, Permissions } from '../domain/guards.js';
+import { Permissions } from '../domain/guards.js';
 import { newOrder } from '../domain/order.js';
 import * as P from '../domain/position.js';
+import { DateReview } from './date-review.js';
 import { Input } from './input.js';
 import { links, notify } from './notifications.js';
-import { getBool, isInitialLoadOpen } from './parameters.js';
+import { getBool } from './parameters.js';
 import { rateAt } from './snapshots.js';
 
 /** Desligamentos (RN-11 a RN-14) e o desligamento avulso de colaborador sem posição no sistema (D1). */
@@ -96,13 +97,7 @@ export async function registerLegacyTermination(ctx, body) {
   if (contract.contractingUnitId && location.id !== contract.contractingUnitId) {
     throw new BusinessRuleError('O pedido deste contrato usa a unidade contratante do contrato.', 'workLocationId');
   }
-  if (firstDayAt) {
-    DateGuard.notFuture(firstDayAt, todayDate(), 'O 1º dia do colaborador', 'firstDayAt');
-    if (firstDayAt > r.lastWorkedDay) {
-      throw new BusinessRuleError('O último dia trabalhado não pode ser anterior ao 1º dia.', 'lastWorkedDay');
-    }
-  }
-
+  // 1º dia futuro ou depois do último dia trabalhado: aviso antes de salvar (date-checks.js), não bloqueio.
   const startDate = firstDayAt ?? r.lastWorkedDay;
   P.validateTerm(termType, termEndDate, termDurationDays, startDate);
   const term = P.normalizeTerm(termType, termEndDate, termDurationDays);
@@ -143,12 +138,9 @@ export async function registerLegacyTermination(ctx, body) {
 async function registerCore(ctx, origin, r, isNewOrigin) {
   const today = todayDate();
   const registeredAt = r.registeredAt ?? today;
-  DateGuard.notFuture(registeredAt, today, 'A data de registro', 'registeredAt');
-  if (origin.firstDayAt && r.lastWorkedDay < origin.firstDayAt) {
-    throw new BusinessRuleError('O último dia trabalhado não pode ser anterior ao 1º dia do colaborador.', 'lastWorkedDay');
-  }
-  const retroactive = DateGuard.checkRetroactive(registeredAt, today, await isInitialLoadOpen(), r.justification,
-    'A data de registro do desligamento');
+  // Registro passado, último dia futuro (aviso prévio) ou antes do 1º dia: avisos antes de salvar (date-review.js).
+  const review = new DateReview(ctx);
+  const retroactive = await review.retroactive(registeredAt, 'A data de registro do desligamento', r.justification);
 
   const alreadyTerminated = !isNewOrigin && (await hasTermination(origin.id));
   const termination = P.registerTermination(origin, alreadyTerminated, r.lastWorkedDay, r.source, r.terminationType,
@@ -156,6 +148,7 @@ async function registerCore(ctx, origin, r, isNewOrigin) {
   const sequence = isNewOrigin ? 2 : await nextSequence(ctx.uow, origin.orderId);
   const replacement = P.createReplacement(origin, termination, sequence);
   if (retroactive) P.markRetroactive(replacement);
+  review.watchPosition(replacement, { fresh: true }).settle();
 
   const order = origin.order;
   await notify(ctx.uow, {

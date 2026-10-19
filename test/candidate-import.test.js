@@ -155,7 +155,7 @@ test('prévia: erro por linha e campo, linha em branco ignorada, nada gravado', 
   assert.equal(bad.status, 'error');
   assert.equal(bad.line, 4, 'linha do Excel (o cabeçalho é a 1)');
   const fields = Object.fromEntries(bad.errors.map((e) => [e.field, e.message]));
-  assert.match(fields.approvedAt, /não pode ser futura/);
+  assert.equal(fields.approvedAt, undefined, 'data futura não é erro: vira aviso');
   assert.match(fields.fullName, /Informe o nome completo/);
   assert.match(fields.birthDate, /Data inválida/);
   assert.match(fields.sex, /Opção inválida/);

@@ -49,25 +49,40 @@ export const uncoveredStart = (p) => (p.demandType === DemandType.REPLACEMENT
   ? addDays(terminationOf(p).lastWorkedDay, 1)
   : p.desiredStartDate);
 
-/** 8.1 — fim (exclusivo) da janela descoberta. */
+/**
+ * 8.1 — fim (exclusivo) da janela descoberta. Marco com data futura (1º dia ou cancelamento agendados) conta só até
+ * hoje: a vaga continua descoberta até a data chegar.
+ */
 export function uncoveredEndExclusive(p, today) {
   if (isLegacyOrigin(p)) return uncoveredStart(p);
   switch (p.status) {
-    case S.FILLED: return p.firstDayAt ?? uncoveredStart(p);
+    case S.FILLED: return minDate(p.firstDayAt ?? uncoveredStart(p), today);
     case S.CLOSED_CONTRACT_ENDED: return p.termEndDate ? addDays(p.termEndDate, 1) : p.closedAt ?? today;
-    case S.CLOSED_CLIENT_CANCELLED: return p.closedAt ?? today;
+    case S.CLOSED_CLIENT_CANCELLED: return minDate(p.closedAt ?? today, today);
     default:
       if (p.termType === TermType.FIXED_END && p.termEndDate) return minDate(today, addDays(p.termEndDate, 1));
       return today;
   }
 }
 
-/** 8.2 — Σ (coalesce(end_date, today) - start_date). */
-export const pausedDays = (p, today) => (p.pauses ?? []).reduce((sum, x) => sum + pauseDays(x, today), 0);
+/** 1º dia já ocorrido (o futuro é agendado: a vaga ainda não está preenchida para os cálculos). */
+const filledBy = (p, today) => (p.status === S.FILLED && p.firstDayAt && p.firstDayAt <= today ? p.firstDayAt : null);
+
+/**
+ * 8.2 — dias pausados que contam para o SLA: só a parte de cada pausa entre a abertura e o 1º dia (ou hoje). Uma
+ * pausa lançada antes da abertura, ou terminada depois do 1º dia, não desconta dias em que o SLA não corria — antes,
+ * ela deixava o tempo de preenchimento negativo e empurrava o prazo. Sem abertura, a soma simples até hoje.
+ */
+export function pausedDays(p, today) {
+  const pauses = p.pauses ?? [];
+  if (!p.openedAt) return pauses.reduce((sum, x) => sum + pauseDays(x, today), 0);
+  const end = filledBy(p, today) ?? today;
+  return pauses.reduce((sum, x) => sum + overlapDays(x.startDate, minDate(x.endDate ?? today, today), p.openedAt, end), 0);
+}
 
 /** 8.3 — tempo de cadastro (vaga nova). */
 export const registrationTime = (p) => (p.demandType === DemandType.NEW && p.order && !p.order.isLegacy
-  ? diffDays(p.order.clientRequestDate, p.order.registeredAt)
+  ? Math.max(0, diffDays(p.order.clientRequestDate, p.order.registeredAt))
   : null);
 
 /** Espera pela aprovação formal do cliente (vaga nova): do registro do pedido à decisão, ou até hoje. */
@@ -85,23 +100,30 @@ export const communicationTime = (p) => (p.demandType === DemandType.REPLACEMENT
 
 /** 8.3 — tempo de espera pela decisão do cliente (reposição). */
 export const confirmationTime = (p) => (p.demandType === DemandType.REPLACEMENT && terminationOf(p).clientDecisionAt
-  ? diffDays(terminationOf(p).registeredAt, terminationOf(p).clientDecisionAt)
+  ? Math.max(0, diffDays(terminationOf(p).registeredAt, terminationOf(p).clientDecisionAt))
   : null);
 
-/** 8.3 — tempo de preenchimento (SLA do RH), descontadas as pausas (RN-18). */
+/**
+ * 8.3 — tempo de preenchimento (SLA do RH), descontadas as pausas (RN-18), contado até o 1º dia já ocorrido ou até
+ * hoje (data de referência). Abertura futura ou datas fora de ordem dão 0, nunca um tempo negativo.
+ */
 export function fillTime(p, today, paused) {
   if (!p.openedAt || isClosed(p) || isLegacyOrigin(p)) return null;
-  return diffDays(p.openedAt, p.firstDayAt ?? today) - paused;
+  return Math.max(0, diffDays(p.openedAt, filledBy(p, today) ?? today) - paused);
 }
 
 /** 8.4 — prazo e situação do SLA. */
 export function sla(p, today, settings, paused, fill) {
   // AWAITING_CONFIRMATION não tem SLA do RH; posições encerradas sem preenchimento não têm situação.
   if (!p.openedAt || isClosed(p) || isLegacyOrigin(p)) return { deadline: null, situation: null };
-  if (p.slaTargetDays === null || p.slaTargetDays === undefined) return { deadline: null, situation: SlaSituation.NO_TARGET };
   const target = p.slaTargetDays;
+  const hasTarget = target !== null && target !== undefined;
+  // Abertura futura (aprovação ou decisão agendadas): o SLA ainda não começou.
+  if (p.openedAt > today) return { deadline: hasTarget ? addDays(p.openedAt, target) : null, situation: null };
+  if (!hasTarget) return { deadline: null, situation: SlaSituation.NO_TARGET };
   const deadline = addDays(p.openedAt, target + paused);
-  if (p.status === S.FILLED) return { deadline, situation: fill <= target ? SlaSituation.ON_TIME : SlaSituation.OVERDUE };
+  // Resultado final só com o 1º dia já ocorrido; agendado para o futuro, segue contando como vaga aberta.
+  if (filledBy(p, today)) return { deadline, situation: fill <= target ? SlaSituation.ON_TIME : SlaSituation.OVERDUE };
   if (today > deadline) return { deadline, situation: SlaSituation.OVERDUE };
   if (today >= addDays(deadline, -settings.atRiskDays)) return { deadline, situation: SlaSituation.AT_RISK };
   return { deadline, situation: SlaSituation.ON_TIME };

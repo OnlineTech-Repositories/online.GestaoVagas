@@ -19,6 +19,7 @@ import { canImportCandidates, eligiblePositions } from './candidate-import.js';
 import { links, notify } from './notifications.js';
 import { calcSettings, isInitialLoadOpen } from './parameters.js';
 import { toSummary } from './position-views.js';
+import { DateReview } from './date-review.js';
 import { slaFor, validatedRateAt } from './snapshots.js';
 
 /** Pedidos: criação (RN-01 a RN-05), aprovação do cliente, JobConvo, analistas de RH e correção de datas. */
@@ -69,10 +70,8 @@ export async function createOrder(ctx, body) {
     throw new BusinessRuleError('O pedido deste contrato usa a unidade contratante do contrato.', 'workLocationId');
   }
   if (r.quantity < 1 || r.quantity > 1000) throw new BusinessRuleError('A quantidade deve estar entre 1 e 1000.', 'quantity');
-  if (r.desiredStartDate < r.clientRequestDate) {
-    throw new BusinessRuleError(
-      'A data de início desejada deve ser igual ou posterior à data da solicitação do cliente.', 'desiredStartDate');
-  }
+  // Continua bloqueando: é o início e o fim do mesmo registro, e o banco confere (CHECK em orders).
+  if (r.desiredStartDate < r.clientRequestDate) throw new BusinessRuleError('A data de início desejada deve ser igual ou posterior à data da solicitação do cliente.', 'desiredStartDate');
   P.validateTerm(r.termType, r.termEndDate, r.termDurationDays, r.desiredStartDate);
   const jobDescription = cleanMultiline(r.jobDescription);
   if (jobDescription && jobDescription.length > JOB_DESCRIPTION_MAX_LENGTH) {
@@ -80,13 +79,10 @@ export async function createOrder(ctx, body) {
       `A descrição da vaga deve ter no máximo ${JOB_DESCRIPTION_MAX_LENGTH} caracteres.`, 'jobDescription');
   }
 
+  // Datas futuras ou fora de ordem avisam antes de salvar (date-review.js); o registro passado pede justificativa.
   const registeredAt = r.registeredAt ?? today;
-  DateGuard.notFuture(r.clientRequestDate, today, 'A data da solicitação do cliente', 'clientRequestDate');
-  DateGuard.notFuture(registeredAt, today, 'A data de registro', 'registeredAt');
-  if (registeredAt < r.clientRequestDate) {
-    throw new BusinessRuleError('A data de registro não pode ser anterior à data da solicitação do cliente.', 'registeredAt');
-  }
-  const retroactive = DateGuard.checkRetroactive(registeredAt, today, initialLoadOpen, r.justification, 'A data de registro');
+  const review = new DateReview(ctx);
+  const retroactive = await review.retroactive(registeredAt, 'A data de registro', r.justification);
 
   // Valores por cargo são do contrato: o pedido só aceita cargo com valor validado vigente na data de registro.
   if (!(await validatedRateAt(ctx.uow, contract.id, jobRole.id, registeredAt))) {
@@ -117,6 +113,7 @@ export async function createOrder(ctx, body) {
 
   // Todo pedido nasce aguardando a aprovação do cliente: as posições abrem (e o SLA começa) na aprovação.
   await addNewPositions(ctx, order, r.quantity, r.desiredStartDate, null, registeredAt, retroactive, 1);
+  review.watchOrder(order, { fresh: true }).settle();
   ctx.uow.add(order);
   await ctx.uow.save({ action: 'CREATE_ORDER', justification: r.justification });
 
@@ -140,19 +137,18 @@ export async function addPositions(ctx, id, body) {
   if (order.isLegacy) throw new BusinessRuleError('Não é possível acrescentar posições a um pedido de desligamento avulso.');
   if (order.contract.status !== ContractStatus.ACTIVE) throw new BusinessRuleError('O contrato do pedido não está ativo.');
   if (quantity < 1 || quantity > 1000) throw new BusinessRuleError('A quantidade deve estar entre 1 e 1000.', 'quantity');
-  if (desiredStartDate < order.clientRequestDate) {
-    throw new BusinessRuleError(
-      'A data de início desejada deve ser igual ou posterior à data da solicitação do cliente.', 'desiredStartDate');
-  }
+  if (desiredStartDate < order.clientRequestDate) throw new BusinessRuleError('A data de início desejada deve ser igual ou posterior à data da solicitação do cliente.', 'desiredStartDate');
   if (order.approvalStatus === OrderApprovalStatus.NOT_APPROVED) {
     throw new BusinessRuleError('O cliente não aprovou este pedido: não é possível acrescentar posições.');
   }
 
   const sequence = await nextSequence(ctx.uow, order.id, order.positions);
   const today = todayDate();
+  const review = new DateReview(ctx).watchOrder(order);
   // Pedido aprovado: as novas posições abrem hoje; aguardando aprovação: abrem quando o cliente aprovar.
   await addNewPositions(ctx, order, quantity, desiredStartDate, O.isApproved(order) ? today : null, today, false, sequence);
   order.quantity += quantity;
+  review.settle();
 
   await notify(ctx.uow, {
     type: NotificationTypes.OrderCreated,
@@ -187,21 +183,18 @@ export async function correctOrderDate(ctx, id, body) {
   if (!hasRole(ctx.user, Roles.Admin) && order.createdBy !== ctx.user.id) {
     throw new ForbiddenError('Somente o autor do pedido ou um administrador pode corrigir estas datas.');
   }
-  const today = todayDate();
-  DateGuard.notFuture(field === ORDER_DATES.DESIRED_START_DATE ? today : date, today, 'A data corrigida', 'date');
+  // Futura ou fora de ordem: aviso antes de salvar (a correção já exige justificativa).
+  const review = new DateReview(ctx).watchOrder(order);
 
   switch (field) {
     case ORDER_DATES.CLIENT_REQUEST_DATE:
-      if (date > order.desiredStartDate || date > order.registeredAt) {
-        throw new BusinessRuleError('A solicitação do cliente não pode ser posterior ao início desejado nem ao registro.', 'date');
+      if (date > order.desiredStartDate) {
+        throw new BusinessRuleError('A solicitação do cliente não pode ser posterior ao início desejado.', 'date');
       }
       order.clientRequestDate = date;
       break;
     case ORDER_DATES.DESIRED_START_DATE:
-      if (date < order.clientRequestDate) {
-        throw new BusinessRuleError(
-          'A data de início desejada deve ser igual ou posterior à data da solicitação do cliente.', 'desiredStartDate');
-      }
+      if (date < order.clientRequestDate) throw new BusinessRuleError('A data de início desejada deve ser igual ou posterior à data da solicitação do cliente.', 'date');
       // Posições criadas com a data original acompanham a correção; acréscimos posteriores mantêm a própria data.
       for (const p of order.positions.filter((x) => x.demandType === DemandType.NEW && x.desiredStartDate === order.desiredStartDate)) {
         p.desiredStartDate = date;
@@ -209,9 +202,6 @@ export async function correctOrderDate(ctx, id, body) {
       order.desiredStartDate = date;
       break;
     case ORDER_DATES.REGISTERED_AT:
-      if (date < order.clientRequestDate) {
-        throw new BusinessRuleError('A data de registro não pode ser anterior à data da solicitação do cliente.', 'registeredAt');
-      }
       order.registeredAt = date;
       break;
     default: {
@@ -219,19 +209,14 @@ export async function correctOrderDate(ctx, id, body) {
       if (!O.isApproved(order) || !current) {
         throw new BusinessRuleError('O pedido não está aprovado: não há data de aprovação a corrigir.', 'date');
       }
-      if (date < order.clientRequestDate) {
-        throw new BusinessRuleError('A aprovação não pode ser anterior à solicitação do cliente.', 'date');
-      }
       // A abertura das vagas novas é a data da aprovação: elas acompanham a correção.
       for (const p of order.positions.filter((x) => x.demandType === DemandType.NEW && x.openedAt === current)) {
-        if (p.firstDayAt && p.firstDayAt < date) {
-          throw new BusinessRuleError(`A posição ${p.slotNumber} tem 1º dia efetivo anterior à nova data de aprovação.`);
-        }
         p.openedAt = date;
       }
       order.clientDecisionDate = date;
     }
   }
+  review.settle();
   await ctx.uow.save({ action: 'CORRECT_DATE', justification });
   return getOrderDetail(ctx, order.id);
 }
@@ -445,15 +430,13 @@ export async function recordJobconvo(ctx, id, body) {
 
   const order = await requireOrder(ctx, id);
   RhAccess.require(ctx.user, order);
-  let retroactive = false;
-  if (published && publishedAt) {
-    const today = todayDate();
-    DateGuard.notFuture(publishedAt, today, 'A data da publicação', 'publishedAt');
-    retroactive = DateGuard.checkRetroactive(publishedAt, today, await isInitialLoadOpen(), justification,
-      'A data da publicação');
-  }
+  const review = new DateReview(ctx).watchOrder(order);
+  const retroactive = published && publishedAt
+    ? await review.retroactive(publishedAt, 'A data da publicação', justification)
+    : false;
   const started = O.recordJobconvo(order, published, code, publishedAt, justification, ctx.user.id, utcNow());
   if (retroactive) for (const p of started) P.markRetroactive(p);
+  review.settle();
   await ctx.uow.save({ action: 'RECORD_JOBCONVO', justification: order.jobconvoNotes });
   return getOrderDetail(ctx, order.id);
 }
@@ -467,14 +450,14 @@ export async function approveOrder(ctx, id, body) {
   input.done();
 
   const order = await requireOrder(ctx, id);
-  const today = todayDate();
-  DateGuard.notFuture(date, today, 'A data da aprovação', 'date');
-  const retroactive = DateGuard.checkRetroactive(date, today, await isInitialLoadOpen(), justification, 'A data da aprovação');
+  const review = new DateReview(ctx).watchOrder(order);
+  const retroactive = await review.retroactive(date, 'A data da aprovação', justification);
   for (const p of O.approve(order, date, ctx.user.id, utcNow())) {
     const sla = await slaFor(order.contract, order.modality, DemandType.NEW, date);
     P.openOnApproval(p, date, sla.days, sla.source);
     if (retroactive) P.markRetroactive(p);
   }
+  review.settle();
   await notifyEveryone(ctx, order, NotificationTypes.OrderApproved, 'Pedido aprovado pelo cliente',
     `A demanda foi aprovada formalmente pelo cliente em ${formatBr(date)}; as posições estão abertas.`);
   await ctx.uow.save({ action: 'APPROVE_ORDER', justification });
@@ -490,8 +473,9 @@ export async function rejectOrder(ctx, id, body) {
   input.done();
 
   const order = await requireOrder(ctx, id);
-  DateGuard.notFuture(date, todayDate(), 'A data da decisão', 'date');
+  const review = new DateReview(ctx).watchOrder(order);
   O.reject(order, date, reason, ctx.user.id, utcNow());
+  review.settle();
   await notifyEveryone(ctx, order, NotificationTypes.OrderNotApproved, 'Pedido não aprovado pelo cliente',
     `O cliente não aprovou a demanda (${order.notApprovedReason}); as posições foram encerradas.`);
   await ctx.uow.save({ action: 'NOT_APPROVE_ORDER', justification: order.notApprovedReason });

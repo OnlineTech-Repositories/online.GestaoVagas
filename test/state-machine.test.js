@@ -7,6 +7,7 @@ import {
   TerminationType,
 } from '../src/domain/enums.js';
 import { ContractCode } from '../src/domain/guards.js';
+import { dateFlags, orderDateIssues, positionDateIssues } from '../src/domain/date-checks.js';
 import { approve, computeStatus, isApproved, recordJobconvo, reject } from '../src/domain/order.js';
 import * as P from '../src/domain/position.js';
 import { candidate, fill, NOW, newPosition, order, rate, reason, recruit, replacement } from './builders.js';
@@ -21,12 +22,16 @@ test('recrutamento exige o código do JobConvo', () => {
   assert.equal(p.status, S.OPEN);
 });
 
-test('o 1º dia não pode ser anterior à abertura', () => {
+test('1º dia antes da abertura e da admissão não bloqueia: fica sinalizado como fora de sequência', () => {
   const p = newPosition(order({ desired: '2026-12-01' }));
   recruit(p);
   P.approveCandidate(p, '2026-12-02', candidate(), '2026-12-02');
   P.registerAdmission(p, '2026-12-03', 'M1');
-  throwsRule(() => P.confirmFirstDay(p, '2026-11-30', 'Ok', null, NOW), (e) => e.field === 'date');
+  P.confirmFirstDay(p, '2026-11-30', 'Ok', null, NOW);
+  assert.equal(p.status, S.FILLED);
+  const keys = positionDateIssues(p, '2026-12-10').map((i) => i.key);
+  assert.ok(keys.includes('p:firstDay<opened') && keys.includes('p:firstDay<admission'), keys.join(', '));
+  assert.deepEqual(dateFlags(p, '2026-12-10'), { future: false, sequence: true });
 });
 
 test('transições fora de ordem são bloqueadas', () => {
@@ -167,10 +172,10 @@ test('a aprovação abre as posições na data dela e o SLA começa ali', () => 
   P.approveCandidate(p, '2026-11-20', candidate(), '2026-11-20'); // liberado depois da aprovação
 });
 
-test('a aprovação não acontece duas vezes nem antes da solicitação', () => {
+test('a aprovação não acontece duas vezes; antes da solicitação, só sinaliza', () => {
   const { o } = awaitingOrder();
-  throwsRule(() => approve(o, '2026-10-30', null, NOW));
-  approve(o, '2026-11-05', null, NOW);
+  approve(o, '2026-10-30', null, NOW);
+  assert.ok(orderDateIssues(o, '2026-11-20').some((i) => i.key === 'order:decision<request'));
   throwsRule(() => approve(o, '2026-11-06', null, NOW));
 });
 

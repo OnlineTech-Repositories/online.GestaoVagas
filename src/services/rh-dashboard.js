@@ -5,7 +5,8 @@ import { OrderApprovalStatus, RhStage, Roles, SlaSituation } from '../domain/enu
 import { BusinessRuleError } from '../domain/errors.js';
 import { hasAnyRole, hasRole, Permissions } from '../domain/guards.js';
 import { activeRhAnalysts } from '../domain/order.js';
-import { isOpen, rhStage } from '../domain/position.js';
+import { dateFlags } from '../domain/date-checks.js';
+import { rhStage } from '../domain/position.js';
 import { Input, isId } from './input.js';
 import { calcSettings } from './parameters.js';
 
@@ -113,15 +114,15 @@ export async function getRhDashboard(ctx, query) {
 
   const byOrder = new Map();
   for (const p of positions) {
-    const stage = rhStage(p);
+    const stage = rhStage(p, today);
     if (!stage) continue; // encerrada sem preenchimento: não é vaga a acompanhar
     if (!byOrder.has(p.orderId)) byOrder.set(p.orderId, { order: p.order, rows: [] });
-    byOrder.get(p.orderId).rows.push({ p, stage, sla: slaKey(calculate(p, today, settings)) });
+    byOrder.get(p.orderId).rows.push({ p, stage, sla: slaKey(calculate(p, today, settings)), flags: dateFlags(p, today) });
   }
 
   // Escopo: pedidos em andamento (alguma vaga pendente) ou também os concluídos; período pela solicitação do cliente.
   const scoped = [...byOrder.values()].filter(({ order, rows }) => order.approvalStatus !== OrderApprovalStatus.NOT_APPROVED
-    && (filters.includeConcluded || rows.some((r) => isOpen(r.p)))
+    && (filters.includeConcluded || rows.some((r) => r.stage !== RhStage.FILLED))
     && (!filters.from || order.clientRequestDate >= filters.from)
     && (!filters.to || order.clientRequestDate <= filters.to));
 
@@ -145,6 +146,9 @@ export async function getRhDashboard(ctx, query) {
     awaitingApproval: orders.filter(({ order }) => order.approvalStatus === OrderApprovalStatus.AWAITING_CLIENT_APPROVAL).length,
     unassigned: orders.filter(({ order }) => activeRhAnalysts(order).length === 0).length,
     sharedOrders: orders.filter(({ order }) => activeRhAnalysts(order).length > 1).length,
+    // Datas a acompanhar: eventos agendados (data futura) e etapas lançadas fora de ordem.
+    futureDated: allRows.filter((r) => r.flags.future).length,
+    outOfSequence: allRows.filter((r) => r.flags.sequence).length,
   };
 
   const orderRows = orders.map(({ order, rows }) => {

@@ -1,7 +1,9 @@
 import crypto from 'node:crypto';
 import { config } from './config.js';
 import { UnitOfWork } from './db/unit-of-work.js';
-import { BusinessRuleError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from './domain/errors.js';
+import {
+  BusinessRuleError, ConflictError, ForbiddenError, NotFoundError, ValidationError, WarningsPendingError,
+} from './domain/errors.js';
 import { SESSION_COOKIE, sessionUser } from './services/auth.js';
 
 /**
@@ -89,7 +91,11 @@ export async function loadUser(req, _res, next) {
   try {
     req.user = await sessionUser(req.cookies[SESSION_COOKIE]);
     const ip = req.ip ?? req.socket?.remoteAddress ?? null;
-    req.ctx = { user: req.user ?? { id: null, roles: [] }, ip, uow: new UnitOfWork({ userId: req.user?.id ?? null, ip }) };
+    req.ctx = {
+      user: req.user ?? { id: null, roles: [] }, ip, uow: new UnitOfWork({ userId: req.user?.id ?? null, ip }),
+      // Avisos de data já vistos e confirmados na tela (cabeçalho, para valer também no envio multipart).
+      confirmWarnings: req.get('x-confirm-warnings') === '1',
+    };
     next();
   } catch (error) {
     next(error);
@@ -160,6 +166,12 @@ export function problem(res, status, title, detail, extra = {}) {
 export function handleErrors(error, req, res, _next) {
   if (error instanceof ValidationError) {
     return problem(res, 400, error.title, error.message, { campos: error.fields });
+  }
+  if (error instanceof WarningsPendingError) {
+    return problem(res, 422, error.title, error.message, {
+      avisos: error.warnings.map((w) => ({ tipo: w.kind, mensagem: w.message })),
+      justificativa: error.justificationField ? { campo: error.justificationField, obrigatoria: true } : null,
+    });
   }
   if (error instanceof BusinessRuleError) {
     return problem(res, 422, error.title, error.message, error.field ? { campos: { [error.field]: error.message } } : {});
