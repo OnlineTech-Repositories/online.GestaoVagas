@@ -4,6 +4,7 @@ import { diffDays, formatBr, localDateOf, utcNow } from '../domain/dates.js';
 import { AlertKind, NotificationTypes, OrderApprovalStatus, PositionStatus as S, Roles, SlaSituation } from '../domain/enums.js';
 import { activeRhAnalysts } from '../domain/order.js';
 import { links, notify } from './notifications.js';
+import { positionFields } from './notice-fields.js';
 import { describe } from './positions.js';
 
 /**
@@ -86,10 +87,19 @@ export async function runAlerts(uow, rows, today, staleDays) {
       await notify(uow, {
         type: NotificationTypes.SlaOverdue,
         entityId: p.id,
-        subject: `Escalonamento: SLA vencido — Pedido ${p.order.number}`,
+        subject: `SLA vencido · Pedido ${p.order.number} · posição ${p.slotNumber}`,
         message: `${describe(p)}: o prazo do SLA venceu em ${formatBr(m.slaDeadline)} (${target}) e está `
           + `${plural(diffDays(m.slaDeadline, today), 'dia')} em atraso. Dias descobertos até hoje: ${m.uncoveredDays}.${next}`,
         link: links.position(p.id),
+        email: {
+          title: 'SLA vencido: escalonamento',
+          summary: 'O prazo de preenchimento desta posição venceu. O aviso vai ao RH, ao Gestor de RH e à gestão.',
+          status: { label: `Vencido há ${plural(diffDays(m.slaDeadline, today), 'dia')}`, tone: 'danger' },
+          fields: [...positionFields(p), ['Prazo do SLA', formatBr(m.slaDeadline), { tone: 'danger' }], ['Meta', target],
+            ['Dias descobertos até hoje', String(m.uncoveredDays), { strong: true }], ['Próxima ação', action?.label]],
+          action: action ? `${action.label}.` : null,
+          button: 'Consultar posição',
+        },
       }, { roles: ESCALATION_ROLES });
     } else if (m.slaSituation === SlaSituation.AT_RISK && !sent.has(key(p.id, AlertKind.AT_RISK))) {
       record(p, AlertKind.AT_RISK);
@@ -98,10 +108,19 @@ export async function runAlerts(uow, rows, today, staleDays) {
       await notify(uow, {
         type: NotificationTypes.SlaAtRisk,
         entityId: p.id,
-        subject: `Posição em risco de vencer o SLA — Pedido ${p.order.number}`,
+        subject: `SLA em risco · Pedido ${p.order.number} · posição ${p.slotNumber}`,
         message: `${describe(p)}: o prazo do SLA vence em ${formatBr(m.slaDeadline)} (${target}). `
           + `${left === 0 ? 'Vence hoje.' : `${left === 1 ? 'Falta' : 'Faltam'} ${plural(left, 'dia')}.`}${next}`,
         link: links.position(p.id),
+        email: {
+          title: 'Posição em risco de vencer o SLA',
+          summary: 'O prazo de preenchimento desta posição está perto de vencer.',
+          status: { label: left === 0 ? 'Vence hoje' : `Vence em ${plural(left, 'dia')}`, tone: 'warning' },
+          fields: [...positionFields(p), ['Prazo do SLA', formatBr(m.slaDeadline), { tone: 'warning' }], ['Meta', target],
+            ['Dias descobertos até hoje', String(m.uncoveredDays)], ['Próxima ação', action?.label]],
+          action: action ? `${action.label}.` : null,
+          button: 'Consultar posição',
+        },
       }, rhTeam(p.order));
     }
 
@@ -113,9 +132,18 @@ export async function runAlerts(uow, rows, today, staleDays) {
       await notify(uow, {
         type: NotificationTypes.PositionStale,
         entityId: p.id,
-        subject: `Posição sem atualização há ${plural(idle, 'dia')} — Pedido ${p.order.number}`,
+        subject: `Posição sem atualização há ${plural(idle, 'dia')} · Pedido ${p.order.number} · posição ${p.slotNumber}`,
         message: `${describe(p)}: sem atualização desde ${formatBr(localDateOf(reference))} (${plural(idle, 'dia')}).${next}`,
         link: links.position(p.id),
+        email: {
+          title: 'Posição sem atualização',
+          summary: 'Nenhuma etapa desta posição foi registrada nos últimos dias.',
+          status: { label: `Parada há ${plural(idle, 'dia')}`, tone: 'warning' },
+          fields: [...positionFields(p), ['Última atualização', formatBr(localDateOf(reference)), { strong: true }],
+            ['Próxima ação', action.label]],
+          action: `${action.label}. Se a etapa já aconteceu, registre-a no sistema.`,
+          button: 'Consultar posição',
+        },
       }, { roles: action.roles, userIds: action.userIds });
     }
   }

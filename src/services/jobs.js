@@ -12,6 +12,7 @@ import { buildDigest, queueDigest } from './digest.js';
 import { EmailError, sendEmail } from './email.js';
 import { links, notify } from './notifications.js';
 import { calcSettings, getInt, getText } from './parameters.js';
+import { positionFields } from './notice-fields.js';
 import { describe } from './positions.js';
 
 /**
@@ -90,10 +91,18 @@ export async function runDailyJob() {
     await notify(uow, {
       type: NotificationTypes.ContractEnded,
       entityId: p.id,
-      subject: `Posição encerrada por fim de vigência — Pedido ${p.order.number}`,
+      subject: `Posição encerrada por fim de vigência · Pedido ${p.order.number} · posição ${p.slotNumber}`,
       message: `${describe(p)}: encerrada automaticamente em ${formatBr(p.closedAt)} `
         + `por fim de vigência (${formatBr(p.termEndDate)}) sem preenchimento.`,
       link: links.position(p.id),
+      email: {
+        title: 'Posição encerrada por fim de vigência',
+        summary: 'A vigência do posto terminou sem que a vaga fosse preenchida; a rotina diária encerrou a posição.',
+        status: { label: 'Encerrada: fim do contrato', tone: 'neutral' },
+        fields: [...positionFields(p), ['Fim da vigência', formatBr(p.termEndDate), { strong: true }],
+          ['Encerrada em', formatBr(p.closedAt)]],
+        button: 'Consultar posição',
+      },
     }, { roles: [Roles.Nacc], userIds: [contract.commercialOwnerId] });
   }
 

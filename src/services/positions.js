@@ -21,6 +21,7 @@ import {
   toSummary,
 } from './position-views.js';
 import { DateReview } from './date-review.js';
+import { positionFields } from './notice-fields.js';
 import { slaFor } from './snapshots.js';
 
 /** Posições: lista, detalhe e as ações da seção 6 (transições, pausas, vigência e correção de datas). */
@@ -224,7 +225,14 @@ export function decide(ctx, id, body) {
         P.hasJobconvoRecord(order)
           ? 'O cliente confirmou a reposição. Ela entrou em recrutamento com a publicação no JobConvo do pedido.'
           : 'O cliente confirmou a reposição. Informe a publicação no JobConvo no pedido para iniciar o recrutamento.',
-        [Roles.Rh]);
+        [Roles.Rh], {
+          status: P.hasJobconvoRecord(order)
+            ? { label: 'Em recrutamento', tone: 'info' } : { label: 'Aguardando publicação no JobConvo', tone: 'warning' },
+          fields: [['Decisão do cliente em', formatBr(decisionAt), { strong: true }]],
+          action: P.hasJobconvoRecord(order)
+            ? 'RH: siga com o recrutamento; o prazo do SLA conta a partir da decisão do cliente.'
+            : 'RH: registre no pedido a publicação no JobConvo para iniciar o recrutamento.',
+        });
       return 'CLIENT_DECISION_REPLACE';
     }
     P.declineReplacement(p, decisionAt);
@@ -286,11 +294,20 @@ export function registerAdmission(ctx, id, body) {
   return execute(ctx, id, Actions.RegisterAdmission, justification, async (p, review) => {
     await checkDate(review, p, date, 'A data de admissão', justification);
     P.registerAdmission(p, date, registration);
+    const withRegistration = p.status === PositionStatus.AWAITING_FIRST_DAY;
     await notifyPosition(ctx, p, NotificationTypes.AdmissionRegistered, 'Admissão registrada',
-      p.status === PositionStatus.AWAITING_FIRST_DAY
+      withRegistration
         ? `Admissão registrada em ${formatBr(date)}, com matrícula. Confirme o 1º dia efetivo do colaborador.`
         : `Admissão registrada em ${formatBr(date)}, sem matrícula. A confirmação do 1º dia fica liberada quando o RH ou o DP informar a matrícula.`,
-      [Roles.Nacc]);
+      [Roles.Nacc], {
+        status: withRegistration ? { label: 'Aguardando 1º dia', tone: 'info' } : { label: 'Admissão sem matrícula', tone: 'warning' },
+        fields: [['Candidato', P.activeCandidate(p)?.fullName], ['Admissão em', formatBr(date), { strong: true }],
+          ['Matrícula', p.admissionRegistration ?? 'Não informada']],
+        action: withRegistration
+          ? 'NACC: confirme o 1º dia efetivo do colaborador assim que ele começar.'
+          : 'RH do pedido ou DP: informe a matrícula. Depois, o NACC confirma o 1º dia efetivo.',
+        button: withRegistration ? 'Confirmar 1º dia' : 'Consultar posição',
+      });
     return 'REGISTER_ADMISSION';
   });
 }
@@ -323,7 +340,13 @@ export function correctRegistration(ctx, id, body) {
   return execute(ctx, id, Actions.CorrectRegistration, justification, async (p) => {
     if (P.setAdmissionRegistration(p, registration)) {
       await notifyPosition(ctx, p, NotificationTypes.AdmissionRegistered, 'Admissão concluída',
-        'A matrícula foi informada e a admissão está concluída. Confirme o 1º dia efetivo do colaborador.', [Roles.Nacc]);
+        'A matrícula foi informada e a admissão está concluída. Confirme o 1º dia efetivo do colaborador.', [Roles.Nacc], {
+          status: { label: 'Aguardando 1º dia', tone: 'info' },
+          fields: [['Candidato', P.activeCandidate(p)?.fullName], ['Admissão em', p.admissionAt ? formatBr(p.admissionAt) : null],
+            ['Matrícula', p.admissionRegistration, { strong: true }]],
+          action: 'NACC: confirme o 1º dia efetivo do colaborador assim que ele começar.',
+          button: 'Confirmar 1º dia',
+        });
     }
     return 'CORRECT_REGISTRATION';
   });
@@ -371,7 +394,12 @@ export function startPause(ctx, id, body) {
     await checkDate(review, p, startDate, 'A data de início da pausa', justification);
     P.startPause(p, reason, startDate);
     await notifyPosition(ctx, p, NotificationTypes.PauseStarted, 'Posição pausada',
-      `Posição pausada a partir de ${formatBr(startDate)}. Motivo: ${reason.name}.`, [Roles.Rh]);
+      `Posição pausada a partir de ${formatBr(startDate)}. Motivo: ${reason.name}.`, [Roles.Rh], {
+        status: { label: 'Pausada', tone: 'neutral' },
+        summary: 'A posição foi pausada. Enquanto durar a pausa, os dias não contam no prazo do SLA.',
+        fields: [['Pausada desde', formatBr(startDate), { strong: true }], ['Motivo', reason.name]],
+        action: 'RH: suspenda o recrutamento desta posição até o fim da pausa.',
+      });
     return 'START_PAUSE';
   });
 }
@@ -385,7 +413,12 @@ export function endPause(ctx, id, body) {
     await checkDate(review, p, date, 'A data de fim da pausa', justification);
     P.endPause(p, date);
     await notifyPosition(ctx, p, NotificationTypes.PauseEnded, 'Pausa encerrada',
-      `A pausa da posição foi encerrada em ${formatBr(date)}. Status atual: ${Labels.positionStatus[p.status]}.`, [Roles.Rh]);
+      `A pausa da posição foi encerrada em ${formatBr(date)}. Status atual: ${Labels.positionStatus[p.status]}.`, [Roles.Rh], {
+        status: { label: Labels.positionStatus[p.status], tone: 'info' },
+        summary: 'A pausa terminou e o prazo do SLA voltou a contar.',
+        fields: [['Pausa encerrada em', formatBr(date), { strong: true }], ['Situação atual', Labels.positionStatus[p.status]]],
+        action: 'RH: retome o recrutamento desta posição.',
+      });
     return 'END_PAUSE';
   });
 }
@@ -539,12 +572,16 @@ function applyCorrection(p, field, pauseId, date) {
  * Avisos ao RH vão para os analistas responsáveis pelo pedido e para os gestores de RH (que redistribuem as
  * demandas); os demais perfis recebem por perfil.
  */
-async function notifyPosition(ctx, p, type, subject, detail, roles) {
+async function notifyPosition(ctx, p, type, subject, detail, roles, email = {}) {
   const order = p.order;
   const rh = roles.includes(Roles.Rh);
   await notify(ctx.uow, {
-    type, entityId: p.id, subject: `${subject} — Pedido ${order.number}`, message: `${describe(p)}: ${detail}`,
+    type, entityId: p.id, subject: `${subject} · Pedido ${order.number}`, message: `${describe(p)}: ${detail}`,
     link: links.position(p.id),
+    email: {
+      title: subject, summary: email.summary ?? detail, status: email.status, action: email.action,
+      fields: [...positionFields(p), ...(email.fields ?? [])], button: email.button ?? 'Consultar posição',
+    },
   }, {
     roles: rh ? [...roles.filter((r) => r !== Roles.Rh), Roles.RhManager] : roles,
     userIds: rh ? activeRhAnalysts(order).map((a) => a.userId) : null,

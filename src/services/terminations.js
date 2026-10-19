@@ -11,6 +11,7 @@ import { Permissions } from '../domain/guards.js';
 import { newOrder } from '../domain/order.js';
 import * as P from '../domain/position.js';
 import { DateReview } from './date-review.js';
+import { positionFields } from './notice-fields.js';
 import { Input } from './input.js';
 import { links, notify } from './notifications.js';
 import { getBool } from './parameters.js';
@@ -135,6 +136,10 @@ export async function registerLegacyTermination(ctx, body) {
   return result;
 }
 
+const TERMINATION_TYPE = {
+  RESIGNATION: 'Pedido de demissão', DISMISSAL: 'Dispensa', CONTRACT_END: 'Fim de contrato', ABANDONMENT: 'Abandono', OTHER: 'Outro',
+};
+
 async function registerCore(ctx, origin, r, isNewOrigin) {
   const today = todayDate();
   const registeredAt = r.registeredAt ?? today;
@@ -154,11 +159,25 @@ async function registerCore(ctx, origin, r, isNewOrigin) {
   await notify(ctx.uow, {
     type: NotificationTypes.TerminationRegistered,
     entityId: replacement.id,
-    subject: `Desligamento registrado — ${origin.employeeName}`,
+    subject: `Desligamento registrado · Pedido ${order.number} · ${origin.employeeName}`,
     message: `Desligamento de ${origin.employeeName} (matrícula ${origin.employeeRegistration}), ${order.jobRole?.name} — `
       + `${order.contract?.client?.legalName}. Último dia trabalhado: ${formatBr(r.lastWorkedDay)}. `
       + 'Registre a decisão do cliente sobre a reposição.',
     link: links.position(replacement.id),
+    email: {
+      title: 'Desligamento registrado: decisão do cliente pendente',
+      summary: 'Um colaborador foi desligado e a reposição da vaga aguarda a decisão do cliente (repor ou não repor).',
+      status: { label: 'Aguardando decisão do cliente', tone: 'warning' },
+      fields: [
+        ['Colaborador', origin.employeeName, { strong: true }],
+        ['Matrícula', origin.employeeRegistration],
+        ...positionFields(replacement),
+        ['Último dia trabalhado', formatBr(r.lastWorkedDay), { strong: true }],
+        ['Tipo de desligamento', TERMINATION_TYPE[r.terminationType] ?? r.terminationType],
+      ],
+      action: 'NACC: registre na reposição a decisão do cliente. Os dias descobertos contam a partir do dia seguinte ao último dia trabalhado.',
+      button: 'Registrar decisão',
+    },
   }, { roles: [Roles.Nacc] });
 
   return { terminationId: termination.id, replacementPositionId: replacement.id };

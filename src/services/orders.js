@@ -20,6 +20,7 @@ import { links, notify } from './notifications.js';
 import { calcSettings, isInitialLoadOpen } from './parameters.js';
 import { toSummary } from './position-views.js';
 import { DateReview } from './date-review.js';
+import { orderFields } from './notice-fields.js';
 import { slaFor, validatedRateAt } from './snapshots.js';
 
 /** Pedidos: criação (RN-01 a RN-05), aprovação do cliente, JobConvo, analistas de RH e correção de datas. */
@@ -119,7 +120,11 @@ export async function createOrder(ctx, body) {
 
   // Depois de gravar: o número do pedido (atribuído na gravação) entra na notificação.
   await notifyEveryone(ctx, order, NotificationTypes.OrderCreated, 'Novo pedido aguardando aprovação do cliente',
-    'Nova demanda registrada, aguardando a aprovação formal do cliente. O RH já pode preparar o recrutamento.');
+    'Nova demanda registrada, aguardando a aprovação formal do cliente. O RH já pode preparar o recrutamento.', {
+      status: { label: 'Aguardando aprovação do cliente', tone: 'warning' },
+      fields: [['Solicitação do cliente', formatBr(order.clientRequestDate)], ['Início desejado', formatBr(order.desiredStartDate), { strong: true }]],
+      action: 'Comercial ou Controladoria: registre no pedido a aprovação (ou a recusa) do cliente. RH: o recrutamento já pode ser preparado; o prazo do SLA começa na aprovação.',
+    });
   await ctx.uow.save({ action: 'CREATE_ORDER' });
   return getOrderDetail(ctx, order.id);
 }
@@ -153,10 +158,19 @@ export async function addPositions(ctx, id, body) {
   await notify(ctx.uow, {
     type: NotificationTypes.OrderCreated,
     entityId: order.id,
-    subject: `Pedido ${order.number}: +${quantity} posição(ões)`,
+    subject: `Novas posições no pedido · Pedido ${order.number}`,
     message: `O pedido ${order.number} (${order.jobRole?.name}, ${order.contract?.client?.legalName}) recebeu ${quantity} `
       + `nova(s) posição(ões), início desejado em ${formatBr(desiredStartDate)}.`,
     link: links.order(order.id),
+    email: {
+      title: 'Novas posições no pedido',
+      summary: `O pedido recebeu ${quantity} nova(s) posição(ões).`,
+      status: { label: O.isApproved(order) ? 'Abertas hoje' : 'Abrem na aprovação do cliente', tone: 'info' },
+      fields: [...orderFields(order), ['Posições acrescentadas', `+${quantity}`, { strong: true }],
+        ['Início desejado', formatBr(desiredStartDate), { strong: true }]],
+      action: 'RH: inclua as novas posições no recrutamento do pedido.',
+      button: 'Consultar pedido',
+    },
   }, { roles: [Roles.RhManager, Roles.Nacc], userIds: O.activeRhAnalysts(order).map((a) => a.userId) });
 
   await ctx.uow.save({ action: 'ADD_POSITIONS', justification });
@@ -394,25 +408,36 @@ export async function setRhAnalysts(ctx, id, body) {
   const team = active.length ? active.map((a) => a.userName).join(', ') : 'nenhum';
   if (added.length) {
     await notifyTeamChange(ctx, order, NotificationTypes.RhAssigned, 'Você é responsável por um pedido',
-      `Você passou a ser responsável pelo atendimento deste pedido. Equipe atual: ${team}.`, added);
+      `Você passou a ser responsável pelo atendimento deste pedido. Equipe atual: ${team}.`, added, {
+        status: { label: 'Atribuído a você', tone: 'info' }, team,
+        action: P.hasJobconvoRecord(order)
+          ? 'Acompanhe o recrutamento das posições do pedido.'
+          : 'Inicie o recrutamento: registre no pedido a publicação no JobConvo.',
+      });
   }
   if (removed.length) {
     await notifyTeamChange(ctx, order, NotificationTypes.RhUnassigned, 'Você não é mais responsável por um pedido',
-      `Você não é mais responsável pelo atendimento deste pedido. Equipe atual: ${team}.`, removed);
+      `Você não é mais responsável pelo atendimento deste pedido. Equipe atual: ${team}.`, removed, {
+        status: { label: 'Atribuição removida', tone: 'neutral' }, team,
+      });
   }
   await ctx.uow.save({ action: 'ASSIGN_RH' });
   return getOrderDetail(ctx, order.id);
 }
 
-function notifyTeamChange(ctx, order, type, subject, intro, analysts) {
+function notifyTeamChange(ctx, order, type, subject, intro, analysts, email) {
   const quantity = order.positions.filter((p) => p.demandType === DemandType.NEW).length;
   return notify(ctx.uow, {
     type,
     entityId: order.id,
-    subject: `${subject} — Pedido ${order.number}`,
+    subject: `${subject} · Pedido ${order.number}`,
     message: `Pedido ${order.number} — ${intro} Cliente: ${order.contract?.client?.legalName}. `
       + `Unidade contratante: ${contractingUnitLabel(order)}. Cargo: ${order.jobRole?.name}. Vagas: ${quantity}.`,
     link: links.order(order.id),
+    email: {
+      title: subject, summary: intro.replace(/ Equipe atual: .*$/, ''), status: email.status, action: email.action,
+      fields: [...orderFields(order), ['Equipe de RH', email.team]], button: 'Consultar pedido',
+    },
   }, { userIds: analysts.map((a) => a.userId) });
 }
 
@@ -459,7 +484,11 @@ export async function approveOrder(ctx, id, body) {
   }
   review.settle();
   await notifyEveryone(ctx, order, NotificationTypes.OrderApproved, 'Pedido aprovado pelo cliente',
-    `A demanda foi aprovada formalmente pelo cliente em ${formatBr(date)}; as posições estão abertas.`);
+    `A demanda foi aprovada formalmente pelo cliente em ${formatBr(date)}; as posições estão abertas.`, {
+      status: { label: 'Aprovado pelo cliente', tone: 'success' },
+      fields: [['Aprovado em', formatBr(date), { strong: true }], ['Início desejado', formatBr(order.desiredStartDate)]],
+      action: 'RH: siga com o recrutamento. O prazo do SLA conta a partir da data da aprovação.',
+    });
   await ctx.uow.save({ action: 'APPROVE_ORDER', justification });
   return getOrderDetail(ctx, order.id);
 }
@@ -477,7 +506,11 @@ export async function rejectOrder(ctx, id, body) {
   O.reject(order, date, reason, ctx.user.id, utcNow());
   review.settle();
   await notifyEveryone(ctx, order, NotificationTypes.OrderNotApproved, 'Pedido não aprovado pelo cliente',
-    `O cliente não aprovou a demanda (${order.notApprovedReason}); as posições foram encerradas.`);
+    `O cliente não aprovou a demanda (${order.notApprovedReason}); as posições foram encerradas.`, {
+      status: { label: 'Não aprovado', tone: 'danger' },
+      summary: 'O cliente não aprovou a demanda. As posições do pedido foram encerradas, sem perda de faturamento.',
+      fields: [['Decisão em', formatBr(date), { strong: true }], ['Motivo', order.notApprovedReason]],
+    });
   await ctx.uow.save({ action: 'NOT_APPROVE_ORDER', justification: order.notApprovedReason });
   return getOrderDetail(ctx, order.id);
 }
@@ -497,16 +530,21 @@ const contractingUnitLabel = (order) => {
 };
 
 /** Notificação a todos os usuários ativos, identificando pedido, cliente, unidade, cargo, vagas e status. */
-function notifyEveryone(ctx, order, type, subject, intro) {
+/** `email`: situação, campos do evento (depois dos do pedido), providência e, se preciso, outro resumo. */
+function notifyEveryone(ctx, order, type, subject, intro, email = {}) {
   const quantity = order.positions.filter((p) => p.demandType === DemandType.NEW).length;
   return notify(ctx.uow, {
     type,
     entityId: order.id,
-    subject: `${subject} — ${order.jobRole?.name}`,
+    subject: `${subject} · Pedido ${order.number}`,
     message: `Pedido ${order.number} — ${intro} Cliente: ${order.contract?.client?.legalName}. `
       + `Unidade contratante: ${contractingUnitLabel(order)}. Cargo: ${order.jobRole?.name}. Vagas: ${quantity}. `
       + `Status: ${Labels.approvalStatus[order.approvalStatus]}.`,
     link: links.order(order.id),
+    email: {
+      title: subject, summary: email.summary ?? intro, status: email.status, action: email.action, button: 'Consultar pedido',
+      fields: [...orderFields(order), ...(email.fields ?? [])],
+    },
   }, { roles: ALL_ROLES });
 }
 

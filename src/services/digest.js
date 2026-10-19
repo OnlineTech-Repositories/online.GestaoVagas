@@ -2,7 +2,8 @@ import { activeUsersByRoles } from '../db/repository.js';
 import { diffDays, formatBr, localDateOf } from '../domain/dates.js';
 import { Labels, PositionStatus as S, Roles, SlaSituation } from '../domain/enums.js';
 import { idleDays, lastActivity, nextAction, plural } from './alerts.js';
-import { html, links, queueEmail } from './notifications.js';
+import { dataTable, mutedText, renderLayout, sectionTitle } from './email-layout.js';
+import { links, queueEmail } from './notifications.js';
 import { describe } from './positions.js';
 
 /**
@@ -91,46 +92,46 @@ export async function queueDigest(uow, digest) {
 
 // ---------------------------------------------------------------- HTML do e-mail
 
-const CELL = 'padding:4px 8px;border-bottom:1px solid #e0e0e0;text-align:left;vertical-align:top';
-
-function table(headers, items, row) {
-  if (!items.length) return '<p style="color:#777">Nenhuma.</p>';
+/** Seção do resumo: título com a contagem e a tabela (até MAX_ITEMS linhas; o resto fica para o sistema). */
+function section(title, items, headers, row) {
+  if (!items.length) return `${sectionTitle(`${title} (0)`)}${mutedText('Nenhuma.')}`;
   const shown = items.slice(0, MAX_ITEMS);
-  const more = items.length > shown.length
-    ? `<p style="color:#777">… e mais ${items.length - shown.length}. Veja todas no sistema.</p>`
-    : '';
-  return `<table style="border-collapse:collapse;font-size:13px;margin:4px 0 8px">
-  <tr>${headers.map((h) => `<th style="${CELL};background:#f5f5f5">${html(h)}</th>`).join('')}</tr>
-  ${shown.map((item) => `<tr>${row(item).map((v) => `<td style="${CELL}">${html(v)}</td>`).join('')}</tr>`).join('\n  ')}
-</table>${more}`;
+  const more = items.length > shown.length ? mutedText(`… e mais ${items.length - shown.length}. Veja todas no sistema.`) : '';
+  return `${sectionTitle(`${title} (${items.length})`)}${dataTable(headers, shown.map(row))}${more}`;
 }
 
-const section = (title, count, body) =>
-  `<h3 style="font-size:15px;margin:18px 0 4px">${html(title)} (${count})</h3>\n${body}`;
-
+/** Resumo diário no modelo padrão dos e-mails: números do dia em destaque e as listas em tabelas. */
 export function renderDigest(recipientName, d) {
   const statusText = (entry) => [...entry.byStatus].map(([label, n]) => `${n} ${label.toLowerCase()}`).join(', ');
-  return `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#222">
-  <p>Olá, ${html(recipientName)}.</p>
-  <p>Resumo das posições em ${html(formatBr(d.today))}: <strong>${d.openCount}</strong> em aberto,
-  <strong>${d.critical.filter((c) => c.situation === 'Vencido').length}</strong> vencidas e
-  <strong>${d.critical.filter((c) => c.situation === 'Em risco').length}</strong> em risco.</p>
-  ${section('Posições abertas por cliente', d.byClient.length,
-    table(['Cliente', 'Abertas', 'Por status'], d.byClient, (e) => [e.client, e.total, statusText(e)]))}
-  ${section('Vencidas e em risco', d.critical.length,
-    table(['Posição', 'Situação', 'Prazo', 'Dias', 'Dias descobertos', 'Próxima ação'], d.critical, (c) => [
-      c.position, c.situation, formatBr(c.deadline),
-      c.days < 0 ? `${-c.days} em atraso` : c.days === 0 ? 'vence hoje' : `faltam ${c.days}`, c.uncovered, c.next,
-    ]))}
-  ${section('Reposições aguardando o cliente', d.awaitingClient.length,
-    table(['Posição', 'Último dia trabalhado', 'Aguardando há'], d.awaitingClient, (a) => [
-      a.position, formatBr(a.lastWorkedDay) || '—', a.waiting === null ? '—' : plural(a.waiting, 'dia'),
-    ]))}
-  ${section('Pausas sem fim', d.openPauses.length,
-    table(['Posição', 'Motivo', 'Desde', 'Dias'], d.openPauses, (x) => [x.position, x.reason, formatBr(x.since), x.days]))}
-  ${section(`Sem atualização há ${d.staleDays} dias ou mais`, d.stale.length,
-    table(['Posição', 'Última atualização', 'Dias', 'Próxima ação'], d.stale, (s) => [s.position, formatBr(s.since), s.days, s.next]))}
-  <p><a href="${html(links.dashboard())}" style="color:#1565c0">Abrir o painel</a></p>
-  <p style="color:#777;font-size:12px">Resumo automático do Sistema de Controle de Vagas — Grupo ON LINE, enviado nos dias úteis.</p>
-</div>`;
+  const overdue = d.critical.filter((c) => c.situation === 'Vencido').length;
+  const atRisk = d.critical.filter((c) => c.situation === 'Em risco').length;
+  return renderLayout({
+    recipientName,
+    title: `Resumo diário das posições · ${formatBr(d.today)}`,
+    summary: 'A situação das posições em aberto hoje, com as que pedem atenção primeiro.',
+    status: overdue ? { label: `${overdue} vencida(s)`, tone: 'danger' } : atRisk ? { label: `${atRisk} em risco`, tone: 'warning' }
+      : { label: 'Nenhuma vencida', tone: 'success' },
+    fields: [
+      ['Posições em aberto', String(d.openCount), { strong: true }],
+      ['Vencidas', String(overdue), overdue ? { tone: 'danger' } : {}],
+      ['Em risco', String(atRisk), atRisk ? { tone: 'warning' } : {}],
+      ['Reposições aguardando o cliente', String(d.awaitingClient.length)],
+    ],
+    bodyHtml: [
+      section('Posições abertas por cliente', d.byClient, ['Cliente', 'Abertas', 'Por status'], (e) => [e.client, e.total, statusText(e)]),
+      section('Vencidas e em risco', d.critical, ['Posição', 'Situação', 'Prazo', 'Dias', 'Descobertos', 'Próxima ação'], (c) => [
+        c.position, c.situation, formatBr(c.deadline),
+        c.days < 0 ? `${-c.days} em atraso` : c.days === 0 ? 'vence hoje' : `faltam ${c.days}`, c.uncovered, c.next,
+      ]),
+      section('Reposições aguardando o cliente', d.awaitingClient, ['Posição', 'Último dia trabalhado', 'Aguardando há'], (a) => [
+        a.position, formatBr(a.lastWorkedDay) || '—', a.waiting === null ? '—' : plural(a.waiting, 'dia'),
+      ]),
+      section('Pausas sem fim', d.openPauses, ['Posição', 'Motivo', 'Desde', 'Dias'], (x) => [x.position, x.reason, formatBr(x.since), x.days]),
+      section(`Sem atualização há ${d.staleDays} dias ou mais`, d.stale, ['Posição', 'Última atualização', 'Dias', 'Próxima ação'],
+        (st) => [st.position, formatBr(st.since), st.days, st.next]),
+    ].join('\n'),
+    button: 'Abrir o painel',
+    link: links.dashboard(),
+    footerNote: 'Resumo automático do Sistema de Controle de Vagas — Grupo ON LINE, enviado nos dias úteis.',
+  });
 }

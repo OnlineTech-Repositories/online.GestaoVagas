@@ -6,6 +6,7 @@ import { BusinessRuleError, ForbiddenError, NotFoundError } from '../domain/erro
 import { Modality, NotificationTypes, RateStatus, Roles } from '../domain/enums.js';
 import { DateGuard, Permissions } from '../domain/guards.js';
 import { Input } from './input.js';
+import { rateFields } from './notice-fields.js';
 import { links, notify } from './notifications.js';
 
 /** Valores por cargo, versionados. Segregação obrigatória: COMMERCIAL cadastra, só CONTROLLERSHIP valida. */
@@ -84,10 +85,17 @@ export async function validateRate(ctx, id) {
   await notify(ctx.uow, {
     type: NotificationTypes.RateValidated,
     entityId: rate.id,
-    subject: 'Valor por cargo validado',
+    subject: `Valor por cargo validado · ${rate.contract?.name}`,
     message: `O valor de ${describeRate(rate)} foi validado pela Controladoria e passa a entrar nos totais de `
       + 'faturamento perdido e postergado.',
     link: links.contractRates(),
+    email: {
+      title: 'Valor por cargo validado',
+      summary: 'A Controladoria validou o valor: ele passa a entrar nos totais de faturamento perdido e postergado.',
+      status: { label: 'Validado', tone: 'success' },
+      fields: [...rateFields(rate), ['Situação da validação', 'Validado pela Controladoria', { tone: 'success' }]],
+      button: 'Consultar valores',
+    },
   }, { userIds: recipients });
   await ctx.uow.save({ action: 'VALIDATE_RATE' });
   return (await toDtos([rate]))[0];
@@ -105,9 +113,18 @@ export async function rejectRate(ctx, id, body) {
   await notify(ctx.uow, {
     type: NotificationTypes.RateRejected,
     entityId: rate.id,
-    subject: 'Valor por cargo rejeitado',
+    subject: `Valor por cargo rejeitado · ${rate.contract?.name}`,
     message: `O valor de ${describeRate(rate)} foi rejeitado pela Controladoria. Motivo: ${reason}`,
     link: links.contractRates(),
+    email: {
+      title: 'Valor por cargo rejeitado',
+      summary: 'A Controladoria rejeitou o valor cadastrado. Enquanto não for corrigido e validado, ele fica fora dos totais.',
+      status: { label: 'Rejeitado', tone: 'danger' },
+      fields: [...rateFields(rate), ['Situação da validação', 'Rejeitado pela Controladoria', { tone: 'danger' }],
+        ['Motivo da rejeição', reason]],
+      action: 'Corrija o valor em Valores por cargo; a correção volta para a validação da Controladoria.',
+      button: 'Corrigir valor',
+    },
   }, { userIds: recipients });
   await ctx.uow.save({ action: 'REJECT_RATE', justification: reason });
   return (await toDtos([rate]))[0];
@@ -181,12 +198,22 @@ async function apply(ctx, rate, body, exceptId) {
 const notifyPending = (ctx, rate, kind = 'new') => notify(ctx.uow, {
   type: NotificationTypes.RatePending,
   entityId: rate.id,
-  subject: kind === 'new' ? 'Valor por cargo pendente de validação' : 'Valor por cargo corrigido, pendente de validação',
+  subject: `${kind === 'new' ? 'Valor por cargo aguardando validação' : 'Valor por cargo corrigido, aguardando validação'} · ${rate.contract?.name}`,
   message: kind === 'new'
     ? `Novo valor de ${describeRate(rate)} aguarda validação da Controladoria.`
     : `O valor de ${describeRate(rate)} foi corrigido${kind === 'corrected-after-rejection' ? ' depois da rejeição' : ''} `
       + 'e aguarda nova validação da Controladoria.',
   link: links.contractRates(),
+  email: {
+    title: kind === 'new' ? 'Valor por cargo aguardando validação' : 'Valor por cargo corrigido, aguardando validação',
+    summary: kind === 'new'
+      ? 'O Comercial cadastrou um novo valor por cargo, que precisa da validação da Controladoria antes de entrar nos totais.'
+      : `O Comercial corrigiu o valor${kind === 'corrected-after-rejection' ? ' depois da rejeição' : ''}; ele precisa de nova validação da Controladoria.`,
+    status: { label: 'Pendente de validação', tone: 'warning' },
+    fields: [...rateFields(rate), ['Situação da validação', 'Pendente de validação', { tone: 'warning' }]],
+    action: 'Controladoria: confira o valor e a vigência e valide ou rejeite em Valores por cargo. Só valores validados entram nos totais de faturamento.',
+    button: 'Acessar validação',
+  },
 }, { roles: [Roles.Controllership] });
 
 async function toDtos(rates) {

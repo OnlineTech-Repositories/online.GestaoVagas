@@ -289,3 +289,23 @@ test('SMTP exige STARTTLS por padrão: servidor sem TLS não recebe a senha', as
     await smtp.close();
   }
 });
+
+test('modelo dos e-mails: estrutura padrão, campos vazios fora do quadro e texto de usuário escapado', async () => {
+  const { renderLayout } = await import('../src/services/email-layout.js');
+  const body = renderLayout({
+    recipientName: 'Ana <script>', title: 'Valor por cargo aguardando validação', summary: 'Resumo do evento.',
+    status: { label: 'Pendente de validação', tone: 'warning' },
+    fields: [['Cargo', 'Auxiliar & Cia'], ['Fee', null], ['Valor mensal', 'R$ 3.763,34', { strong: true }]],
+    action: 'Valide o valor.', button: 'Acessar validação', link: 'https://exemplo.invalid/#/valores',
+  });
+  assert.match(body, /<meta name="viewport" content="width=device-width, initial-scale=1">/, 'leitura no celular');
+  assert.match(body, /max-width:600px/);
+  assert.match(body, /Olá, Ana &lt;script&gt;\./, 'nome escapado');
+  assert.match(body, /Auxiliar &amp; Cia/);
+  assert.doesNotMatch(body, />Fee</, 'campo sem valor fica fora do quadro');
+  assert.match(body, /Pendente de validação/);
+  assert.match(body, /O que fazer:<\/strong> Valide o valor\./);
+  assert.match(body, /href="https:\/\/exemplo\.invalid\/#\/valores"[^>]*>Acessar validação</);
+  assert.match(body, /Mensagem automática do Sistema de Controle de Vagas — Grupo ON LINE\./);
+  assert.match(body, /Controle de Vagas<\/div>/, 'identificação do sistema em texto, mesmo sem a imagem');
+});

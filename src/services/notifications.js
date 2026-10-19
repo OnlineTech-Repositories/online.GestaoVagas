@@ -5,6 +5,7 @@ import { activeUsersByRoles, usersByIds } from '../db/repository.js';
 import { utcNow } from '../domain/dates.js';
 import { ForbiddenError, NotFoundError } from '../domain/errors.js';
 import { EmailStatus } from '../domain/enums.js';
+import { renderLayout } from './email-layout.js';
 
 /**
  * Notificações internas e e-mails (seção 10.1 da SPEC). O e-mail vai para a caixa de saída na MESMA transação da
@@ -30,7 +31,9 @@ export function queueEmail(uow, recipient, subject, htmlBody) {
 /**
  * Registra o evento para os usuários ativos dos perfis e/ou os usuários informados (sem duplicar quem está nos
  * dois). Não grava: entra no save() da operação.
- * @param {{ type: string, entityId?: string|null, subject: string, message: string, link?: string|null }} event
+ * `message` é o texto da notificação interna (tela); `email` (opcional) estrutura o e-mail: { title, summary, status,
+ * fields, action, button } — ver email-layout.js.
+ * @param {{ type: string, entityId?: string|null, subject: string, message: string, link?: string|null, email?: object }} event
  */
 export async function notify(uow, event, { roles = null, userIds = null } = {}) {
   const recipients = new Map();
@@ -86,14 +89,20 @@ function requireUser(ctx) {
 export const html = (text) => String(text ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+/**
+ * E-mail do aviso no modelo padrão (email-layout.js). `event.email` traz o título, o resumo, a situação, o quadro de
+ * informações, a providência e o texto do botão; sem ele, o assunto vira título e a mensagem, o resumo.
+ */
 function renderEmail(recipientName, event) {
-  const link = event.link
-    ? `<p><a href="${html(event.link)}" style="color:#1565c0">Abrir no sistema</a></p>`
-    : '';
-  return `<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#222">
-  <p>Olá, ${html(recipientName)}.</p>
-  <p>${html(event.message)}</p>
-  ${link}
-  <p style="color:#777;font-size:12px">Mensagem automática do Sistema de Controle de Vagas — Grupo ON LINE.</p>
-</div>`;
+  const e = event.email ?? {};
+  return renderLayout({
+    recipientName,
+    title: e.title ?? event.subject,
+    summary: e.summary ?? event.message,
+    status: e.status,
+    fields: e.fields,
+    action: e.action,
+    button: e.button ?? 'Abrir no sistema',
+    link: event.link,
+  });
 }

@@ -78,8 +78,12 @@ test('correção depois da rejeição é avisada como correção, não como valo
   assert.equal(r.status, 200, JSON.stringify(r.data));
   const last = (await notified('RATE_PENDING')).at(-1);
   assert.match(last.message, /^O valor de .* \(R\$\s2\.800,00 mensais, vigência a partir de 01\/11\/2026\) foi corrigido depois da rejeição e aguarda nova validação da Controladoria\.$/);
-  const email = await queryOne("SELECT subject FROM email_messages WHERE subject LIKE '%corrigido, pendente%' LIMIT 1");
-  assert.equal(email.subject, '[Controle de Vagas] Valor por cargo corrigido, pendente de validação');
+  const email = await queryOne("SELECT subject, html_body FROM email_messages WHERE subject LIKE '%corrigido, aguardando%' LIMIT 1");
+  assert.match(email.subject, /^\[Controle de Vagas\] Valor por cargo corrigido, aguardando validação · CT-/);
+  // Modelo padrão: título, situação, quadro com os campos do valor, providência e botão para a validação.
+  for (const part of ['Pendente de validação', 'Valor mensal', 'R$', 'Início da vigência', '01/11/2026', 'O que fazer:', 'Acessar validação']) {
+    assert.ok(email.html_body.includes(part), `e-mail com "${part}"`);
+  }
 });
 
 test('quem corrigiu não valida nem rejeita, mesmo tendo o perfil Controladoria (segregação)', async () => {
@@ -120,7 +124,7 @@ test('validação avisa quem cadastrou (e quem corrigiu por último, se for outr
   assert.match((await notified('RATE_VALIDATED'))[0].message,
     /^O valor de .* \(R\$\s2\.650,00 mensais, vigência a partir de 01\/11\/2026\) foi validado pela Controladoria e passa a entrar nos totais de faturamento perdido e postergado\.$/);
   const email = await queryOne(
-    "SELECT to_address FROM email_messages WHERE subject = '[Controle de Vagas] Valor por cargo validado'");
+    "SELECT to_address FROM email_messages WHERE subject LIKE '[Controle de Vagas] Valor por cargo validado · %'");
   assert.equal(email.to_address, 'comercial@demo.local');
   assert.ok(userIds.comercial);
 });

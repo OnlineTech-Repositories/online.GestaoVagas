@@ -295,3 +295,10 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     a bandeira liga "possui múltiplas unidades" e exige ao menos uma unidade (o contrato escolhe sempre uma unidade
     contratante); toda unidade tem código, nome e CNPJ, e o CNPJ da unidade é único no sistema (nem outra unidade
     ativa, nem o CNPJ central de outro cliente); unidades antigas sem CNPJ são apontadas ao editar o cliente.
+27. **E-mails no padrão visual da empresa (melhoria pedida pelo usuário em 19/10/2026):** todo aviso e o resumo diário
+    usam o modelo de `src/services/email-layout.js` — faixa azul e logo Online Gestão (imagem hospedada no sistema, com
+    o nome do sistema em texto onde a imagem é bloqueada), saudação, situação em destaque, título e resumo, quadro de
+    informações do evento, "O que fazer", botão com o texto da ação ("Consultar pedido", "Acessar validação",
+    "Confirmar 1º dia"…) e rodapé de mensagem automática. Assunto "Evento · referência" (pedido, posição ou contrato).
+    HTML de e-mail (tabelas e estilos inline, 600 px que encolhem no celular); os campos de cada aviso saem de
+    `src/services/notice-fields.js`. A notificação interna da tela continua com o texto curto.
