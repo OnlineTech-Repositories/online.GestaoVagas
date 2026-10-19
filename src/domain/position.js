@@ -2,7 +2,7 @@ import { entity } from '../db/model.js';
 import { addDays } from './dates.js';
 import { BusinessRuleError } from './errors.js';
 import {
-  ClientDecision, DemandType, Labels, OrderApprovalStatus, PositionStatus as S, SlaTargetSource, TermType,
+  ClientDecision, DemandType, Labels, OrderApprovalStatus, PositionStatus as S, RhStage, SlaTargetSource, TermType,
 } from './enums.js';
 import { Cpf } from './guards.js';
 
@@ -32,6 +32,15 @@ export const notReplaced = (p) =>
 /** Status efetivo da etapa, ignorando a pausa (para saber o responsável pela próxima ação). */
 export const stageStatus = (p) => (p.status === S.PAUSED && p.previousStatus ? p.previousStatus : p.status);
 /** Admissão registrada, com ou sem matrícula, e o 1º dia ainda não confirmado. */
+/** Etapa do acompanhamento do RH (RhStage); nula para a vaga encerrada sem preenchimento. */
+export function rhStage(p) {
+  if (p.status === S.FILLED) return RhStage.FILLED;
+  if (isClosed(p)) return null;
+  if (p.status === S.PAUSED) return RhStage.PAUSED;
+  if (p.status === S.AWAITING_CONFIRMATION) return RhStage.AWAITING_CLIENT;
+  return p.status;
+}
+
 export const isAdmitted = (p) => p.status === S.IN_ADMISSION || p.status === S.AWAITING_FIRST_DAY;
 /** Candidato selecionado (ou em admissão) sem candidato cadastrado: dados anteriores à regra do candidato. */
 export const canRegisterMissingCandidate = (p) => !activeCandidate(p)

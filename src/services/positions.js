@@ -7,7 +7,7 @@ import { addDays, formatBr, today as todayDate, utcNow } from '../domain/dates.j
 import { BusinessRuleError, ForbiddenError, NotFoundError } from '../domain/errors.js';
 import {
   CandidateSex, ClientDecision, DemandType, EvidenceKind, Labels, Modality, NotificationTypes, PositionStatus,
-  Roles, SlaSituation, TermType,
+  RhStage, Roles, SlaSituation, TermType,
 } from '../domain/enums.js';
 import { Cpf, DateGuard, EvidenceFiles, hasRole, Permissions, RhAccess } from '../domain/guards.js';
 import { activeRhAnalysts } from '../domain/order.js';
@@ -43,7 +43,9 @@ export async function listPositionsDto(ctx, q) {
     search: input.text('search'),
     currentCycleOnly: !input.bool('allCycles', false),
   };
-  const situations = input.options('slaSituation', SlaSituation);
+  // "NOT_STARTED": vaga ainda sem contagem de SLA (vem do Painel de RH, como a etapa).
+  const situations = input.options('slaSituation', { ...SlaSituation, NOT_STARTED: 'NOT_STARTED' });
+  const stage = input.option('stage', RhStage, { required: false });
   const sort = input.text('sort');
   const rh = input.text('rh');
   const page = Math.max(1, input.int('page') ?? 1);
@@ -61,7 +63,8 @@ export async function listPositionsDto(ctx, q) {
   let rows = (await listPositionRows(ctx.uow, filter))
     .filter((p) => !isLegacyOrigin(p))
     .map((p) => toSummary(p, calculate(p, today, settings), showMoney));
-  if (situations.length) rows = rows.filter((r) => r.slaSituation && situations.includes(r.slaSituation));
+  if (situations.length) rows = rows.filter((r) => situations.includes(r.slaSituation ?? 'NOT_STARTED'));
+  if (stage) rows = rows.filter((r) => r.rhStage === stage);
   rows.sort(sort === 'uncovered'
     ? (a, b) => b.uncoveredDays - a.uncoveredDays || a.orderNumber - b.orderNumber
     : (a, b) => b.orderNumber - a.orderNumber || a.slotNumber - b.slotNumber || a.cycle - b.cycle);

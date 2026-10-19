@@ -13,11 +13,16 @@ import { navigate, state, hasRole } from '../app.js';
 
 const PAGE_SIZE = 50;
 
-/** Lista com os filtros da seção 9; aceita filtros vindos do painel (?status=, ?sla=, ?onlyOpen=). */
+/**
+ * Lista com os filtros da seção 9; aceita filtros vindos do painel (?status=, ?sla=, ?onlyOpen=) e do Painel de RH
+ * (?pedido=, ?etapa=, ?sla=, ?rh=).
+ */
 export async function positionsScreen(target, _params, query) {
   const filters = {
     search: '',
     status: query?.get('status') ?? '',
+    stage: query?.get('etapa') ?? '',
+    orderId: query?.get('pedido') ?? '',
     slaSituation: query?.get('sla') ?? '',
     onlyOpen: query?.get('onlyOpen') === 'true',
     clientId: '',
@@ -35,11 +40,20 @@ export async function positionsScreen(target, _params, query) {
   };
 
   const tableArea = el('div', {}, loading());
+  const orderChip = el('div', { class: 'filtro-ativo-area' });
   const paging = el('div', { class: 'paginacao' });
 
   async function reload() {
     clear(tableArea).append(loading());
     const result = await api.get('/api/positions', { ...filters, sort: 'uncovered', pageSize: PAGE_SIZE });
+    // Pedido vindo do Painel de RH: um selo com o número, que remove o filtro.
+    clear(orderChip);
+    if (filters.orderId) {
+      const number = result.items[0]?.orderNumber;
+      orderChip.append(el('span', { class: 'filtro-ativo' }, number ? `Pedido nº ${number}` : 'Pedido selecionado',
+        el('button', { type: 'button', title: 'Remover o filtro do pedido', 'aria-label': 'Remover o filtro do pedido',
+          onclick: () => { filters.orderId = ''; filters.page = 1; reload(); } }, '✕')));
+    }
     clear(tableArea).append(
       table(positionColumns({ money: state.user.canSeeDetailedValues, employee: true }), result.items, {
         onClick: (p) => navigate(`/posicoes/${p.id}`),
@@ -132,7 +146,8 @@ export async function positionsScreen(target, _params, query) {
         { class: 'filtros' },
         search,
         filterSelect('status', 'Status', options(LABELS.positionStatus, 'Todos')),
-        filterSelect('slaSituation', 'Situação do SLA', options(LABELS.slaSituation, 'Todas')),
+        filterSelect('stage', 'Etapa', options(LABELS.rhStage, 'Todas')),
+        filterSelect('slaSituation', 'Situação do SLA', options(LABELS.slaFilter, 'Todas')),
         filterSelect('rh', 'Analistas de RH', rhFilterOptions(analysts, state.user)),
         onlyOpen,
         allCycles,
@@ -156,6 +171,7 @@ export async function positionsScreen(target, _params, query) {
           filterDate('openedTo', 'Aberta até'),
         ),
       ),
+      orderChip,
       el('div', { class: 'painel-corpo sem-padding' }, tableArea),
       paging,
     ),

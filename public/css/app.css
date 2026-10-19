@@ -929,3 +929,88 @@ table.tabela tr.linha-total > td { font-weight: 600; background: var(--neutro-fu
 .lista-erros { margin: 0; padding-left: 16px; color: #8c2318; }
 .lista-erros li + li { margin-top: 2px; }
 table.tabela tr.linha-apagada > td { color: var(--texto-fraco); }
+
+/* Painel de RH: barras empilhadas em HTML (a CSP não carrega biblioteca de gráficos).
+   Etapas do recrutamento numa rampa de azul validada (um tom, do claro ao escuro, passos de luminosidade visíveis e o
+   mais claro com contraste >= 2:1 sobre o branco); pausa e espera pelo cliente em cinza; SLA nas cores de status. */
+:root {
+  --etapa-aberta: #86b6ef;
+  --etapa-recrutamento: #5598e7;
+  --etapa-candidato: #3280de;
+  --etapa-admissao: #256abf;
+  --etapa-primeiro-dia: #184f95;
+  --etapa-preenchida: #0d366b;
+  --etapa-aguardando-cliente: #c3cad3;
+  --etapa-pausada: #8a94a1;
+  --status-bom: #0ca30c;
+  --status-atencao: #fab219;
+  --status-critico: #d03b3b;
+}
+.painel-rh { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.painel-rh > .painel { margin: 0; }
+.painel-rh-escopo { margin: 0; font-size: 12.5px; color: var(--texto-suave); }
+.grade-5 { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.indicador.selecionado { border-color: var(--azul); box-shadow: inset 0 0 0 1px var(--azul), var(--sombra); }
+.texto-alerta { color: var(--alerta); font-weight: 600; }
+.lista-analistas .etiqueta.compartilhado { margin-top: 3px; }
+
+.grafico { padding: 14px 18px 12px; }
+.grafico-titulo { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--texto-suave); }
+.grafico-linha { display: grid; grid-template-columns: minmax(120px, 260px) 1fr 52px; gap: 10px; align-items: center; min-height: 26px; }
+.grafico-linha + .grafico-linha { margin-top: 4px; }
+.grafico-linha-unica { grid-template-columns: 1fr 52px; min-height: 34px; }
+.grafico-linha-unica .barra-empilhada { height: 26px; }
+.grafico-rotulo {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font: inherit; font-size: 12.5px;
+  color: var(--texto); background: none; border: 0; padding: 4px 0;
+}
+button.grafico-rotulo { cursor: pointer; }
+button.grafico-rotulo:hover { color: var(--azul); text-decoration: underline; }
+.grafico-trilho { min-width: 0; }
+.grafico-valor { font-size: 12.5px; color: var(--texto-suave); text-align: right; font-variant-numeric: tabular-nums; }
+.grafico-nota { padding: 8px 18px 12px; font-size: 12px; color: var(--texto-fraco); }
+/* 2px de fundo entre os segmentos; ponta de fora arredondada, base reta (ancorada no eixo). */
+.barra-empilhada { display: flex; gap: 2px; height: 18px; min-width: 4px; border-radius: 0 4px 4px 0; overflow: hidden; }
+.segmento { display: block; flex-basis: 0; min-width: 4px; height: 100%; border: 0; padding: 0; margin: 0; }
+button.segmento { cursor: pointer; }
+.segmento:hover, .segmento:focus-visible { filter: brightness(1.12); outline: 2px solid var(--texto); outline-offset: -2px; }
+.grafico-legenda { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; font-size: 12px; color: var(--texto-suave); }
+.legenda-item { display: inline-flex; align-items: center; gap: 6px; font: inherit; color: inherit; background: none; border: 0; padding: 2px 0; }
+button.legenda-item { cursor: pointer; border-radius: 4px; padding: 2px 6px; margin: 0 -6px; }
+button.legenda-item:hover, .legenda-item.selecionado { background: var(--neutro-fundo); color: var(--texto); }
+.legenda-item strong { color: var(--texto); font-weight: 600; }
+.amostra { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.graficos-lado { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); border-bottom: 1px solid var(--borda); }
+.graficos-lado .grafico-linha { grid-template-columns: minmax(90px, 170px) 1fr 40px; }
+.grafico-dica {
+  position: fixed; z-index: 50; pointer-events: none; max-width: 320px; padding: 6px 10px; border-radius: 6px;
+  background: #1d2733; color: #fff; font-size: 12px; box-shadow: var(--sombra-alta);
+}
+.etapa-open { background: var(--etapa-aberta); }
+.etapa-recruiting { background: var(--etapa-recrutamento); }
+.etapa-candidate-approved { background: var(--etapa-candidato); }
+.etapa-in-admission { background: var(--etapa-admissao); }
+.etapa-awaiting-first-day { background: var(--etapa-primeiro-dia); }
+.etapa-filled { background: var(--etapa-preenchida); }
+.etapa-awaiting-client { background: var(--etapa-aguardando-cliente); }
+/* Pausada: textura diagonal, para não depender só do tom de cinza. */
+.etapa-paused { background: repeating-linear-gradient(135deg, var(--etapa-pausada) 0 3px, #a9b1bb 3px 6px); }
+.sla-on-time { background: var(--status-bom); }
+.sla-at-risk { background: var(--status-atencao); }
+.sla-overdue { background: var(--status-critico); }
+.sla-no-target { background: var(--etapa-pausada); }
+.sla-not-started { background: var(--etapa-aguardando-cliente); }
+@media (max-width: 600px) {
+  .grafico-linha { grid-template-columns: minmax(90px, 120px) 1fr 44px; }
+  .graficos-lado { grid-template-columns: 1fr; }
+}
+
+/* Lista de posições: selo do pedido vindo do Painel de RH */
+.filtro-ativo-area:empty { display: none; }
+.filtro-ativo-area { padding: 10px 18px 0; }
+.filtro-ativo {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border-radius: 999px;
+  background: var(--azul-claro); color: var(--azul-escuro); font-size: 12.5px; font-weight: 600;
+}
+.filtro-ativo button { border: 0; background: none; color: inherit; cursor: pointer; font: inherit; padding: 0 6px; border-radius: 999px; }
+.filtro-ativo button:hover { background: rgba(15, 98, 180, 0.15); }

@@ -204,6 +204,28 @@ test('Relatórios: as quatro abas montam com KPIs, resumo e detalhe; R$ conforme
   assert.match(nacc.textContent, /sem os valores em R\$/);
 });
 
+test('Painel de RH: a gestão vê a equipe e os gráficos; o analista, só os seus pedidos; o Comercial não tem o menu', async (t) => {
+  if (skip(t)) return;
+  await signIn('gestor.rh@demo.local');
+  const root = await open('/painel-rh', 'Painel de RH');
+  assert.match(root.textContent, /Vagas por etapa/);
+  assert.match(root.textContent, /Pedidos \(\d+\)/);
+  assert.match(root.textContent, /Demandas por analista/);
+  assert.match(root.textContent, /compartilhado/);
+  assert.ok(root.querySelectorAll('.segmento').length > 0, 'barras empilhadas desenhadas');
+  await open('/painel-rh?stage=RECRUITING&sla=OVERDUE', 'Painel de RH');
+  await open('/posicoes?pedido=00000000-0000-0000-0000-000000000000&etapa=RECRUITING', 'Posições');
+
+  await signIn('rh@demo.local');
+  const mine = await open('/painel-rh', 'Painel de RH');
+  assert.match(mine.textContent, /Minhas demandas/);
+  assert.doesNotMatch(mine.textContent, /Pedidos sem analista de RH/);
+
+  await signIn('comercial@demo.local');
+  await open('/', 'Painel');
+  assert.doesNotMatch(document.querySelector('.menu')?.textContent ?? '', /Painel de RH/);
+});
+
 test('Candidatos em lote: o RH vê o painel no pedido e a janela de importação abre; o Comercial não vê', async (t) => {
   if (skip(t)) return;
   await signIn('gestor.rh@demo.local');

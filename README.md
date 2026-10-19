@@ -259,3 +259,17 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
       registra a importação (quem, quando, quantos e o arquivo).
     - O `.xlsx` enviado é lido por `src/services/xlsx-reader.js`, sem dependência, com teto de tamanho e de linhas.
       Testado com arquivo salvo pelo Excel 16.
+24. **Painel de RH (melhoria pedida pelo usuário em 19/10/2026):** tela própria no grupo Gestão (o Painel continua
+    igual), com o acompanhamento dos pedidos, das vagas e das demandas por analista.
+    - *Acesso* (decisões do usuário): Gestor de RH, Gestor e Admin veem a equipe toda; o Analista de RH vê só os pedidos
+      atribuídos a ele, com o filtro de analista fixo. Comercial, NACC, DP e Controladoria não acessam (403).
+    - *Escopo*: por padrão, os pedidos em andamento (alguma vaga pendente), de qualquer data; o período filtra pela data
+      da solicitação do cliente e há a opção de incluir os concluídos. Os filtros (período, cliente, unidade contratante,
+      contrato, cargo, analista, etapa e situação do SLA) valem para cards, gráficos e tabelas, e ficam no endereço.
+    - *Etapas*: Aberta, Em recrutamento, Candidato selecionado, Em admissão, Aguardando 1º dia e Preenchida; pausa e
+      reposição aguardando a decisão do cliente contam como pendentes, mas em etapa própria. SLA das pendentes: no prazo,
+      em risco, vencida, sem meta e não iniciado (sem data de abertura), pelo mesmo cálculo da seção 8 (pausas descontadas).
+    - Uma linha por vaga: o ciclo atual (a reposição ocupa a vaga do desligado); canceladas ficam de fora. Pedido com mais
+      de um analista aparece como "compartilhado" na linha de cada um; o total conta cada pedido e cada vaga uma vez.
+    - Gráficos de barras empilhadas em HTML (sem biblioteca, por causa da CSP), com dica ao passar o mouse, legenda e a
+      tabela correspondente. Clicar no pedido ou num segmento abre a lista de posições filtrada (pedido, etapa e SLA).

@@ -1,6 +1,6 @@
 import { activeRhAnalysts, isApproved } from '../domain/order.js';
 import {
-  activeCandidate, canRegisterMissingCandidate, isAdmitted, isCurrentCycle, isOpen, notReplaced, stageStatus,
+  activeCandidate, canRegisterMissingCandidate, isAdmitted, isCurrentCycle, isOpen, notReplaced, rhStage, stageStatus,
 } from '../domain/position.js';
 import { OrderApprovalStatus, PositionStatus as S, Roles } from '../domain/enums.js';
 import { ForbiddenError } from '../domain/errors.js';
@@ -113,6 +113,7 @@ export function toSummary(p, m, showMoney) {
     demandType: p.demandType,
     status: p.status,
     stageStatus: stageStatus(p),
+    rhStage: rhStage(p),
     openedAt: p.openedAt,
     uncoveredStart: m.uncoveredStart,
     uncoveredDays: m.uncoveredDays,

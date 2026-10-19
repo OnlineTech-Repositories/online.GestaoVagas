@@ -34,6 +34,14 @@ export const EmailStatus = values('PENDING', 'SENT', 'FAILED');
 /** Situação do valor em R$ da posição (RN-21/RN-22). */
 export const MoneyStatus = values('NOT_APPLICABLE', 'NO_RATE', 'PENDING', 'VALIDATED', 'REJECTED');
 
+/**
+ * Etapa da vaga no acompanhamento do RH (calculada, não persistida): o status do fluxo, com a pausa e a espera pela
+ * decisão do cliente em etapas próprias — continuam pendentes, mas não estão com o recrutamento.
+ */
+export const RhStage = values(
+  'AWAITING_CLIENT', 'OPEN', 'RECRUITING', 'CANDIDATE_APPROVED', 'IN_ADMISSION', 'AWAITING_FIRST_DAY', 'PAUSED', 'FILLED',
+);
+
 /** Status que encerram a posição: fora do "estado aberto". */
 export const CLOSED_STATUSES = Object.freeze(['FILLED', 'CLOSED_CLIENT_CANCELLED', 'CLOSED_CONTRACT_ENDED']);
 

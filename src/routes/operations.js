@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { route } from '../middleware.js';
 import { getDashboard } from '../services/dashboard.js';
+import { getRhDashboard } from '../services/rh-dashboard.js';
 import { countUnread, listMine, markAllRead, markRead } from '../services/notifications.js';
 import { registerLegacyTermination, registerTermination, searchFilledPositions } from '../services/terminations.js';
 import { ID, idParam } from './helpers.js';
@@ -13,6 +14,7 @@ terminationRoutes.post('/legacy', route(async (req, res) => res.json(await regis
 
 export const dashboardRoutes = Router();
 dashboardRoutes.get('/', route(async (req, res) => res.json(await getDashboard(req.ctx))));
+dashboardRoutes.get('/rh', route(async (req, res) => res.json(await getRhDashboard(req.ctx, req.query))));
 
 export const notificationRoutes = Router();
 notificationRoutes.get('/', route(async (req, res) =>

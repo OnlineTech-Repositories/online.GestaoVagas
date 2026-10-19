@@ -11,6 +11,7 @@ import { usersScreen } from './views/users.js';
 import { parametersScreen } from './views/parameters.js';
 import { catalogsScreen } from './views/catalogs.js';
 import { reportsScreen } from './views/reports.js';
+import { rhDashboardScreen } from './views/rh-dashboard.js';
 import { notificationsScreen } from './views/notifications.js';
 
 /**
@@ -36,6 +37,8 @@ export const hasRole = (user, ...roles) => !!user && roles.some((r) => user.role
 export const canCreateOrder = (u) => hasRole(u, 'COMMERCIAL') || (hasRole(u, 'NACC') && u.initialLoadOpen);
 
 const isAdmin = (u) => hasRole(u, 'ADMIN');
+/** Painel de RH: a gestão vê a equipe; o Analista de RH, os próprios pedidos. */
+const canSeeRhDashboard = (u) => hasRole(u, 'RH_MANAGER', 'MANAGER', 'ADMIN', 'RH');
 
 // ---------------------------------------------------------------------
 // Rotas
@@ -67,6 +70,13 @@ const ROUTES = [
     section: 'Operação',
     render: terminationScreen,
     requires: (u) => hasRole(u, 'DP', 'NACC'),
+  },
+  {
+    pattern: /^\/painel-rh$/,
+    title: 'Painel de RH',
+    section: 'Gestão',
+    render: rhDashboardScreen,
+    requires: canSeeRhDashboard,
   },
   { pattern: /^\/relatorios$/, title: 'Relatórios', section: 'Gestão', render: reportsScreen },
   {
@@ -130,6 +140,7 @@ const MENU_ITEMS = [
   { href: '/pedidos/novo', icon: '◇', label: 'Novo pedido', visible: canCreateOrder },
   { href: '/desligamentos/novo', icon: '⊘', label: 'Registrar desligamento', visible: hasAny('DP', 'NACC') },
   { group: 'Gestão' },
+  { href: '/painel-rh', icon: '▧', label: 'Painel de RH', visible: canSeeRhDashboard },
   { href: '/relatorios', icon: '◩', label: 'Relatórios' },
   { group: 'Cadastros', visible: hasAny('COMMERCIAL', 'CONTROLLERSHIP', 'ADMIN') },
   { href: '/clientes', icon: '◈', label: 'Clientes e contratos', visible: hasAny('COMMERCIAL', 'ADMIN') },

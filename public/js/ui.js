@@ -180,6 +180,19 @@ export const LABELS = {
     NOT_APPROVED: 'Não aprovado',
   },
   slaSituation: { ON_TIME: 'No prazo', AT_RISK: 'Em risco', OVERDUE: 'Vencido', NO_TARGET: 'Sem meta' },
+  /** Filtro de SLA: as situações e a vaga ainda sem contagem (sem data de abertura). */
+  slaFilter: { ON_TIME: 'No prazo', AT_RISK: 'Em risco', OVERDUE: 'Vencido', NO_TARGET: 'Sem meta', NOT_STARTED: 'SLA não iniciado' },
+  /** Etapa no acompanhamento do RH: pausa e espera pelo cliente em etapas próprias. */
+  rhStage: {
+    AWAITING_CLIENT: 'Aguardando cliente',
+    OPEN: 'Aberta',
+    RECRUITING: 'Em recrutamento',
+    CANDIDATE_APPROVED: 'Candidato selecionado',
+    IN_ADMISSION: 'Em admissão',
+    AWAITING_FIRST_DAY: 'Aguardando 1º dia',
+    PAUSED: 'Pausada',
+    FILLED: 'Preenchida',
+  },
   slaTargetSource: { CONTRACT: 'Meta do contrato', DEFAULT: 'Meta padrão', NONE: 'Sem meta' },
   rateStatus: { PENDING: 'Pendente de validação', VALIDATED: 'Validado', REJECTED: 'Rejeitado' },
   moneyStatus: {
