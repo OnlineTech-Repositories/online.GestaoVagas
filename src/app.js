@@ -35,7 +35,7 @@ export async function createApp() {
   app.disable('x-powered-by');
   // Confiança no proxy só quando declarada (ou detectada a plataforma): com `true` incondicional, qualquer cliente
   // forjaria o X-Forwarded-For e o IP gravado na auditoria.
-  app.set('trust proxy', config.trustProxy ? 1 : false);
+  app.set('trust proxy', config.trustProxy ? config.proxyHops : false);
 
   app.use(securityHeaders);
   app.use(express.json({ limit: '1mb' }));

@@ -14,6 +14,8 @@ import { BusinessRuleError } from '../domain/errors.js';
  */
 
 const MAX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024;
+/** Um .xlsx do sistema tem ~15 entradas; o Excel chega a algumas dezenas com imagens e temas. */
+const MAX_ENTRIES = 500;
 const MAX_ROWS = 5000;
 const MAX_COLUMNS = 60;
 
@@ -32,9 +34,13 @@ function unzip(buffer) {
   }
   if (end < 0) throw invalid('o arquivo não é um .xlsx (ZIP) válido.');
   const count = buffer.readUInt16LE(end + 10);
+  if (count > MAX_ENTRIES) throw invalid('o arquivo tem entradas demais.');
   let offset = buffer.readUInt32LE(end + 16);
   const files = new Map();
+  // Dois tetos: o tamanho declarado no índice (recusa cedo o arquivo honesto) e o tamanho REAL descompactado, porque
+  // o índice é escrito por quem manda o arquivo — um ZIP com tamanhos falsos se expandia sem limite na memória.
   let total = 0;
+  let inflated = 0;
   for (let n = 0; n < count; n += 1) {
     if (offset + 46 > buffer.length || buffer.readUInt32LE(offset) !== 0x02014b50) throw invalid('estrutura do arquivo corrompida.');
     const method = buffer.readUInt16LE(offset + 10);
@@ -56,12 +62,15 @@ function unzip(buffer) {
     let content;
     try {
       if (method === 0) content = data;
-      else if (method === 8) content = inflateRawSync(data, { maxOutputLength: MAX_UNCOMPRESSED_BYTES });
+      else if (method === 8) content = inflateRawSync(data, { maxOutputLength: Math.max(1, MAX_UNCOMPRESSED_BYTES - inflated) });
       else throw invalid(`compressão não suportada (${method}).`);
     } catch (error) {
       if (error instanceof BusinessRuleError) throw error;
+      if (error?.code === 'ERR_BUFFER_TOO_LARGE') throw invalid('o conteúdo descompactado é grande demais.');
       throw invalid('conteúdo compactado corrompido.');
     }
+    inflated += content.length;
+    if (inflated > MAX_UNCOMPRESSED_BYTES) throw invalid('o conteúdo descompactado é grande demais.');
     files.set(name.replace(/^\/+/, ''), content.toString('utf8'));
   }
   return files;

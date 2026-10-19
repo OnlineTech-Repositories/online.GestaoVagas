@@ -107,6 +107,11 @@ export async function endSession(token) {
   if (token) await execute('DELETE FROM sessions WHERE token_hash = ?', sha256(token));
 }
 
+/** Encerra as outras sessões do usuário, mantendo a da requisição (troca da própria senha). */
+export async function endOtherSessions(userId, token) {
+  await execute('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?', userId, sha256(token ?? ''));
+}
+
 /**
  * Usuário da sessão, com os perfis. Sessão parada há mais que o tempo limite (30 min, seção 12) é descartada; a
  * sessão em uso é renovada (expiração por inatividade, não por tempo desde o login).

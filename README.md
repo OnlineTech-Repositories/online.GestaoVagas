@@ -61,6 +61,8 @@ em produção, as variáveis de ambiente do serviço. `src/config.js` é o únic
 | `MAILERSEND_API_KEY` / `EMAIL_PROVEDOR` | Alternativa ao SMTP: envio pela API do MailerSend (`EMAIL_PROVEDOR` = `smtp`, `mailersend` ou `sendgrid`; opcional) |
 | `DADOS_DEMO` / `SENHA_DEMO` | Dados fictícios de demonstração (só desenvolvimento) |
 | `PROXY_CONFIAVEL` | Confia em `X-Forwarded-*` (padrão: ligado no Render e no App Service) |
+| `PROXY_SALTOS` | Quantos proxies ficam na frente da aplicação, para achar o IP do usuário (padrão: 2 no Render — Cloudflare e balanceador —, 1 nas demais) |
+| `LIMITE_LOGIN_POR_MINUTO` | Tentativas de login por IP em 1 minuto (padrão: 60; o bloqueio por conta continua em 5 erros) |
 
 Os nomes da versão .NET (`ConnectionStrings__Default`, `App__BaseUrl`, `Seed__AdminEmail`, `Seed__AdminPassword`,
 `SendGrid__*`) e os `SENDGRID_*` anteriores continuam aceitos, para não quebrar um serviço já configurado.

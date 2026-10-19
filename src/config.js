@@ -176,6 +176,13 @@ export const config = {
    * auditoria registravam o IP do proxy para todo mundo.
    */
   trustProxy: bool(env.PROXY_CONFIAVEL, PLATFORM !== null),
+  /**
+   * Quantos proxies ficam na frente da aplicação: o IP do usuário é o endereço anterior a eles no X-Forwarded-For.
+   * No Render são dois — a Cloudflare e o balanceador do Render; com um só, o IP gravado era o da borda da Cloudflare
+   * (o mesmo para muita gente). Contar a partir da direita é o que impede o cliente de forjar o IP: o que ele mesmo
+   * mandar no cabeçalho fica à esquerda e é ignorado.
+   */
+  proxyHops: num(env.PROXY_SALTOS, PLATFORM === 'Render' ? 2 : 1),
 
   // ---- banco de dados ------------------------------------------------------------------------------------------
   /** 'sqlite' (desenvolvimento e testes) ou 'postgres' (produção). Com a URL definida, o padrão é postgres. */
@@ -194,8 +201,12 @@ export const config = {
   sessionTimeoutMin: num(env.SESSAO_TIMEOUT_MIN, 30),
   maxLoginAttempts: num(env.MAX_TENTATIVAS_LOGIN, 5),
   lockoutMin: num(env.BLOQUEIO_LOGIN_MIN, 15),
-  /** Limite de tentativas de login por IP em 1 minuto (como na API .NET). */
-  loginRateLimitPerMinute: num(env.LIMITE_LOGIN_POR_MINUTO, 10),
+  /**
+   * Limite de tentativas de login por IP em 1 minuto. Um escritório inteiro sai por um IP só: com 10 (o da API .NET),
+   * a abertura para muitos colaboradores ao mesmo tempo recebia recusas sem ninguém errar a senha. Quem barra a
+   * tentativa de adivinhar senha é o bloqueio por conta (MAX_TENTATIVAS_LOGIN); este limite segura a varredura em massa.
+   */
+  loginRateLimitPerMinute: num(env.LIMITE_LOGIN_POR_MINUTO, 60),
 
   // ---- primeiro administrador e dados de demonstração -----------------------------------------------------------
   seed: {

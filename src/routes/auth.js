@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { config } from '../config.js';
 import { clearSessionCookie, issueCsrfToken, limitLogin, problem, route, setSessionCookie } from '../middleware.js';
-import { SESSION_COOKIE, checkCredentials, createSession, endSession, meDto, sessionUser } from '../services/auth.js';
+import {
+  SESSION_COOKIE, checkCredentials, createSession, endOtherSessions, endSession, meDto, sessionUser,
+} from '../services/auth.js';
 import { changeOwnPassword } from '../services/users.js';
 
 export const authRoutes = Router();
@@ -32,6 +34,8 @@ authRoutes.get('/me', route(async (req, res) => {
 
 authRoutes.post('/change-password', route(async (req, res) => {
   await changeOwnPassword(req.ctx, req.body);
+  // Quem troca a senha por suspeitar de uso indevido derruba as outras sessões; a desta tela continua.
+  await endOtherSessions(req.user.id, req.cookies[SESSION_COOKIE]);
   issueCsrfToken(req, res);
   res.json(await meDto(await sessionUser(req.cookies[SESSION_COOKIE])));
 }));
