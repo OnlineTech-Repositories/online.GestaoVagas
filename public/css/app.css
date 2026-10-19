@@ -931,15 +931,17 @@ table.tabela tr.linha-total > td { font-weight: 600; background: var(--neutro-fu
 table.tabela tr.linha-apagada > td { color: var(--texto-fraco); }
 
 /* Painel de RH: barras empilhadas em HTML (a CSP não carrega biblioteca de gráficos).
-   Etapas do recrutamento numa rampa de azul validada (um tom, do claro ao escuro, passos de luminosidade visíveis e o
-   mais claro com contraste >= 2:1 sobre o branco); pausa e espera pelo cliente em cinza; SLA nas cores de status. */
+   Etapas do recrutamento em matizes distintos (paleta categórica validada: faixa de luminosidade, saturação e
+   separação para daltonismo entre etapas vizinhas na barra), sem verde, amarelo e vermelho, reservados para o SLA.
+   Pausa e espera pelo cliente em cinza (fora do recrutamento). Rótulos, contagens na legenda, dica e tabela
+   acompanham as cores, que nunca são o único meio de leitura. */
 :root {
-  --etapa-aberta: #86b6ef;
-  --etapa-recrutamento: #5598e7;
-  --etapa-candidato: #3280de;
-  --etapa-admissao: #256abf;
-  --etapa-primeiro-dia: #184f95;
-  --etapa-preenchida: #0d366b;
+  --etapa-aberta: #eb6834;
+  --etapa-recrutamento: #2a78d6;
+  --etapa-candidato: #e87ba4;
+  --etapa-admissao: #6250d6;
+  --etapa-primeiro-dia: #1baf7a;
+  --etapa-preenchida: #184f95;
   --etapa-aguardando-cliente: #c3cad3;
   --etapa-pausada: #8a94a1;
   --status-bom: #0ca30c;

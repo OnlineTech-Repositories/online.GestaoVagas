@@ -6,9 +6,9 @@ import { navigate } from '../app.js';
  * Painel de RH: acompanhamento visual dos pedidos, das vagas e das demandas por analista.
  *
  * O servidor aplica o acesso (o Analista de RH vê só os próprios pedidos) e todos os filtros; a tela desenha. Os
- * gráficos são barras empilhadas em HTML (a CSP não carrega bibliotecas de fora): as etapas do recrutamento numa
- * rampa de azul, do claro (aberta) ao escuro (preenchida), e as etapas fora do recrutamento (aguardando cliente,
- * pausada) em cinza. A situação do SLA usa as cores de status, sempre com ícone e rótulo. Cada gráfico tem a tabela
+ * gráficos são barras empilhadas em HTML (a CSP não carrega bibliotecas de fora): cada etapa do recrutamento num
+ * matiz distinto (a preenchida em azul-marinho, ancorada na base) e as etapas fora do recrutamento (aguardando
+ * cliente, pausada) em cinza. A situação do SLA usa as cores de status, sempre com ícone e rótulo. Cada gráfico tem a tabela
  * correspondente logo abaixo.
  */
 
