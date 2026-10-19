@@ -931,19 +931,17 @@ table.tabela tr.linha-total > td { font-weight: 600; background: var(--neutro-fu
 table.tabela tr.linha-apagada > td { color: var(--texto-fraco); }
 
 /* Painel de RH: barras empilhadas em HTML (a CSP não carrega biblioteca de gráficos).
-   Etapas do recrutamento em matizes distintos (paleta categórica validada: faixa de luminosidade, saturação e
-   separação para daltonismo entre etapas vizinhas na barra), sem verde, amarelo e vermelho, reservados para o SLA.
-   Pausa e espera pelo cliente em cinza (fora do recrutamento). Rótulos, contagens na legenda, dica e tabela
-   acompanham as cores, que nunca são o único meio de leitura. */
+   Cores das etapas definidas pelo usuário em 19/10/2026; pausa e espera pelo cliente em cinza (fora do recrutamento).
+   Rótulos, contagens na legenda, dica e tabela acompanham as cores, que nunca são o único meio de leitura. */
 :root {
-  --etapa-aberta: #eb6834;
-  --etapa-recrutamento: #2a78d6;
-  --etapa-candidato: #e87ba4;
-  --etapa-admissao: #6250d6;
-  --etapa-primeiro-dia: #1baf7a;
-  --etapa-preenchida: #184f95;
-  --etapa-aguardando-cliente: #c3cad3;
-  --etapa-pausada: #8a94a1;
+  --etapa-aberta: #0891b2;
+  --etapa-recrutamento: #2563eb;
+  --etapa-candidato: #db2777;
+  --etapa-admissao: #a3ff12;
+  --etapa-primeiro-dia: #ea580c;
+  --etapa-preenchida: #15803d;
+  --etapa-aguardando-cliente: #94a3b8;
+  --etapa-pausada: #475569;
   --status-bom: #0ca30c;
   --status-atencao: #fab219;
   --status-critico: #d03b3b;
@@ -996,7 +994,7 @@ button.legenda-item:hover, .legenda-item.selecionado { background: var(--neutro-
 .etapa-filled { background: var(--etapa-preenchida); }
 .etapa-awaiting-client { background: var(--etapa-aguardando-cliente); }
 /* Pausada: textura diagonal, para não depender só do tom de cinza. */
-.etapa-paused { background: repeating-linear-gradient(135deg, var(--etapa-pausada) 0 3px, #a9b1bb 3px 6px); }
+.etapa-paused { background: repeating-linear-gradient(135deg, var(--etapa-pausada) 0 3px, #7b8797 3px 6px); }
 .sla-on-time { background: var(--status-bom); }
 .sla-at-risk { background: var(--status-atencao); }
 .sla-overdue { background: var(--status-critico); }
