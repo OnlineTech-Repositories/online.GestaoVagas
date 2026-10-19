@@ -289,3 +289,9 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
       = "SLA não iniciado".
     - *Selos* calculados a cada leitura (`src/domain/date-checks.js`): "Data futura" (some quando a data chega) e "Fora
       de sequência", na lista e no detalhe da posição, no filtro "Datas" e em dois cards do Painel de RH.
+26. **Cliente bandeira/marca e CNPJ por unidade (melhoria pedida pelo usuário em 19/10/2026):** a opção "Cliente é
+    uma bandeira/marca" troca "Razão social" por "Nome da bandeira/marca" e deixa o CNPJ central opcional (validado
+    quando informado; vazio no banco = não informado, com o índice único só para CNPJ preenchido). Decisões do usuário:
+    a bandeira liga "possui múltiplas unidades" e exige ao menos uma unidade (o contrato escolhe sempre uma unidade
+    contratante); toda unidade tem código, nome e CNPJ, e o CNPJ da unidade é único no sistema (nem outra unidade
+    ativa, nem o CNPJ central de outro cliente); unidades antigas sem CNPJ são apontadas ao editar o cliente.

@@ -60,17 +60,19 @@ export async function seedDemoData(password) {
   const add = (kind, props) => uow.add(entity(kind, props));
   const group1 = add('GroupEntity', { name: 'ON LINE Serviços (demo)', cnpj: fakeCnpj('11222333', 1), active: true });
   const group2 = add('GroupEntity', { name: 'ON LINE Facilities (demo)', cnpj: fakeCnpj('11222333', 2), active: true });
-  const clientA = add('Client', { legalName: 'Logística Exemplo Ltda (demo)', cnpj: fakeCnpj('12345678', 1), active: true, hasMultipleUnits: true });
-  const clientB = add('Client', { legalName: 'Varejo Modelo S.A. (demo)', cnpj: fakeCnpj('98765432', 1), active: true, hasMultipleUnits: true });
+  const clientA = add('Client', { legalName: 'Logística Exemplo Ltda (demo)', cnpj: fakeCnpj('12345678', 1), active: true, hasMultipleUnits: true, isBrand: false });
+  // Bandeira/marca sem o CNPJ central: cada unidade tem o próprio CNPJ.
+  const clientB = add('Client', { legalName: 'Varejo Modelo S.A. (demo)', cnpj: '', active: true, hasMultipleUnits: true, isBrand: true });
   const role = (name) => add('JobRole', { name, active: true });
   const stockist = role('Estoquista');
   const forklift = role('Operador de empilhadeira');
   const cleaner = role('Auxiliar de limpeza');
   const hrAnalyst = role('Analista de RH');
   const location = (props) => add('WorkLocation', { active: true, removedAt: null, cnpj: null, code: null, clientId: null, ...props });
-  const cdCajamar = location({ code: 'CD-01', name: 'CD Cajamar', clientId: clientA.id });
-  const storeCenter = location({ code: 'LJ-001', name: 'Loja Centro', clientId: clientB.id });
-  location({ code: 'LJ-002', name: 'Loja Shopping Norte', clientId: clientB.id });
+  // O CNPJ é obrigatório em toda unidade de cliente (19/10/2026).
+  const cdCajamar = location({ code: 'CD-01', name: 'CD Cajamar', clientId: clientA.id, cnpj: fakeCnpj('12345678', 2) });
+  const storeCenter = location({ code: 'LJ-001', name: 'Loja Centro', clientId: clientB.id, cnpj: fakeCnpj('98765432', 2) });
+  location({ code: 'LJ-002', name: 'Loja Shopping Norte', clientId: clientB.id, cnpj: fakeCnpj('98765432', 3) });
   location({ name: 'Sede do cliente' });
   const pauseDocs = add('PauseReason', { name: 'Aguardando documentação do cliente', active: true });
   add('PauseReason', { name: 'Cliente suspendeu temporariamente a vaga', active: true });

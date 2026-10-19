@@ -372,14 +372,21 @@ test('Unidades do cliente: cadastra, edita, exclui logicamente e viram locais do
     hasMultipleUnits: true,
     units: [
       { id: null, code: 'LJ-01', name: 'Loja Um', cnpj: validCnpj(`${base}0002`) },
-      { id: null, code: 'LJ-02', name: 'Loja Dois', cnpj: null },
+      { id: null, code: 'LJ-02', name: 'Loja Dois', cnpj: validCnpj(`${base}0003`) },
     ],
   });
   assert.equal(created.units.length, 2);
 
+  // CNPJ é obrigatório em toda unidade.
+  await assert.rejects(
+    apiModule.api.put(`/api/clients/${created.id}`, { ...created, units: [...created.units, { id: null, code: 'LJ-03', name: 'Sem CNPJ' }] }),
+    (e) => e.status === 422 && /Informe o CNPJ da unidade "LJ-03"/.test(e.message),
+  );
+
   // Código repetido é recusado e aponta a seção das unidades.
   await assert.rejects(
-    apiModule.api.put(`/api/clients/${created.id}`, { ...created, units: [...created.units, { id: null, code: 'lj-01', name: 'Outra' }] }),
+    apiModule.api.put(`/api/clients/${created.id}`, { ...created, units: [...created.units,
+      { id: null, code: 'lj-01', name: 'Outra', cnpj: validCnpj(`${base}0009`) }] }),
     (e) => e.status === 422 && 'units' in e.fields,
   );
 
@@ -411,6 +418,60 @@ test('Unidades do cliente: cadastra, edita, exclui logicamente e viram locais do
   modal.querySelector('.modal-fechar').click();
 });
 
+test('Bandeira/marca: CNPJ central opcional, ao menos uma unidade e CNPJ obrigatório e único por unidade', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const base = String(Date.now() + 3).slice(-8).padStart(8, '0');
+  const unit = (code, branch) => ({ id: null, code, name: `Loja ${code}`, cnpj: validCnpj(`${base}${branch}`) });
+
+  // Sem unidade, a bandeira não é salva; com uma, salva sem o CNPJ central e já com "múltiplas unidades".
+  await assert.rejects(apiModule.api.post('/api/clients', { legalName: `Bandeira ${base}`, isBrand: true, active: true, units: [] }),
+    (e) => e.status === 422 && 'units' in e.fields);
+  const brand = await apiModule.api.post('/api/clients', {
+    legalName: `Bandeira ${base}`, cnpj: null, isBrand: true, active: true, units: [unit('B-01', '0002')],
+  });
+  assert.equal(brand.isBrand, true);
+  assert.equal(brand.cnpj, null);
+  assert.equal(brand.hasMultipleUnits, true);
+  // Outra bandeira sem CNPJ central convive com a primeira.
+  const other = await apiModule.api.post('/api/clients', {
+    legalName: `Outra Bandeira ${base}`, isBrand: true, active: true, units: [unit('O-01', '0003')],
+  });
+  assert.equal(other.cnpj, null);
+
+  // CNPJ central, quando informado, é validado.
+  await assert.rejects(apiModule.api.put(`/api/clients/${brand.id}`, { ...brand, cnpj: '11.111.111/1111-11' }),
+    (e) => e.status === 422 && 'cnpj' in e.fields);
+  // CNPJ de unidade único no sistema: outra bandeira não reaproveita.
+  await assert.rejects(apiModule.api.put(`/api/clients/${other.id}`, { ...other, units: [...other.units, unit('O-02', '0002')] }),
+    (e) => e.status === 422 && /já é o da unidade "B-01"/.test(e.message));
+  // Desmarcada a bandeira, o CNPJ central volta a ser obrigatório.
+  await assert.rejects(apiModule.api.put(`/api/clients/${brand.id}`, { ...brand, isBrand: false }),
+    (e) => e.status === 422 && 'cnpj' in e.fields);
+  const regular = await apiModule.api.put(`/api/clients/${brand.id}`, { ...brand, isBrand: false, cnpj: validCnpj(`${base}0001`) });
+  assert.equal(regular.isBrand, false);
+  assert.equal(regular.units.length, 1, 'as unidades continuam');
+
+  // A tela: a opção troca o rótulo e a obrigatoriedade, sem apagar o que foi digitado.
+  const root = await open('/clientes', 'Clientes e contratos');
+  root.querySelectorAll('button').find((b) => b.textContent.includes('Novo cliente')).click();
+  const modal = document.getElementById('modal-area').querySelector('.modal');
+  const name = modal.querySelector('[data-campo="legalName"]');
+  name.querySelector('input').value = 'Rede Digitada';
+  const toggle = modal.querySelector('#campo-isBrand');
+  toggle.checked = true;
+  toggle.dispatchEvent(new Event('change'));
+  assert.match(name.querySelector('label').textContent, /Nome da bandeira\/marca/);
+  assert.match(modal.querySelector('[data-campo="cnpj"] label').textContent, /CNPJ \(opcional\)/);
+  assert.equal(modal.querySelector('#campo-hasMultipleUnits').checked, true);
+  toggle.checked = false;
+  toggle.dispatchEvent(new Event('change'));
+  assert.match(name.querySelector('label').textContent, /Razão social/);
+  assert.equal(name.querySelector('input').value, 'Rede Digitada', 'nada apagado');
+  assert.match(modal.textContent, /Código, nome e CNPJ são obrigatórios/);
+  modal.querySelector('.modal-fechar').click();
+});
+
 test('Contrato: unidade contratante, código gerado e local fixo no pedido', async (t) => {
   if (skip(t)) return;
   await signIn('comercial@demo.local');
@@ -425,7 +486,8 @@ test('Contrato: unidade contratante, código gerado e local fixo no pedido', asy
 
   const client = await apiModule.api.post('/api/clients', {
     legalName: `Supermercados Teste ${base}`, cnpj: validCnpj(`${base}0001`), active: true, hasMultipleUnits: true,
-    units: [{ id: null, code: 'Loja 45', name: 'Loja Moema' }, { id: null, code: 'LJ-46', name: 'Loja Centro' }],
+    units: [{ id: null, code: 'Loja 45', name: 'Loja Moema', cnpj: validCnpj(`${base}0002`) },
+      { id: null, code: 'LJ-46', name: 'Loja Centro', cnpj: validCnpj(`${base}0003`) }],
   });
   const moema = client.units.find((u) => u.code === 'Loja 45');
   const other = client.units.find((u) => u.code === 'LJ-46');

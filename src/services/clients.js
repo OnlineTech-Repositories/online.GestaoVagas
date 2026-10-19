@@ -1,4 +1,4 @@
-import { query } from '../db/index.js';
+import { query, queryOne } from '../db/index.js';
 import { entity } from '../db/model.js';
 import { getById, getContract, listContracts as listContractRows, userHasRole, userNames } from '../db/repository.js';
 import { today as todayDate, utcNow, yearOf } from '../domain/dates.js';
@@ -12,8 +12,8 @@ import { Input, isId } from './input.js';
 const byCode = (a, b) => String(a.code ?? '').localeCompare(String(b.code ?? ''), 'pt-BR');
 const unitDto = (u) => ({ id: u.id, code: u.code, name: u.name, cnpj: u.cnpj });
 const clientDto = (c, units) => ({
-  id: c.id, legalName: c.legalName, cnpj: c.cnpj, active: c.active, hasMultipleUnits: c.hasMultipleUnits,
-  units: [...units].sort(byCode).map(unitDto),
+  id: c.id, legalName: c.legalName, cnpj: c.cnpj || null, active: c.active, hasMultipleUnits: c.hasMultipleUnits,
+  isBrand: Boolean(c.isBrand), units: [...units].sort(byCode).map(unitDto),
 });
 
 export async function listClients(ctx) {
@@ -24,26 +24,47 @@ export async function listClients(ctx) {
     .map((c) => clientDto(c, units.filter((u) => u.clientId === c.id)));
 }
 
+/**
+ * Cliente comum: razão social e CNPJ obrigatórios. Bandeira/marca (19/10/2026): identificação comercial que reúne
+ * unidades — o nome é obrigatório, o CNPJ central é opcional (validado quando informado; vazio no banco = não
+ * informado) e ela precisa de ao menos uma unidade. Toda unidade tem código, nome e CNPJ, único no sistema.
+ */
 export async function saveClient(ctx, id, body) {
   Permissions.require(ctx.user, Roles.Commercial, Roles.Admin);
   const input = new Input(body);
-  const legalName = DateGuard.requireText(input.text('legalName'), 'Informe a razão social.', 'legalName');
-  const cnpj = Cnpj.require(input.text('cnpj'), 'cnpj');
+  const isBrand = input.bool('isBrand', false);
+  const legalName = DateGuard.requireText(input.text('legalName'),
+    isBrand ? 'Informe o nome da bandeira/marca.' : 'Informe a razão social.', 'legalName');
+  const rawCnpj = input.text('cnpj');
+  const cnpj = isBrand && !rawCnpj ? '' : Cnpj.require(rawCnpj, 'cnpj');
   const active = input.bool('active', true);
-  const hasMultipleUnits = input.bool('hasMultipleUnits', false);
+  // A bandeira reúne unidades: "possui múltiplas unidades" acompanha a opção.
+  const hasMultipleUnits = isBrand || input.bool('hasMultipleUnits', false);
   const unitsRaw = input.raw('units');
   if (unitsRaw !== null && !Array.isArray(unitsRaw)) input.fail('units', 'Lista de unidades inválida.');
   input.done();
 
-  const clash = await query('SELECT id FROM clients WHERE cnpj = ?', cnpj);
-  if (clash.some((r) => r.id !== id)) throw new BusinessRuleError('Já existe um cliente cadastrado com este CNPJ.', 'cnpj');
+  if (cnpj) {
+    const clash = await query('SELECT id FROM clients WHERE cnpj = ?', cnpj);
+    if (clash.some((r) => r.id !== id)) throw new BusinessRuleError('Já existe um cliente cadastrado com este CNPJ.', 'cnpj');
+    const unit = await queryOne(
+      `SELECT w.code, c.legal_name FROM work_locations w JOIN clients c ON c.id = w.client_id
+        WHERE w.cnpj = ? AND w.removed_at IS NULL AND w.client_id <> ?`, cnpj, id ?? '');
+    if (unit) {
+      throw new BusinessRuleError(`Este CNPJ já é o da unidade "${unit.code}" do cliente ${unit.legal_name}.`, 'cnpj');
+    }
+  }
 
   const client = id ? await getById(ctx.uow, 'Client', 'clients', id) : ctx.uow.add(entity('Client', {}));
   if (!client) throw new NotFoundError('Cliente não encontrado.');
   client.legalName = legalName;
   client.cnpj = cnpj;
   client.active = active;
+  client.isBrand = isBrand;
   const units = await saveUnits(ctx, client, !id, hasMultipleUnits, unitsRaw);
+  if (isBrand && units.length === 0) {
+    throw new BusinessRuleError('Cadastre ao menos uma unidade da bandeira/marca, com código, nome e CNPJ.', 'units');
+  }
   client.hasMultipleUnits = hasMultipleUnits;
   await ctx.uow.save({ action: id ? 'UPDATE' : 'CREATE' });
   return clientDto(client, units);
@@ -66,6 +87,7 @@ async function saveUnits(ctx, client, isNew, hasMultipleUnits, unitsRaw) {
     throw new BusinessRuleError('Exclua as unidades antes de desmarcar "Cliente possui múltiplas unidades".', 'hasMultipleUnits');
   }
   const codes = new Set();
+  const cnpjs = new Map();
   for (const unit of desired) {
     if (!String(unit.code ?? '').trim() || !String(unit.name ?? '').trim()) {
       throw new BusinessRuleError('Informe o código e o nome de cada unidade.', 'units');
@@ -73,11 +95,32 @@ async function saveUnits(ctx, client, isNew, hasMultipleUnits, unitsRaw) {
     const code = String(unit.code).trim();
     if (codes.has(code.toLowerCase())) throw new BusinessRuleError(`O código de unidade "${code}" está repetido.`, 'units');
     codes.add(code.toLowerCase());
-    if (unit.cnpj && String(unit.cnpj).trim() && !Cnpj.isValid(unit.cnpj)) {
-      throw new BusinessRuleError(`CNPJ inválido na unidade "${code}".`, 'units');
+    if (!String(unit.cnpj ?? '').trim()) throw new BusinessRuleError(`Informe o CNPJ da unidade "${code}".`, 'units');
+    if (!Cnpj.isValid(unit.cnpj)) throw new BusinessRuleError(`CNPJ inválido na unidade "${code}".`, 'units');
+    const digits = Cnpj.normalize(unit.cnpj);
+    if (cnpjs.has(digits)) {
+      throw new BusinessRuleError(`O CNPJ da unidade "${code}" é o mesmo da unidade "${cnpjs.get(digits)}".`, 'units');
     }
+    cnpjs.set(digits, code);
     if (unit.id && (!isId(unit.id) || !current.some((c) => c.id === unit.id))) {
       throw new BusinessRuleError('Unidade não encontrada para este cliente.', 'units');
+    }
+  }
+
+  // CNPJ único no sistema (decisão do usuário): nenhuma unidade ativa de outro cliente nem CNPJ central de outro cliente.
+  if (cnpjs.size) {
+    const list = [...cnpjs.keys()];
+    const marks = list.map(() => '?').join(', ');
+    const otherUnit = await queryOne(
+      `SELECT w.cnpj, w.code, c.legal_name FROM work_locations w JOIN clients c ON c.id = w.client_id
+        WHERE w.removed_at IS NULL AND w.client_id <> ? AND w.cnpj IN (${marks})`, client.id, ...list);
+    if (otherUnit) {
+      throw new BusinessRuleError(`O CNPJ da unidade "${cnpjs.get(otherUnit.cnpj)}" já é o da unidade "${otherUnit.code}" `
+        + `do cliente ${otherUnit.legal_name}.`, 'units');
+    }
+    const otherClient = await queryOne(`SELECT cnpj, legal_name FROM clients WHERE id <> ? AND cnpj IN (${marks})`, client.id, ...list);
+    if (otherClient) {
+      throw new BusinessRuleError(`O CNPJ da unidade "${cnpjs.get(otherClient.cnpj)}" já é o CNPJ do cliente ${otherClient.legal_name}.`, 'units');
     }
   }
 
@@ -107,7 +150,7 @@ async function saveUnits(ctx, client, isNew, hasMultipleUnits, unitsRaw) {
     }
     item.code = String(unit.code).trim();
     item.name = String(unit.name).trim();
-    item.cnpj = unit.cnpj && String(unit.cnpj).trim() ? Cnpj.normalize(unit.cnpj) : null;
+    item.cnpj = Cnpj.normalize(unit.cnpj);
     result.push(item);
   }
   return result;

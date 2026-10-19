@@ -20,7 +20,7 @@ export const ENTITIES = {
     failedAttempts: 'int', lockoutEnd: 'datetime',
   }),
   GroupEntity: define('group_entities', { name: 'text', cnpj: 'text', active: 'bool' }),
-  Client: define('clients', { legalName: 'text', cnpj: 'text', active: 'bool', hasMultipleUnits: 'bool' }),
+  Client: define('clients', { legalName: 'text', cnpj: 'text', active: 'bool', hasMultipleUnits: 'bool', isBrand: 'bool' }),
   JobRole: define('job_roles', { name: 'text', active: 'bool' }),
   WorkLocation: define('work_locations', {
     name: 'text', clientId: 'text', active: 'bool', code: 'text', cnpj: 'text', removedAt: 'datetime',

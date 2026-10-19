@@ -33,7 +33,10 @@ BEGIN
 END $$;
 
 -- ---- 1. Colunas acrescentadas a tabelas existentes -------------------------------------------------------------
--- (nenhuma até aqui)
+ALTER TABLE IF EXISTS clients ADD COLUMN IF NOT EXISTS is_brand INTEGER NOT NULL DEFAULT 0;
+
+-- Índices substituídos por outro no schema (removidos antes de criar o novo).
+DROP INDEX IF EXISTS ux_clients_cnpj;
 
 -- ---- 2. Tabelas e índices ------------------------------------------------------------------------------------
 
@@ -99,9 +102,12 @@ CREATE TABLE IF NOT EXISTS clients (
   cnpj TEXT NOT NULL,
   active INTEGER NOT NULL DEFAULT 1,
   has_multiple_units INTEGER NOT NULL DEFAULT 0,
+  -- Bandeira/marca: identificação comercial que reúne unidades; o CNPJ central é opcional (vazio = não informado).
+  is_brand INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL, created_by TEXT, updated_at TEXT, updated_by TEXT, version INTEGER NOT NULL DEFAULT 0
 );
-CREATE UNIQUE INDEX IF NOT EXISTS ux_clients_cnpj ON clients (cnpj);
+-- CNPJ único só quando informado: várias bandeiras podem ficar sem o CNPJ central.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_clients_cnpj_informed ON clients (cnpj) WHERE cnpj <> '';
 
 CREATE TABLE IF NOT EXISTS job_roles (
   id TEXT PRIMARY KEY,

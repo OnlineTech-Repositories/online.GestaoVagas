@@ -22,8 +22,9 @@ export async function clientsScreen(target) {
 
     clear(clientsArea).append(table(
       [
-        { title: 'Razão social', field: 'legalName' },
-        { title: 'CNPJ', cls: 'nowrap', render: (c) => cnpj(c.cnpj) },
+        { title: 'Razão social / bandeira', render: (c) => el('div', {}, c.legalName,
+          c.isBrand ? el('span', { class: 'etiqueta azul', style: { marginLeft: '6px' } }, 'bandeira/marca') : null) },
+        { title: 'CNPJ', cls: 'nowrap', render: (c) => (c.cnpj ? cnpj(c.cnpj) : '—') },
         { title: 'Unidades', cls: 'num', render: (c) => (c.hasMultipleUnits ? String(c.units.length) : '—') },
         { title: 'Situação', render: (c) => el('span', { class: `etiqueta ${c.active ? 'verde' : 'cinza'}` }, c.active ? 'Ativo' : 'Inativo') },
       ],
@@ -52,13 +53,32 @@ export async function clientsScreen(target) {
 
   function openClient(client) {
     const units = unitsEditor(client?.units ?? []);
+    const brand = checkbox({ name: 'isBrand', label: 'Cliente é uma bandeira/marca', checked: client?.isBrand ?? false });
+    const brandInput = brand.querySelector('input');
     const multiple = checkbox({ name: 'hasMultipleUnits', label: 'Cliente possui múltiplas unidades', checked: client?.hasMultipleUnits ?? false });
     const multipleInput = multiple.querySelector('input');
+    const nameField = field({ name: 'legalName', label: 'Razão social', value: client?.legalName ?? '', required: true, attributes: { maxlength: '200' } });
+    const cnpjBlock = cnpjField({ value: client?.cnpj ?? '' });
+    const brandHelp = el('p', { class: 'texto-fraco texto-pequeno', style: { marginTop: '-6px' } },
+      'Identificação comercial que reúne várias unidades: o CNPJ central é opcional e cada unidade tem o próprio CNPJ.');
 
+    /** Troca rótulos e obrigatoriedades conforme a bandeira, sem apagar o que já foi digitado. */
+    const syncBrand = () => {
+      const on = brandInput.checked;
+      nameField.querySelector('label').firstChild.textContent = on ? 'Nome da bandeira/marca' : 'Razão social';
+      cnpjBlock.querySelector('label').firstChild.textContent = on ? 'CNPJ (opcional)' : 'CNPJ';
+      cnpjBlock.querySelector('.obrigatorio')?.classList.toggle('oculto', on);
+      brandHelp.classList.toggle('oculto', !on);
+      // A bandeira reúne unidades: a opção de múltiplas unidades acompanha e fica travada.
+      if (on) multipleInput.checked = true;
+      multipleInput.disabled = on;
+      syncSection();
+    };
     const syncSection = () => {
       units.section.classList.remove('oculto');
       if (!multipleInput.checked) units.section.classList.add('oculto');
     };
+    brandInput.addEventListener('change', syncBrand);
     multipleInput.addEventListener('change', () => {
       // Com unidades na lista, desmarcar esconderia o que ainda vai ser gravado: exclua as unidades antes.
       if (!multipleInput.checked && units.count() > 0) {
@@ -67,15 +87,15 @@ export async function clientsScreen(target) {
       }
       syncSection();
     });
-    syncSection();
+    syncBrand();
 
     formModal({
       title: client ? 'Editar cliente' : 'Novo cliente',
       wide: true,
       fields: [
-        el('div', { class: 'linha-campos' },
-          field({ name: 'legalName', label: 'Razão social', value: client?.legalName ?? '', required: true, attributes: { maxlength: '200' } }),
-          cnpjField({ value: client?.cnpj ?? '' })),
+        brand,
+        brandHelp,
+        el('div', { class: 'linha-campos' }, nameField, cnpjBlock),
         checkbox({ name: 'active', label: 'Ativo', checked: client?.active ?? true }),
         multiple,
         el('p', { class: 'texto-fraco texto-pequeno', style: { marginTop: '-6px' } },
@@ -83,13 +103,21 @@ export async function clientsScreen(target) {
         units.section,
       ],
       submit: async (d) => {
-        requireFields(d, { legalName: 'A razão social', cnpj: 'O CNPJ' });
+        const isBrand = brandInput.checked;
+        // Desmarcada a bandeira, razão social e CNPJ voltam a ser obrigatórios: o formulário aponta o que faltar.
+        requireFields(d, isBrand ? { legalName: 'O nome da bandeira/marca' } : { legalName: 'A razão social', cnpj: 'O CNPJ' });
+        const hasMultipleUnits = isBrand || multipleInput.checked;
+        const unitList = hasMultipleUnits ? units.values() : [];
+        if (isBrand && !unitList.length) {
+          throw validationError({ units: 'Cadastre ao menos uma unidade da bandeira/marca, com código, nome e CNPJ.' });
+        }
         const body = {
           legalName: d.legalName,
-          cnpj: d.cnpj,
+          cnpj: d.cnpj || null,
+          isBrand,
           active: d.active,
-          hasMultipleUnits: d.hasMultipleUnits,
-          units: d.hasMultipleUnits ? units.values() : [],
+          hasMultipleUnits,
+          units: unitList,
         };
         await (client ? api.put(`/api/clients/${client.id}`, body) : api.post('/api/clients', body));
         toast('Cliente salvo.', 'sucesso');
@@ -195,8 +223,8 @@ function unitsEditor(initial) {
   const newRow = (unit = {}) => {
     const code = el('input', { type: 'text', value: unit.code ?? '', maxlength: '50', placeholder: 'Ex.: LJ-045', 'aria-label': 'Código da unidade' });
     const name = el('input', { type: 'text', value: unit.name ?? '', maxlength: '200', placeholder: 'Ex.: Loja Paulista', 'aria-label': 'Nome da unidade' });
-    const doc = el('input', { type: 'text', value: cnpj(unit.cnpj ?? ''), maxlength: '18', placeholder: 'Opcional', inputmode: 'numeric',
-      'aria-label': 'CNPJ da unidade' });
+    const doc = el('input', { type: 'text', value: cnpj(unit.cnpj ?? ''), maxlength: '18', placeholder: '00.000.000/0000-00', inputmode: 'numeric',
+      'aria-label': 'CNPJ da unidade', required: true });
     doc.addEventListener('input', () => {
       doc.value = cnpj(doc.value);
     });
@@ -233,7 +261,7 @@ function unitsEditor(initial) {
       [
         { title: 'Código', render: (r) => r.code },
         { title: 'Nome da unidade', render: (r) => r.name },
-        { title: 'CNPJ da filial', render: (r) => r.doc },
+        { title: el('span', {}, 'CNPJ da unidade', el('span', { class: 'obrigatorio' }, '*')), render: (r) => r.doc },
         { title: '', cls: 'acoes', render: (r) => button('Excluir', () => remove(r), 'secundario pequeno') },
       ],
       rows,
@@ -248,7 +276,7 @@ function unitsEditor(initial) {
     el('label', {}, 'Unidades do cliente'),
     list,
     el('div', { class: 'barra-botoes', style: { marginTop: '8px' } }, button('+ Adicionar unidade', add, 'secundario pequeno')),
-    el('div', { class: 'ajuda' }, 'Código e nome são obrigatórios, e o código não se repete entre as unidades do cliente.'),
+    el('div', { class: 'ajuda' }, 'Código, nome e CNPJ são obrigatórios. O código não se repete entre as unidades do cliente, e o CNPJ não se repete no sistema.'),
   );
 
   return {
@@ -262,6 +290,8 @@ function unitsEditor(initial) {
         cnpj: r.doc.value.trim() || null,
       }));
       if (values.some((v) => !v.code || !v.name)) throw validationError({ units: 'Informe o código e o nome de cada unidade.' });
+      const noCnpj = values.find((v) => !v.cnpj);
+      if (noCnpj) throw validationError({ units: `Informe o CNPJ da unidade "${noCnpj.code}".` });
       return values;
     },
   };

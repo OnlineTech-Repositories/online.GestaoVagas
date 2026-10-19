@@ -1,4 +1,4 @@
-import { ADDED_COLUMNS, DOTNET_DATABASE_ERROR, postgresTriggers, readSchema } from './migrations.js';
+import { ADDED_COLUMNS, DOTNET_DATABASE_ERROR, DROPPED_INDEXES, postgresTriggers, readSchema } from './migrations.js';
 
 /**
  * Script SQL de criação e atualização do banco PostgreSQL, para executar no servidor sem depender da partida da
@@ -56,6 +56,9 @@ export function buildProductionScript() {
     '',
     '-- ---- 1. Colunas acrescentadas a tabelas existentes -------------------------------------------------------------',
     ...addedColumns,
+    '',
+    '-- Índices substituídos por outro no schema (removidos antes de criar o novo).',
+    ...DROPPED_INDEXES.map((index) => `DROP INDEX IF EXISTS ${index};`),
     '',
     '-- ---- 2. Tabelas e índices ------------------------------------------------------------------------------------',
     '',

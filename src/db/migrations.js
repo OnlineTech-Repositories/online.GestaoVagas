@@ -9,6 +9,7 @@ import { db, driverName, execRaw } from './index.js';
  *
  *   1. ADDED_COLUMNS acrescenta colunas novas em tabelas que já existem (o CREATE TABLE IF NOT EXISTS não altera
  *      tabela existente). O DEFAULT de cada entrada é o que preserva o comportamento dos registros antigos.
+ *      DROPPED_INDEXES remove índices que o schema.sql substituiu por outro.
  *   2. schema.sql cria o que falta: tabelas e índices.
  *   3. Gatilhos de proteção, na sintaxe de cada banco.
  *
@@ -18,7 +19,16 @@ import { db, driverName, execRaw } from './index.js';
 const here = dirname(fileURLToPath(import.meta.url));
 
 /** [tabela, coluna, tipo com DEFAULT]. Acrescentar aqui E no schema.sql. */
-export const ADDED_COLUMNS = [];
+export const ADDED_COLUMNS = [
+  // Bandeira/marca (19/10/2026): clientes antigos continuam clientes comuns.
+  ['clients', 'is_brand', 'INTEGER NOT NULL DEFAULT 0'],
+];
+
+/**
+ * Índices substituídos: removidos antes do schema.sql criar o novo. ux_clients_cnpj (CNPJ sempre único) deu lugar a
+ * ux_clients_cnpj_informed (único só quando informado), para a bandeira sem CNPJ central.
+ */
+export const DROPPED_INDEXES = ['ux_clients_cnpj'];
 
 /** Banco da versão .NET: recusado aqui e no script de produção (production-script.js). */
 export const DOTNET_DATABASE_ERROR =
@@ -46,6 +56,7 @@ export async function migrate() {
       console.log(`[migração] coluna adicionada: ${table}.${column}`);
     }
   }
+  for (const index of DROPPED_INDEXES) await execRaw(`DROP INDEX IF EXISTS ${index};`);
 
   await execRaw(readSchema(postgres));
 
