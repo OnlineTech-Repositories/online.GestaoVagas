@@ -639,6 +639,7 @@ fieldset legend {
 }
 
 .modal.largo { max-width: 860px; }
+.modal.extra-largo { max-width: min(1240px, 96vw); }
 
 @keyframes subir {
   from { opacity: 0; transform: translateY(12px); }
@@ -1026,3 +1027,11 @@ button.legenda-item:hover, .legenda-item.selecionado { background: var(--neutro-
 .avisos-datas ul { margin: 6px 0; padding-left: 18px; }
 .avisos-datas li + li { margin-top: 3px; }
 .lista-avisos-linha { margin: 4px 0 0; padding-left: 16px; font-size: 12px; color: #7a4d00; }
+
+/* 1º dia efetivo em lote: barra "aplicar às selecionadas" e campos dentro da tabela */
+.lote-aplicar { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin: 12px 0 4px; }
+.lote-aplicar .campo { margin: 0; min-width: 150px; }
+.lote-aplicar .campo.cresce { flex: 1; min-width: 220px; }
+table.tabela td.centro, table.tabela th.centro { text-align: center; }
+table.tabela td input[type="date"], table.tabela td input[type="text"] { width: 100%; min-width: 130px; padding: 5px 8px; }
+table.tabela td input.arquivo-linha { max-width: 190px; font-size: 12px; }

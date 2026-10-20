@@ -310,3 +310,10 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     1º dia"; sem, "Em admissão"). Decisões do usuário: com qualquer erro nada é gravado; linha em branco é ignorada; um
     único aviso ao NACC por importação, com a lista; só posições aguardando admissão entram no modelo. Reenviar o arquivo
     não duplica: posição já admitida vira erro. Leitura e resumo comuns às duas importações em `src/services/import-sheet.js`.
+29. **1º dia efetivo em lote pelo NACC (melhoria pedida pelo usuário em 19/10/2026):** na tela do pedido, o NACC marca
+    só quem comprovadamente começou (todas as caixas começam desmarcadas), informa data e justificativa — com "aplicar
+    às selecionadas" e ajuste por linha — e anexa evidências: uma compartilhada, vinculada só às linhas marcadas e
+    gravada uma vez, e um arquivo próprio opcional por linha. A conferência mostra erros e avisos de data; "Confirmar
+    selecionados (N)" grava pela mesma regra do registro individual. Os desmarcados seguem "Aguardando 1º dia" (não
+    viram "não compareceu"). Decisão do usuário: com qualquer erro, nada é gravado. Até 30 posições e 21 arquivos por
+    lote; admitidos sem matrícula aparecem à parte, sem poder ser confirmados.

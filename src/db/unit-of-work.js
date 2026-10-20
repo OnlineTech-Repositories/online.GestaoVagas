@@ -104,6 +104,9 @@ export class UnitOfWork {
         if (this.added.includes(obj)) continue;
         const kind = kindOf(obj);
         const def = ENTITIES[kind];
+        // Registros simples (arquivo de evidência, alerta disparado) só são inseridos: sem colunas de alteração, uma
+        // segunda gravação na mesma unidade de trabalho não pode tentar um UPDATE neles.
+        if (def.plain) continue;
         const changed = Object.keys(def.columns).filter((prop) =>
           !['id', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'version'].includes(prop)
           && !same(toDb(def.columns[prop], obj[prop]), before[prop]));

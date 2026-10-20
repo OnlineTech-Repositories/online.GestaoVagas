@@ -373,6 +373,7 @@ export async function orderDetailScreen(target, id) {
       jobconvoPanel(o, reload),
       o.candidateImport ? sheetImportPanel(o, reload, 'candidates') : null,
       o.admissionImport ? sheetImportPanel(o, reload, 'admissions') : null,
+      o.firstDayBatch ? firstDayBatchPanel(o, reload) : null,
       panel('Descrição da vaga', o.jobDescription
         ? el('div', { class: 'texto-livre' }, o.jobDescription)
         : el('p', { class: 'texto-fraco mb-0' }, 'Nenhuma descrição informada.')),
@@ -704,6 +705,202 @@ function openSheetImport(order, reload, cfg) {
       result),
     footer: [button('Cancelar', () => reference.close(), 'secundario'), confirmButton],
   });
+}
+
+// ---------------------------------------------------------------------
+// 1º dia efetivo em lote (NACC)
+// ---------------------------------------------------------------------
+
+/** Painel do NACC no pedido: quantos admitidos aguardam o 1º dia e quantos ainda estão sem matrícula. */
+function firstDayBatchPanel(o, reload) {
+  const { items, withoutRegistration } = o.firstDayBatch;
+  const note = withoutRegistration.length
+    ? el('p', { class: 'texto-fraco texto-pequeno mb-0', style: { marginTop: '6px' } },
+      `${withoutRegistration.length} admitido(s) sem matrícula (${withoutRegistration.map((w) => w.position).join(', ')}) `
+      + 'ainda não podem ser confirmados: o RH do pedido ou o DP precisa informar a matrícula.')
+    : null;
+  const body = items.length
+    ? el('div', {}, el('p', { class: 'mb-0' },
+      `${items.length} admitido(s) aguardando a confirmação do 1º dia efetivo. Marque só quem comprovadamente começou: `
+      + 'quem não for marcado continua pendente.'), note)
+    : el('div', {}, el('p', { class: 'texto-fraco mb-0' }, 'Nenhum admitido aguardando a confirmação do 1º dia.'), note);
+  return panel('1º dia efetivo em lote', body,
+    items.length ? [button('Confirmar 1º dia efetivo em lote', () => openFirstDayBatch(o, reload))] : null);
+}
+
+/**
+ * Duas etapas na mesma janela: (1) marcar quem compareceu e preencher data, justificativa e evidências, com "aplicar
+ * às selecionadas"; (2) conferência com os avisos de data, e só então "Confirmar selecionados (N)".
+ */
+function openFirstDayBatch(order, reload) {
+  const { items } = order.firstDayBatch;
+  const sharedInput = el('input', { type: 'file', accept: '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png' });
+  const bulkDate = el('input', { type: 'date', value: today(), 'aria-label': 'Data para as selecionadas' });
+  const bulkJustification = el('input', { type: 'text', maxlength: '1000', placeholder: 'Ex.: cliente confirmou por e-mail',
+    'aria-label': 'Justificativa para as selecionadas' });
+
+  const rows = items.map((it) => {
+    const check = el('input', { type: 'checkbox', 'aria-label': `Confirmar comparecimento de ${it.employeeName}` });
+    const dateInput = el('input', { type: 'date', value: today(), 'aria-label': `1º dia de ${it.employeeName}` });
+    const justification = el('input', { type: 'text', maxlength: '1000', placeholder: 'Justificativa',
+      'aria-label': `Justificativa de ${it.employeeName}` });
+    const shared = el('input', { type: 'checkbox', 'aria-label': `Usar a evidência compartilhada para ${it.employeeName}` });
+    const own = el('input', { type: 'file', accept: '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png',
+      class: 'arquivo-linha', 'aria-label': `Evidência própria de ${it.employeeName}` });
+    return { it, check, dateInput, justification, shared, own };
+  });
+  const selected = () => rows.filter((r) => r.check.checked);
+
+  const counter = el('span', { class: 'texto-suave' });
+  const reviewButton = button('Revisar selecionados', () => review());
+  const syncCount = () => {
+    const n = selected().length;
+    counter.textContent = `${n} de ${rows.length} selecionado(s)`;
+    reviewButton.disabled = n === 0;
+    reviewButton.textContent = n ? `Revisar selecionados (${n})` : 'Revisar selecionados';
+  };
+  rows.forEach((r) => r.check.addEventListener('change', syncCount));
+
+  const applyBulk = () => {
+    const chosen = selected();
+    if (!chosen.length) {
+      toast('Marque primeiro os profissionais que compareceram.', 'alerta');
+      return;
+    }
+    for (const r of chosen) {
+      if (bulkDate.value) r.dateInput.value = bulkDate.value;
+      if (bulkJustification.value.trim()) r.justification.value = bulkJustification.value.trim();
+      if (sharedInput.files?.length) r.shared.checked = true;
+    }
+    toast(`Aplicado a ${chosen.length} posição(ões); ajuste linha a linha se precisar.`, 'sucesso');
+  };
+
+  const selectionStep = el('div', {},
+    el('div', { class: 'mensagem info' },
+      'Marque só os profissionais cujo comparecimento foi verificado. Os desmarcados continuam "Aguardando 1º dia" — a falta de marcação '
+      + 'não registra "não compareceu", que é feito na própria posição.'),
+    el('div', { class: 'lote-aplicar' },
+      el('div', { class: 'campo' }, el('label', {}, '1º dia efetivo'), bulkDate),
+      el('div', { class: 'campo cresce' }, el('label', {}, 'Justificativa'), bulkJustification),
+      el('div', { class: 'campo' }, el('label', {}, 'Evidência compartilhada (opcional)'), sharedInput),
+      el('div', { class: 'campo acoes-filtro' }, button('Aplicar às selecionadas', applyBulk, 'secundario'))),
+    el('p', { class: 'texto-fraco texto-pequeno' },
+      'A evidência compartilhada (PDF, JPG ou PNG até 10 MB) só é vinculada às linhas com "Compartilhada" marcada. Cada linha também aceita um arquivo próprio.'),
+    table([
+      { title: 'Confirmar comparecimento', cls: 'centro', render: (r) => r.check },
+      { title: 'Vaga', cls: 'nowrap', render: (r) => r.it.position },
+      { title: 'Colaborador', render: (r) => r.it.employeeName },
+      { title: 'Matrícula', cls: 'nowrap', render: (r) => r.it.registration ?? '—' },
+      { title: 'Admissão', cls: 'nowrap', render: (r) => date(r.it.admissionAt) },
+      { title: '1º dia efetivo', render: (r) => r.dateInput },
+      { title: 'Justificativa', render: (r) => r.justification },
+      { title: 'Compartilhada', cls: 'centro', render: (r) => r.shared },
+      { title: 'Evidência própria', render: (r) => r.own },
+    ], rows, { dense: true }));
+
+  const reviewStep = el('div', { class: 'oculto' });
+  const confirmButton = button('Confirmar selecionados', () => save());
+  const backButton = button('Voltar', () => showSelection(), 'secundario');
+  const footerSelection = el('div', { class: 'barra-botoes' }, counter, button('Cancelar', () => reference.close(), 'secundario'), reviewButton);
+  const footerReview = el('div', { class: 'barra-botoes oculto' }, backButton, confirmButton);
+
+  const payload = () => selected().map((r) => ({
+    positionId: r.it.positionId, date: r.dateInput.value, justification: r.justification.value.trim(),
+    sharedEvidence: r.shared.checked, ownEvidence: Boolean(r.own.files?.length),
+  }));
+
+  function showSelection() {
+    reviewStep.classList.add('oculto');
+    footerReview.classList.add('oculto');
+    selectionStep.classList.remove('oculto');
+    footerSelection.classList.remove('oculto');
+  }
+
+  async function review() {
+    const list = payload();
+    if (list.some((i) => i.sharedEvidence) && !sharedInput.files?.length) {
+      toast('Selecione o arquivo da evidência compartilhada ou desmarque "Compartilhada".', 'erro');
+      return;
+    }
+    reviewButton.disabled = true;
+    try {
+      const preview = await api.post(`/api/orders/${order.summary.id}/first-day-batch/preview`, { items: list });
+      renderReview(preview, list);
+      selectionStep.classList.add('oculto');
+      footerSelection.classList.add('oculto');
+      reviewStep.classList.remove('oculto');
+      footerReview.classList.remove('oculto');
+    } catch (e) {
+      toast(e.message, 'erro');
+    } finally {
+      reviewButton.disabled = false;
+    }
+  }
+
+  function renderReview(p, list) {
+    const s = p.summary;
+    const evidence = (row) => {
+      const parts = [];
+      if (row.sharedEvidence) parts.push(`compartilhada (${sharedInput.files[0].name})`);
+      const own = rows.find((r) => r.it.positionId === row.positionId)?.own.files?.[0];
+      if (own) parts.push(own.name);
+      return parts.join(' + ') || '—';
+    };
+    clear(reviewStep).append(
+      el('div', { class: `mensagem ${s.canConfirm ? 'sucesso' : 'erro'}` },
+        el('strong', {}, s.canConfirm
+          ? `${s.ready} confirmação(ões) de 1º dia serão gravadas.`
+          : `${s.errors} posição(ões) com erro: volte, corrija ou desmarque. Nada será gravado até lá.`),
+        s.warnings ? `${s.warnings} posição(ões) com aviso de data: confira antes de confirmar.` : ''),
+      table([
+        { title: 'Vaga', cls: 'nowrap', field: 'position' },
+        { title: 'Colaborador', field: 'employeeName' },
+        { title: 'Matrícula', cls: 'nowrap', render: (r) => r.registration ?? '—' },
+        { title: '1º dia efetivo', cls: 'nowrap', render: (r) => date(r.date) },
+        { title: 'Justificativa', field: 'justification' },
+        { title: 'Evidência', render: evidence },
+        { title: 'Situação', render: (r) => situationList({ ...r, errors: r.errors.map((e) => ({ label: e.field === 'date' ? '1º dia' : e.field === 'justification' ? 'Justificativa' : 'Posição', message: e.message })) },
+          { ready: 'Pronto', error: 'Com erro' }) },
+      ], p.rows, {
+        rowClass: (r) => (r.status === 'error' ? 'linha-erro' : r.warnings.length ? 'linha-alerta' : ''),
+        dense: true,
+      }));
+    confirmButton.disabled = !s.canConfirm;
+    confirmButton.textContent = s.canConfirm ? `Confirmar selecionados (${s.ready})` : 'Confirmar selecionados';
+    confirmButton.dataset.items = JSON.stringify(list);
+  }
+
+  async function save() {
+    const list = JSON.parse(confirmButton.dataset.items);
+    const form = new FormData();
+    form.append('items', JSON.stringify(list));
+    if (list.some((i) => i.sharedEvidence)) form.append('shared', sharedInput.files[0], sharedInput.files[0].name);
+    for (const i of list.filter((x) => x.ownEvidence)) {
+      const file = rows.find((r) => r.it.positionId === i.positionId).own.files[0];
+      form.append(`evidence_${i.positionId}`, file, file.name);
+    }
+    confirmButton.disabled = true;
+    try {
+      const done = await api.postForm(`/api/orders/${order.summary.id}/first-day-batch`, form);
+      reference.close();
+      toast(done.message, 'sucesso', 9000);
+      await reload(done.order);
+    } catch (e) {
+      clear(reviewStep).prepend(errorMessage(e.message));
+      toast(e.message, 'erro');
+      confirmButton.disabled = false;
+    }
+  }
+
+  syncCount();
+  const reference = modal({
+    title: `Confirmar 1º dia efetivo em lote · pedido ${order.summary.number}`,
+    wide: true,
+    body: el('div', {}, selectionStep, reviewStep),
+    footer: [footerSelection, footerReview],
+  });
+  // A tabela tem campos por linha (data, justificativa, evidências): a janela usa a largura da tela.
+  reference.box.classList.add('extra-largo');
 }
 
 function openJobconvo(order, reload) {

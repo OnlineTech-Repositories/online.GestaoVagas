@@ -344,6 +344,46 @@ test('Admissões em lote: o RH vê o painel no pedido e a janela de importação
   assert.doesNotMatch(commercial.textContent, /Admissões em lote/);
 });
 
+test('1º dia em lote: o NACC marca os que compareceram, aplica data e justificativa e revisa antes de gravar', async (t) => {
+  if (skip(t)) return;
+  await signIn('nacc@demo.local');
+  const orders = await apiModule.api.get('/api/orders');
+  let target = null;
+  for (const o of orders.items ?? orders) {
+    const detail = await apiModule.api.get(`/api/orders/${o.id}`);
+    if (detail.firstDayBatch?.items.length) {
+      target = detail;
+      break;
+    }
+  }
+  assert.ok(target, 'há pedido com admitido aguardando o 1º dia');
+  const root = await open(`/pedidos/${target.summary.id}`, 'Pedido');
+  assert.match(root.textContent, /1º dia efetivo em lote/);
+  [...root.querySelectorAll('button')].find((b) => b.textContent === 'Confirmar 1º dia efetivo em lote').click();
+  const dialog = document.getElementById('modal-area').querySelector('.modal');
+  assert.match(dialog.textContent, /Confirmar comparecimento/);
+  const checks = [...dialog.querySelectorAll('input[type="checkbox"]')].filter((c) => /Confirmar comparecimento/.test(c.getAttribute('aria-label')));
+  assert.ok(checks.length && checks.every((c) => !c.checked), 'todas começam desmarcadas');
+  const review = [...dialog.querySelectorAll('button')].find((b) => b.textContent.startsWith('Revisar selecionados'));
+  assert.equal(review.disabled, true, 'sem marcação, nada a revisar');
+  checks[0].checked = true;
+  checks[0].dispatchEvent(new Event('change'));
+  assert.match(review.textContent, /Revisar selecionados \(1\)/);
+  const byLabel = (pattern) => [...dialog.querySelectorAll('input')].find((i) => pattern.test(i.getAttribute('aria-label') ?? ''));
+  byLabel(/^Justificativa para as selecionadas$/).value = 'Cliente confirmou por e-mail.';
+  [...dialog.querySelectorAll('button')].find((b) => b.textContent === 'Aplicar às selecionadas').click();
+  const firstJustification = byLabel(/^Justificativa de /);
+  assert.equal(firstJustification.value, 'Cliente confirmou por e-mail.');
+  review.click();
+  await wait(200);
+  assert.match(dialog.textContent, /confirmação\(ões\) de 1º dia serão gravadas/);
+  assert.ok([...dialog.querySelectorAll('button')].some((b) => /^Confirmar selecionados \(1\)$/.test(b.textContent)));
+  dialog.querySelector('.modal-fechar').click();
+
+  await signIn('comercial@demo.local');
+  assert.doesNotMatch((await open(`/pedidos/${target.summary.id}`, 'Pedido')).textContent, /1º dia efetivo em lote/);
+});
+
 test('rota sem permissão volta ao painel (a API também nega com 403)', async (t) => {
   if (skip(t)) return;
   await signIn('rh@demo.local');

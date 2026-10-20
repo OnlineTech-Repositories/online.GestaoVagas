@@ -17,6 +17,7 @@ import * as P from '../domain/position.js';
 import { Input, isId } from './input.js';
 import { canImportCandidates, eligiblePositions } from './candidate-import.js';
 import { canImportAdmissions, eligibleForAdmission } from './admission-import.js';
+import { firstDayBatchInfo } from './first-day-batch.js';
 import { links, notify } from './notifications.js';
 import { calcSettings, isInitialLoadOpen } from './parameters.js';
 import { toSummary } from './position-views.js';
@@ -330,6 +331,7 @@ export async function getOrderDetail(ctx, id) {
     canAssignRh: hasRole(ctx.user, Roles.RhManager) && order.approvalStatus !== OrderApprovalStatus.NOT_APPROVED,
     candidateImport: canImportCandidates(ctx.user, order) ? { pending: eligiblePositions(order).length } : null,
     admissionImport: canImportAdmissions(ctx.user, order) ? { pending: eligibleForAdmission(order).length } : null,
+    firstDayBatch: firstDayBatchInfo(ctx.user, order),
     slots: buildSlots(order, metrics, names, showMoney),
   };
 }

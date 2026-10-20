@@ -187,6 +187,9 @@ export function handleErrors(error, req, res, _next) {
     const message = error.field === 'file' ? 'A planilha deve ter no máximo 2 MB.' : 'A evidência deve ter no máximo 10 MB.';
     return problem(res, 422, 'Regra de negócio', message, { campos: { [error.field ?? 'evidence']: message } });
   }
+  if (error?.code === 'LIMIT_FILE_COUNT' || error?.code === 'LIMIT_UNEXPECTED_FILE') {
+    return problem(res, 422, 'Regra de negócio', 'Arquivos demais neste envio: anexe menos evidências e tente de novo.');
+  }
   if (isUniqueViolation(error)) {
     // Violação de unicidade que escapou da validação (duas requisições simultâneas).
     return problem(res, 422, 'Regra de negócio', uniqueMessage(error));
