@@ -315,6 +315,35 @@ test('Candidatos em lote: o RH vê o painel no pedido e a janela de importação
   assert.doesNotMatch(commercial.textContent, /Candidatos em lote/);
 });
 
+test('Admissões em lote: o RH vê o painel no pedido e a janela de importação abre; o Comercial não vê', async (t) => {
+  if (skip(t)) return;
+  await signIn('gestor.rh@demo.local');
+  const orders = await apiModule.api.get('/api/orders');
+  let target = null;
+  for (const o of orders.items ?? orders) {
+    const detail = await apiModule.api.get(`/api/orders/${o.id}`);
+    if (detail.admissionImport) {
+      target = detail;
+      break;
+    }
+  }
+  assert.ok(target, 'há pedido aprovado em que o RH registra admissões');
+  const root = await open(`/pedidos/${target.summary.id}`, 'Pedido');
+  assert.match(root.textContent, /Admissões em lote/);
+  if (target.admissionImport.pending) {
+    [...root.querySelectorAll('button')].find((b) => b.textContent === 'Importar admissões').click();
+    const dialog = document.getElementById('modal-area').querySelector('.modal');
+    assert.match(dialog.textContent, /Importar admissões · pedido/);
+    dialog.querySelector('.modal-fechar').click();
+  } else {
+    assert.match(root.textContent, /Nenhuma posição aguardando admissão/);
+  }
+
+  await signIn('comercial@demo.local');
+  const commercial = await open(`/pedidos/${target.summary.id}`, 'Pedido');
+  assert.doesNotMatch(commercial.textContent, /Admissões em lote/);
+});
+
 test('rota sem permissão volta ao painel (a API também nega com 403)', async (t) => {
   if (skip(t)) return;
   await signIn('rh@demo.local');

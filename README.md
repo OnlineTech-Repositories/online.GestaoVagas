@@ -302,3 +302,11 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     "Confirmar 1º dia"…) e rodapé de mensagem automática. Assunto "Evento · referência" (pedido, posição ou contrato).
     HTML de e-mail (tabelas e estilos inline, 600 px que encolhem no celular); os campos de cada aviso saem de
     `src/services/notice-fields.js`. A notificação interna da tela continua com o texto curto.
+28. **Admissões em lote por planilha (melhoria pedida pelo usuário em 19/10/2026):** na tela do pedido, o RH do pedido
+    (analista responsável ou Gestor de RH) baixa o modelo de admissões — uma linha por posição "Candidato selecionado",
+    com pedido, vaga e candidato preenchidos e bloqueados, data da admissão obrigatória, matrícula opcional (coluna de
+    texto, zeros à esquerda preservados) e justificativa — e importa. A conferência mostra cada linha com erro (linha,
+    campo e motivo) e os avisos de data; a gravação usa a mesma regra do registro individual (com matrícula, "Aguardando
+    1º dia"; sem, "Em admissão"). Decisões do usuário: com qualquer erro nada é gravado; linha em branco é ignorada; um
+    único aviso ao NACC por importação, com a lista; só posições aguardando admissão entram no modelo. Reenviar o arquivo
+    não duplica: posição já admitida vira erro. Leitura e resumo comuns às duas importações em `src/services/import-sheet.js`.

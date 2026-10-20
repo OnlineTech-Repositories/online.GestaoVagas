@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { route } from '../middleware.js';
+import { admissionTemplate, confirmAdmissionImport, previewAdmissionImport } from '../services/admission-import.js';
 import { candidateTemplate, confirmCandidateImport, previewCandidateImport } from '../services/candidate-import.js';
 import {
   addPositions, approveOrder, correctOrderDate, createOrder, getOrderDetail, listJobRolesForContract, listOrdersDto,
@@ -52,3 +53,17 @@ orderRoutes.post(`/:id${ID}/candidates-import/preview`, spreadsheet, route(async
   res.json(await previewCandidateImport(req.ctx, idParam(req), uploaded(req)))));
 orderRoutes.post(`/:id${ID}/candidates-import`, spreadsheet, route(async (req, res) =>
   res.json(await confirmCandidateImport(req.ctx, idParam(req), uploaded(req)))));
+
+// ---- admissões em lote: modelo (.xlsx), conferência e confirmação (mesmo envio multipart, campo "file")
+
+orderRoutes.get(`/:id${ID}/admissions-template`, route(async (req, res) => {
+  const { fileName, buffer } = await admissionTemplate(req.ctx, idParam(req));
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(buffer);
+}));
+orderRoutes.post(`/:id${ID}/admissions-import/preview`, spreadsheet, route(async (req, res) =>
+  res.json(await previewAdmissionImport(req.ctx, idParam(req), uploaded(req)))));
+orderRoutes.post(`/:id${ID}/admissions-import`, spreadsheet, route(async (req, res) =>
+  res.json(await confirmAdmissionImport(req.ctx, idParam(req), uploaded(req)))));

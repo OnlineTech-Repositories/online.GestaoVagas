@@ -371,7 +371,8 @@ export async function orderDetailScreen(target, id) {
       ),
       rhPanel(o, reload),
       jobconvoPanel(o, reload),
-      o.candidateImport ? candidateImportPanel(o, reload) : null,
+      o.candidateImport ? sheetImportPanel(o, reload, 'candidates') : null,
+      o.admissionImport ? sheetImportPanel(o, reload, 'admissions') : null,
       panel('Descrição da vaga', o.jobDescription
         ? el('div', { class: 'texto-livre' }, o.jobDescription)
         : el('p', { class: 'texto-fraco mb-0' }, 'Nenhuma descrição informada.')),
@@ -541,13 +542,78 @@ function saveFile({ name, blob }) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-/** Cadastro dos candidatos selecionados por planilha: modelo com as posições pendentes, prévia e confirmação. */
-function candidateImportPanel(o, reload) {
-  const { pending } = o.candidateImport;
-  const download = button('Baixar modelo de candidatos', async () => {
+const situationList = (r, labels) => (r.errors.length
+  ? el('ul', { class: 'lista-erros' }, ...r.errors.map((e) => el('li', {}, el('strong', {}, `${e.label}: `), e.message)))
+  : el('div', {}, labels[r.status],
+    r.warnings?.length ? el('ul', { class: 'lista-avisos-linha' }, ...r.warnings.map((w) => el('li', {}, w))) : null));
+
+/**
+ * Importações por planilha no pedido: o mesmo fluxo para candidatos e admissões — modelo com as posições pendentes,
+ * conferência (erros por linha e avisos de data) e confirmação, que só grava sem nenhuma linha com erro.
+ */
+const SHEET_IMPORTS = {
+  candidates: {
+    panelTitle: 'Candidatos em lote',
+    templatePath: 'candidates-template',
+    importPath: 'candidates-import',
+    downloadLabel: 'Baixar modelo de candidatos',
+    importLabel: 'Importar candidatos',
+    pendingText: (n) => `${n} posição(ões) em recrutamento aguardando candidato. Baixe o modelo (uma linha por posição pendente), `
+      + 'preencha os candidatos selecionados e importe: o sistema mostra uma prévia com os erros antes de gravar.',
+    emptyText: 'Nenhuma posição aguardando candidato: as posições "Em recrutamento" deste pedido já têm candidato selecionado.',
+    modalTitle: 'Importar candidatos',
+    intro: 'Selecione a planilha preenchida a partir do modelo deste pedido. A prévia confere cada linha com as mesmas regras do cadastro '
+      + 'individual; a importação só é liberada quando todas as linhas preenchidas estiverem corretas.',
+    readyText: (n) => `${n} candidato(s) prontos para importar.`,
+    blankNote: 'as posições continuam aguardando candidato',
+    columns: [
+      { title: 'Linha', cls: 'num', field: 'line' },
+      { title: 'Vaga', cls: 'nowrap', field: 'position' },
+      { title: 'Nome', field: 'fullName' },
+      { title: 'CPF', cls: 'nowrap', field: 'cpf' },
+      { title: 'Nascimento', cls: 'nowrap', render: (r) => (r.birthDate ? date(r.birthDate) : '—') },
+      { title: 'Sexo', field: 'sexLabel' },
+      { title: 'Aprovação', cls: 'nowrap', render: (r) => (r.approvedAt ? date(r.approvedAt) : '—') },
+    ],
+    emptyRows: 'A planilha não tem linhas de candidatos.',
+    doneText: (r, order) => `${r.imported} candidato(s) cadastrado(s) no pedido ${order.summary.number}.`,
+  },
+  admissions: {
+    panelTitle: 'Admissões em lote',
+    templatePath: 'admissions-template',
+    importPath: 'admissions-import',
+    downloadLabel: 'Baixar modelo de admissões',
+    importLabel: 'Importar admissões',
+    pendingText: (n) => `${n} posição(ões) com candidato selecionado aguardando a admissão. Baixe o modelo (uma linha por posição), `
+      + 'preencha a data da admissão e a matrícula e importe: o sistema mostra a conferência antes de gravar.',
+    emptyText: 'Nenhuma posição aguardando admissão: não há posição "Candidato selecionado" neste pedido.',
+    modalTitle: 'Importar admissões',
+    intro: 'Selecione a planilha preenchida a partir do modelo de admissões deste pedido. A conferência aplica as mesmas regras do registro '
+      + 'individual e mostra os avisos de data; a gravação só é liberada quando todas as linhas preenchidas estiverem corretas.',
+    readyText: (n) => `${n} admissão(ões) prontas para registrar.`,
+    blankNote: 'as posições continuam aguardando a admissão',
+    columns: [
+      { title: 'Linha', cls: 'num', field: 'line' },
+      { title: 'Vaga', cls: 'nowrap', field: 'position' },
+      { title: 'Candidato', field: 'candidate' },
+      { title: 'Admissão', cls: 'nowrap', render: (r) => (r.admissionAt ? date(r.admissionAt) : '—') },
+      { title: 'Matrícula', cls: 'nowrap', render: (r) => r.registration ?? '—' },
+      { title: 'Justificativa', render: (r) => r.justification ?? '—' },
+    ],
+    emptyRows: 'A planilha não tem linhas de admissão.',
+    doneText: (r, order) => `${r.imported} admissão(ões) registrada(s) no pedido ${order.summary.number}: `
+      + `${r.awaitingFirstDay} aguardando o 1º dia${r.withoutRegistration ? `, ${r.withoutRegistration} sem matrícula` : ''}.`,
+  },
+};
+
+/** Painel da importação no pedido: quantas posições aguardam, o modelo e o botão de importar. */
+function sheetImportPanel(o, reload, kind) {
+  const cfg = SHEET_IMPORTS[kind];
+  const { pending } = kind === 'candidates' ? o.candidateImport : o.admissionImport;
+  const download = button(cfg.downloadLabel, async () => {
     download.disabled = true;
     try {
-      const file = await api.file(`/api/orders/${o.summary.id}/candidates-template`);
+      const file = await api.file(`/api/orders/${o.summary.id}/${cfg.templatePath}`);
       saveFile(file);
       toast(`Modelo gerado: ${file.name}`, 'sucesso');
     } catch (e) {
@@ -556,17 +622,15 @@ function candidateImportPanel(o, reload) {
       download.disabled = false;
     }
   }, 'secundario');
-  const importButton = button('Importar candidatos', () => openCandidateImport(o, reload));
+  const importButton = button(cfg.importLabel, () => openSheetImport(o, reload, cfg));
   const body = pending
-    ? el('p', { class: 'mb-0' },
-      `${pending} posição(ões) em recrutamento aguardando candidato. Baixe o modelo (uma linha por posição pendente), `
-      + 'preencha os candidatos selecionados e importe: o sistema mostra uma prévia com os erros antes de gravar.')
-    : el('p', { class: 'texto-fraco mb-0' },
-      'Nenhuma posição aguardando candidato: as posições "Em recrutamento" deste pedido já têm candidato selecionado.');
-  return panel('Candidatos em lote', body, pending ? [download, importButton] : null);
+    ? el('p', { class: 'mb-0' }, cfg.pendingText(pending))
+    : el('p', { class: 'texto-fraco mb-0' }, cfg.emptyText);
+  return panel(cfg.panelTitle, body, pending ? [download, importButton] : null);
 }
 
-function openCandidateImport(order, reload) {
+/** Conferência e confirmação da planilha: erros por linha, avisos de data e a gravação só sem erros. */
+function openSheetImport(order, reload, cfg) {
   let file = null;
   const result = el('div');
   const input = el('input', {
@@ -587,7 +651,7 @@ function openCandidateImport(order, reload) {
   async function runPreview() {
     clear(result).append(el('div', { class: 'vazio' }, el('div', { class: 'spinner', style: { margin: '0 auto' } })));
     try {
-      const preview = await api.postForm(`/api/orders/${order.summary.id}/candidates-import/preview`, form());
+      const preview = await api.postForm(`/api/orders/${order.summary.id}/${cfg.importPath}/preview`, form());
       renderPreview(preview);
     } catch (e) {
       clear(result).append(errorMessage(e.message));
@@ -601,30 +665,15 @@ function openCandidateImport(order, reload) {
       ...p.fileErrors.map((m) => errorMessage(m)),
       el('div', { class: `mensagem ${s.canConfirm ? 'sucesso' : s.errors || p.fileErrors.length ? 'erro' : 'alerta'}` },
         el('strong', {}, s.canConfirm
-          ? `${s.ready} candidato(s) prontos para importar.`
+          ? cfg.readyText(s.ready)
           : s.errors ? `${s.errors} linha(s) com erro: corrija a planilha e selecione-a de novo. Nada será gravado até lá.`
             : p.fileErrors.length ? 'A planilha não pode ser importada.' : 'Nenhuma linha preenchida.'),
-        `${s.total} linha(s) no arquivo · ${s.ready} pronta(s) · ${s.errors} com erro · ${s.blank} em branco (as posições continuam aguardando candidato).`
+        `${s.total} linha(s) no arquivo · ${s.ready} pronta(s) · ${s.errors} com erro · ${s.blank} em branco (${cfg.blankNote}).`
         + (s.warnings ? ` ${s.warnings} linha(s) com aviso de data: confira; elas podem ser importadas.` : '')),
-      table([
-        { title: 'Linha', cls: 'num', field: 'line' },
-        { title: 'Vaga', cls: 'nowrap', field: 'position' },
-        { title: 'Nome', field: 'fullName' },
-        { title: 'CPF', cls: 'nowrap', field: 'cpf' },
-        { title: 'Nascimento', cls: 'nowrap', render: (r) => (r.birthDate ? date(r.birthDate) : '—') },
-        { title: 'Sexo', field: 'sexLabel' },
-        { title: 'Aprovação', cls: 'nowrap', render: (r) => (r.approvedAt ? date(r.approvedAt) : '—') },
-        {
-          title: 'Situação',
-          render: (r) => (r.errors.length
-            ? el('ul', { class: 'lista-erros' }, ...r.errors.map((e) => el('li', {}, el('strong', {}, `${e.label}: `), e.message)))
-            : el('div', {}, SITUATION[r.status],
-              r.warnings?.length ? el('ul', { class: 'lista-avisos-linha' }, ...r.warnings.map((w) => el('li', {}, w))) : null)),
-        },
-      ], p.rows, {
+      table([...cfg.columns, { title: 'Situação', render: (r) => situationList(r, SITUATION) }], p.rows, {
         rowClass: (r) => (r.status === 'error' ? 'linha-erro' : r.status === 'blank' ? 'linha-apagada'
           : r.warnings?.length ? 'linha-alerta' : ''),
-        empty: 'A planilha não tem linhas de candidatos.',
+        empty: cfg.emptyRows,
         dense: true,
       }),
     );
@@ -635,9 +684,9 @@ function openCandidateImport(order, reload) {
   const confirmButton = button('Confirmar importação', async () => {
     confirmButton.disabled = true;
     try {
-      const done = await api.postForm(`/api/orders/${order.summary.id}/candidates-import`, form());
+      const done = await api.postForm(`/api/orders/${order.summary.id}/${cfg.importPath}`, form());
       reference.close();
-      toast(`${done.imported} candidato(s) cadastrado(s) no pedido ${order.summary.number}.`, 'sucesso');
+      toast(cfg.doneText(done, order), 'sucesso', 8000);
       await reload(done.order);
     } catch (e) {
       clear(result).append(errorMessage(e.message));
@@ -647,12 +696,10 @@ function openCandidateImport(order, reload) {
   confirmButton.disabled = true;
 
   const reference = modal({
-    title: `Importar candidatos · pedido ${order.summary.number}`,
+    title: `${cfg.modalTitle} · pedido ${order.summary.number}`,
     wide: true,
     body: el('div', {},
-      el('div', { class: 'mensagem info' },
-        'Selecione a planilha preenchida a partir do modelo deste pedido. A prévia confere cada linha com as mesmas regras do cadastro '
-        + 'individual; a importação só é liberada quando todas as linhas preenchidas estiverem corretas.'),
+      el('div', { class: 'mensagem info' }, cfg.intro),
       el('div', { class: 'campo' }, el('label', {}, 'Planilha (.xlsx)'), input),
       result),
     footer: [button('Cancelar', () => reference.close(), 'secundario'), confirmButton],

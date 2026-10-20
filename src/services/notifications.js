@@ -102,6 +102,7 @@ function renderEmail(recipientName, event) {
     status: e.status,
     fields: e.fields,
     action: e.action,
+    bodyHtml: e.bodyHtml,
     button: e.button ?? 'Abrir no sistema',
     link: event.link,
   });

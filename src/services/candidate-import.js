@@ -10,7 +10,8 @@ import { isApproved } from '../domain/order.js';
 import * as P from '../domain/position.js';
 import { getOrderDetail } from './orders.js';
 import { isInitialLoadOpen } from './parameters.js';
-import { cellDate, cellText, readXlsx } from './xlsx-reader.js';
+import { fileChecks, isBlankLine, plain, readTemplateSheet, summarize } from './import-sheet.js';
+import { cellDate, cellText } from './xlsx-reader.js';
 import { generateXlsx } from './xlsx.js';
 
 /**
@@ -43,12 +44,10 @@ const COLUMNS = [
   { key: 'positionId', title: 'ID da posição (não alterar)', hidden: true, width: 38 },
   { key: 'orderId', title: 'ID do pedido (não alterar)', hidden: true, width: 38 },
 ];
-const EDITABLE = COLUMNS.filter((c) => c.editable).map((c) => c.key);
 const LABEL = Object.fromEntries(COLUMNS.map((c) => [c.key, c.title.replace(' *', '')]));
 
 const SEX_LABELS = { FEMALE: 'Feminino', MALE: 'Masculino', NOT_INFORMED: 'Não informado' };
 /** "não informado", "NAO INFORMADO", "F", "masc." → código do sexo. */
-const plain = (text) => String(text ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase().replace(/\.$/, '');
 const SEX_BY_TEXT = new Map([
   ...Object.entries(SEX_LABELS).map(([code, label]) => [plain(label), code]),
   ['f', CandidateSex.FEMALE], ['fem', CandidateSex.FEMALE], ['m', CandidateSex.MALE], ['masc', CandidateSex.MALE],
@@ -123,22 +122,7 @@ export async function candidateTemplate(ctx, orderId) {
 
 // ---------------------------------------------------------------- leitura e validação
 
-/** Lê a aba do modelo e localiza as colunas pelo título (a ordem pode mudar se alguém reabrir no Google Planilhas). */
-function readTemplate(buffer) {
-  const sheets = readXlsx(buffer);
-  const sheet = sheets.find((s) => s.name === SHEET) ?? sheets[0];
-  const header = (sheet?.rows[0] ?? []).map((v) => plain(cellText(v)).replace(/\s*\*$/, ''));
-  const index = Object.fromEntries(COLUMNS.map((c) => [c.key, header.indexOf(plain(c.title).replace(/\s*\*$/, ''))]));
-  const missing = COLUMNS.filter((c) => index[c.key] < 0);
-  if (missing.length) {
-    throw new BusinessRuleError(`A planilha não corresponde ao modelo de candidatos: faltam as colunas ${missing.map((c) => `"${c.title.replace(' *', '')}"`).join(', ')}. `
-      + 'Baixe o modelo do pedido e preencha nele.', 'file');
-  }
-  return sheet.rows.slice(1).map((cells, i) => ({
-    line: i + 2,
-    raw: Object.fromEntries(COLUMNS.map((c) => [c.key, cells[index[c.key]] ?? null])),
-  })).filter((r) => r.raw.positionId !== null || EDITABLE.some((k) => cellText(r.raw[k]) !== '' || typeof r.raw[k] === 'number'));
-}
+const readTemplate = (buffer) => readTemplateSheet(buffer, { sheetName: SHEET, columns: COLUMNS, templateName: 'candidatos' });
 
 /**
  * Valida as linhas contra o pedido. Simula o cadastro em `order`, mutando os objetos em memória: por isso recebe
@@ -151,18 +135,9 @@ async function validate(order, buffer) {
   const loadOpen = await isInitialLoadOpen();
   const eligible = new Map(eligiblePositions(order).map((p) => [p.id, p]));
   const byId = new Map(order.positions.map((p) => [p.id, p]));
-  const fileErrors = [];
+  const fileErrors = fileChecks(lines, order);
   const usedPositions = new Set();
   const usedCpfs = new Map();
-
-  const otherOrder = lines.find((l) => l.raw.orderId && cellText(l.raw.orderId) !== order.id);
-  if (otherOrder) {
-    fileErrors.push(`A planilha é de outro pedido (pedido ${cellText(otherOrder.raw.order) || '?'}). Baixe o modelo deste pedido (${order.number}).`);
-  }
-  const extra = lines.filter((l) => !l.raw.positionId).length;
-  if (extra) {
-    fileErrors.push(`${extra} linha(s) foram incluídas fora do modelo (sem a identificação da posição). Use só as linhas do modelo, uma por posição.`);
-  }
 
   const rows = [];
   for (const { line, raw } of lines) {
@@ -182,7 +157,7 @@ async function validate(order, buffer) {
     rows.push(row);
 
     if (!positionId) continue; // já contada em fileErrors
-    if (EDITABLE.every((k) => cellText(raw[k]) === '' && typeof raw[k] !== 'number')) {
+    if (isBlankLine(raw, COLUMNS)) {
       row.status = 'blank';
       continue;
     }
@@ -240,16 +215,6 @@ async function validate(order, buffer) {
   }
   return { rows, fileErrors };
 }
-
-const summarize = (rows, fileErrors) => {
-  const count = (status) => rows.filter((r) => r.status === status).length;
-  const ready = count('ready');
-  const errors = count('error');
-  return {
-    total: rows.length, ready, errors, blank: count('blank'), warnings: rows.filter((r) => r.warnings?.length).length,
-    canConfirm: !fileErrors.length && !errors && ready > 0,
-  };
-};
 
 const toDto = (row) => ({
   ...row,
