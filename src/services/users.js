@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import { execute, query, queryOne, transaction } from '../db/index.js';
 import { entity } from '../db/model.js';
 import { activeUsersByRoles } from '../db/repository.js';
@@ -47,10 +48,9 @@ export async function createUser(ctx, body) {
   const name = DateGuard.requireText(input.text('name'), 'Informe o nome.', 'name');
   const email = normalizeEmail(input.text('email'));
   const roles = validateRoles(input.raw('roles'));
-  const password = input.text('temporaryPassword') ?? '';
+  const { password, generated } = readTemporaryPassword(input);
   input.done();
   await ensureEmailFree(email, null);
-  checkPassword(password, 'temporaryPassword');
 
   const { hash, salt } = hashPassword(password);
   const user = ctx.uow.add(entity('User', {
@@ -62,7 +62,8 @@ export async function createUser(ctx, body) {
     await ctx.uow.save({ action: 'CREATE_USER' });
     await setRoles(ctx, user.id, roles, 'CREATE_USER');
   });
-  return toDto(user);
+  // A senha gerada volta só nesta resposta, para ser mostrada uma única vez: no banco fica apenas o hash.
+  return { ...(await toDto(user)), temporaryPassword: generated ? password : null };
 }
 
 export async function updateUser(ctx, id, body) {
@@ -87,16 +88,62 @@ export async function updateUser(ctx, id, body) {
   return toDto(user);
 }
 
+/**
+ * Redefinição pelo ADMIN: senha gerada (padrão) ou definida (com confirmação). Encerra as sessões do usuário, exige
+ * a troca no próximo acesso e registra no histórico quem redefiniu, de quem e quando — nunca a senha nem o hash.
+ * A senha gerada volta só nesta resposta (a rota responde sem cache), para ser mostrada uma única vez.
+ */
 export async function resetPassword(ctx, id, body) {
   Permissions.require(ctx.user, Roles.Admin);
   const user = await load(ctx, id);
-  const password = new Input(body).text('temporaryPassword') ?? '';
-  checkPassword(password, 'temporaryPassword');
+  const input = new Input(body);
+  const { password, generated } = readTemporaryPassword(input);
+  input.done();
   const { hash, salt } = hashPassword(password);
   Object.assign(user, { passwordHash: hash, passwordSalt: salt, mustChangePassword: true, lockoutEnd: null, failedAttempts: 0 });
+  // O hash fica fora do log de auditoria (IGNORED_FIELDS): o registro da redefinição é explícito, sem a senha.
+  ctx.uow.log({
+    entity: 'User', entityId: user.id, action: 'RESET_PASSWORD', field: 'Password',
+    newValue: generated ? 'Senha provisória gerada automaticamente' : 'Senha provisória definida pelo administrador',
+  });
   await ctx.uow.save({ action: 'RESET_PASSWORD' });
   // Senha redefinida pelo administrador: as sessões abertas com a senha antiga deixam de valer.
   await execute('DELETE FROM sessions WHERE user_id = ?', id);
+  return { userName: user.name, mustChangePassword: true, temporaryPassword: generated ? password : null };
+}
+
+// ---------------------------------------------------------------- senha provisória
+
+/** Sem caracteres que se confundem ao ditar ou ler (0/O, 1/l/I) e com especiais fáceis de digitar. */
+const PASSWORD_SETS = ['ABCDEFGHJKLMNPQRSTUVWXYZ', 'abcdefghijkmnpqrstuvwxyz', '23456789', '!@#$%&*?-+'];
+export const GENERATED_PASSWORD_LENGTH = 12;
+
+/** 12 caracteres aleatórios (crypto), com ao menos uma maiúscula, minúscula, número e especial: atende a política. */
+export function generateTemporaryPassword() {
+  const all = PASSWORD_SETS.join('');
+  const chars = PASSWORD_SETS.map((set) => set[randomInt(set.length)]);
+  while (chars.length < GENERATED_PASSWORD_LENGTH) chars.push(all[randomInt(all.length)]);
+  for (let i = chars.length - 1; i > 0; i -= 1) {
+    const j = randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
+}
+
+/**
+ * Modo da senha provisória: GENERATE (padrão) gera; MANUAL exige a senha e a confirmação iguais, na política. Sem o
+ * modo e com a senha informada (script de usuários, chamadas antigas), vale a senha informada.
+ */
+function readTemporaryPassword(input) {
+  const mode = input.option('passwordMode', { GENERATE: 'GENERATE', MANUAL: 'MANUAL' }, { required: false });
+  const typed = input.text('temporaryPassword') ?? '';
+  const confirmation = input.text('passwordConfirmation');
+  if (mode === 'GENERATE' || (!mode && !typed)) return { password: generateTemporaryPassword(), generated: true };
+  checkPassword(typed, 'temporaryPassword');
+  if (mode === 'MANUAL' && confirmation !== typed) {
+    throw new BusinessRuleError('A confirmação não confere com a senha informada.', 'passwordConfirmation');
+  }
+  return { password: typed, generated: false };
 }
 
 export async function changeOwnPassword(ctx, body) {

@@ -58,9 +58,13 @@ parameterRoutes.put('/:key', json((req) => updateParameter(req.ctx, req.params.k
 export const userRoutes = Router();
 userRoutes.get('/', json((req) => listUsers(req.ctx)));
 userRoutes.get('/by-role/:role', json((req) => listByRole(req.ctx, req.params.role)));
-userRoutes.post('/', json((req) => createUser(req.ctx, req.body)));
+userRoutes.post('/', route(async (req, res) => {
+  // A resposta pode trazer a senha provisória gerada: o navegador e proxies não guardam cópia.
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(await createUser(req.ctx, req.body));
+}));
 userRoutes.put(`/:id${ID}`, json((req) => updateUser(req.ctx, idParam(req), req.body)));
 userRoutes.post(`/:id${ID}/reset-password`, route(async (req, res) => {
-  await resetPassword(req.ctx, idParam(req), req.body);
-  res.status(204).end();
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(await resetPassword(req.ctx, idParam(req), req.body));
 }));

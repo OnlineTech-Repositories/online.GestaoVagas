@@ -384,6 +384,32 @@ test('1º dia em lote: o NACC marca os que compareceram, aplica data e justifica
   assert.doesNotMatch((await open(`/pedidos/${target.summary.id}`, 'Pedido')).textContent, /1º dia efetivo em lote/);
 });
 
+test('Redefinir senha: botão na edição, senha gerada por padrão e mostrada uma única vez', async (t) => {
+  if (skip(t)) return;
+  await signIn('admin@demo.local');
+  // Usuário só deste teste: a redefinição encerra as sessões, e os outros testes usam os usuários da demonstração.
+  await apiModule.api.post('/api/users', { name: 'Pessoa da Redefinição', email: 'redefinicao@teste.invalid', roles: ['DP'], passwordMode: 'GENERATE' });
+  const root = await open('/usuarios', 'Usuários e perfis');
+  root.querySelectorAll('tr').find((tr) => tr.textContent.includes('Pessoa da Redefinição')).click();
+  let dialog = document.getElementById('modal-area').querySelector('.modal');
+  assert.doesNotMatch(dialog.textContent, /Nova senha provisória/, 'o campo de senha saiu da edição');
+  [...dialog.querySelectorAll('button')].find((b) => b.textContent === 'Redefinir senha').click();
+  await wait(50);
+  dialog = document.getElementById('modal-area').querySelector('.modal');
+  assert.match(dialog.textContent, /Redefinir senha · Pessoa da Redefinição/);
+  assert.match(dialog.textContent, /A senha aparece uma única vez/);
+  assert.match(dialog.textContent, /serão encerradas e a troca de senha será exigida/);
+  const radios = [...dialog.querySelectorAll('input')].filter((i) => i.getAttribute('type') === 'radio');
+  assert.equal(radios.find((r) => r.value === 'GENERATE').checked, true, 'gerar é o padrão');
+  [...dialog.querySelectorAll('button')].find((b) => b.textContent === 'Redefinir senha').click();
+  await wait(300);
+  dialog = document.getElementById('modal-area').querySelector('.modal');
+  assert.match(dialog.textContent, /Senha provisória de Pessoa da Redefinição/);
+  assert.equal(dialog.querySelector('code').textContent.length, 12);
+  assert.match(dialog.textContent, /única vez que a senha aparece/);
+  dialog.querySelector('.modal-fechar').click();
+});
+
 test('rota sem permissão volta ao painel (a API também nega com 403)', async (t) => {
   if (skip(t)) return;
   await signIn('rh@demo.local');

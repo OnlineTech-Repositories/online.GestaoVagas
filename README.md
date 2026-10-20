@@ -317,3 +317,9 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     selecionados (N)" grava pela mesma regra do registro individual. Os desmarcados seguem "Aguardando 1º dia" (não
     viram "não compareceu"). Decisão do usuário: com qualquer erro, nada é gravado. Até 30 posições e 21 arquivos por
     lote; admitidos sem matrícula aparecem à parte, sem poder ser confirmados.
+30. **Redefinição de senha pelo administrador (melhoria pedida pelo usuário em 20/10/2026):** botão "Redefinir senha" na
+    edição do usuário (o campo de senha opcional saiu do formulário), com "Gerar senha forte automaticamente" (padrão: 12
+    caracteres aleatórios gerados no servidor, sem caracteres ambíguos, na política) ou "Definir uma senha específica"
+    (com confirmação). A senha gerada volta só na resposta (sem cache) e aparece uma única vez, com botão de copiar.
+    Sessões do usuário encerradas, troca obrigatória no próximo acesso e registro no histórico de quem redefiniu, de
+    quem e quando — sem a senha nem o hash. O cadastro de usuário novo usa a mesma escolha (decisão do usuário).
