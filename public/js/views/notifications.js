@@ -3,6 +3,8 @@ import { el, clear, panelNoPadding, loading, dateTime, toast, button } from '../
 import { navigate, updateCounters } from '../app.js';
 
 const ORDER_TYPES = ['ORDER_CREATED', 'ORDER_APPROVED', 'ORDER_NOT_APPROVED', 'RH_ASSIGNED', 'RH_UNASSIGNED'];
+/** Aviso consolidado de posições paradas: abre o pedido com elas em destaque. */
+const ORDER_STALE = 'ORDER_POSITIONS_STALE';
 const RATE_TYPES = ['RATE_PENDING', 'RATE_REJECTED', 'RATE_VALIDATED'];
 
 const TITLES = {
@@ -23,6 +25,7 @@ const TITLES = {
   SLA_AT_RISK: 'Posição em risco de vencer o SLA',
   SLA_OVERDUE: 'Escalonamento: SLA vencido',
   POSITION_STALE: 'Posição sem atualização',
+  ORDER_POSITIONS_STALE: 'Posições sem atualização no pedido',
 };
 
 /** Notificações internas do usuário (seção 10.1); clicar abre o registro e marca como lida. */
@@ -46,7 +49,8 @@ export async function notificationsScreen(target) {
   async function open(n) {
     if (!n.readAt) api.post(`/api/notifications/${n.id}/read`).then(updateCounters).catch(() => {});
     if (!n.entityId) return;
-    if (ORDER_TYPES.includes(n.type)) navigate(`/pedidos/${n.entityId}`);
+    if (n.type === ORDER_STALE) navigate(`/pedidos/${n.entityId}?paradas=1`);
+    else if (ORDER_TYPES.includes(n.type)) navigate(`/pedidos/${n.entityId}`);
     else if (RATE_TYPES.includes(n.type)) navigate('/valores');
     else navigate(`/posicoes/${n.entityId}`);
   }

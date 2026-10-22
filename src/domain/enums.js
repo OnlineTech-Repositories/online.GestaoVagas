@@ -154,7 +154,9 @@ export const NotificationTypes = Object.freeze({
   ContractEnded: 'CONTRACT_ENDED',
   SlaAtRisk: 'SLA_AT_RISK',
   SlaOverdue: 'SLA_OVERDUE',
+  // Aviso antigo, um por posição; desde 22/10/2026 as posições paradas vão consolidadas por pedido.
   PositionStale: 'POSITION_STALE',
+  OrderPositionsStale: 'ORDER_POSITIONS_STALE',
 });
 
 /** Alertas da rotina diária registrados em position_alerts (um por posição; vaga parada, um por período parado). */

@@ -16,6 +16,8 @@ import { renderLayout } from './email-layout.js';
 export const links = {
   position: (id) => `${config.baseUrl}/#/posicoes/${id}`,
   order: (id) => `${config.baseUrl}/#/pedidos/${id}`,
+  /** Pedido com as posições sem atualização em destaque. */
+  orderStale: (id) => `${config.baseUrl}/#/pedidos/${id}?paradas=1`,
   contractRates: () => `${config.baseUrl}/#/valores`,
   dashboard: () => `${config.baseUrl}/#/`,
 };
@@ -35,17 +37,24 @@ export function queueEmail(uow, recipient, subject, htmlBody) {
  * fields, action, button } — ver email-layout.js.
  * @param {{ type: string, entityId?: string|null, subject: string, message: string, link?: string|null, email?: object }} event
  */
-export async function notify(uow, event, { roles = null, userIds = null } = {}) {
+export async function notify(uow, event, audience = {}) {
+  for (const r of (await resolveRecipients(audience)).values()) deliver(uow, r, event);
+}
+
+/** Usuários ativos dos perfis e/ou os usuários informados, sem repetir quem está nos dois (Map por id). */
+export async function resolveRecipients({ roles = null, userIds = null } = {}) {
   const recipients = new Map();
   if (roles?.length) for (const u of await activeUsersByRoles(roles)) recipients.set(u.id, u);
   if (userIds?.length) for (const u of (await usersByIds(userIds)).values()) recipients.set(u.id, u);
+  return recipients;
+}
 
-  for (const r of recipients.values()) {
-    uow.add(entity('Notification', {
-      userId: r.id, type: event.type, entityId: event.entityId ?? null, message: event.message, readAt: null,
-    }));
-    queueEmail(uow, r, event.subject, renderEmail(r.name, event));
-  }
+/** Notificação interna e e-mail do evento para um destinatário. Não grava: entra no save() da operação. */
+export function deliver(uow, recipient, event) {
+  uow.add(entity('Notification', {
+    userId: recipient.id, type: event.type, entityId: event.entityId ?? null, message: event.message, readAt: null,
+  }));
+  queueEmail(uow, recipient, event.subject, renderEmail(recipient.name, event));
 }
 
 const toDto = (n) => ({

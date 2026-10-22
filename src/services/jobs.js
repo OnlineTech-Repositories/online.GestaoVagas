@@ -117,7 +117,8 @@ export async function runDailyJob() {
 
   run.finishedAt = utcNow();
   const summary = `Posições encerradas por fim de vigência: ${closed}. Em risco: ${alerts.atRisk}. `
-    + `Vencidas (escalonamento): ${alerts.overdue}. Sem atualização: ${alerts.stale}. `
+    + `Vencidas (escalonamento): ${alerts.overdue}. Sem atualização: ${alerts.stale} `
+    + `(${alerts.staleMessages} aviso(s) por pedido). `
     + `Resumo diário: ${digestRecipients} destinatário(s).`;
   // Nova execução no mesmo dia acrescenta: sobrescrever apagaria o registro do que a primeira fez (o resumo enviado).
   run.summary = firstRunToday ? summary : `${run.summary} | Nova execução: ${summary}`.slice(0, 4000);

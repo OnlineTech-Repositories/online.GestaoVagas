@@ -8,7 +8,7 @@ import { formatBr, today as todayDate, utcNow } from '../domain/dates.js';
 import { BusinessRuleError, ForbiddenError, NotFoundError } from '../domain/errors.js';
 import {
   ALL_ROLES, ContractStatus, DemandType, EvidenceKind, Labels, Modality, NotificationTypes, OrderApprovalStatus, OrderStatus,
-  PositionStatus, Roles, SlaTargetSource, TermType,
+  ParameterKeys, PositionStatus, Roles, SlaTargetSource, TermType,
 } from '../domain/enums.js';
 import {
   cleanMultiline, DateGuard, EvidenceFiles, hasAnyRole, hasRole, isRhAnalyst, JOB_DESCRIPTION_MAX_LENGTH, Permissions, RhAccess,
@@ -20,7 +20,8 @@ import { canImportCandidates, eligiblePositions } from './candidate-import.js';
 import { canImportAdmissions, eligibleForAdmission } from './admission-import.js';
 import { firstDayBatchInfo } from './first-day-batch.js';
 import { links, notify } from './notifications.js';
-import { calcSettings, isInitialLoadOpen } from './parameters.js';
+import { calcSettings, getInt, isInitialLoadOpen } from './parameters.js';
+import { idleDays, isStale } from './alerts.js';
 import { toSummary } from './position-views.js';
 import { DateReview } from './date-review.js';
 import { orderFields } from './notice-fields.js';
@@ -350,6 +351,7 @@ export async function getOrderDetail(ctx, id) {
     ...order.positions.flatMap((p) => [p.firstDayConfirmedBy, p.exitTermination?.createdBy]),
   ]);
   const metrics = new Map(order.positions.map((p) => [p.id, calculate(p, today, settings)]));
+  const staleDays = await getInt(ParameterKeys.StaleDays);
   const positions = order.positions.filter((p) => !isLegacyOrigin(p))
     .sort((a, b) => a.slotNumber - b.slotNumber || a.cycle - b.cycle)
     .map((p) => toSummary(p, metrics.get(p.id), showMoney));
@@ -405,6 +407,12 @@ export async function getOrderDetail(ctx, id) {
         status: p.status, stageStatus: P.stageStatus(p),
       })),
     } : null,
+    // Posições sem atualização (mesma regra do aviso da rotina diária), destacadas pelo link do aviso consolidado.
+    stale: {
+      days: staleDays,
+      positions: order.positions.filter((p) => P.isOpen(p) && !isLegacyOrigin(p) && isStale({ ...p, order }, today, staleDays))
+        .map((p) => ({ positionId: p.id, idleDays: idleDays(p, today) })),
+    },
     slots: buildSlots(order, metrics, names, showMoney),
   };
 }

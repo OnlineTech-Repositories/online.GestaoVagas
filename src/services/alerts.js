@@ -1,10 +1,11 @@
 import { inList, query } from '../db/index.js';
 import { entity } from '../db/model.js';
 import { diffDays, formatBr, localDateOf, utcNow } from '../domain/dates.js';
-import { AlertKind, NotificationTypes, OrderApprovalStatus, PositionStatus as S, Roles, SlaSituation } from '../domain/enums.js';
+import { AlertKind, Labels, NotificationTypes, OrderApprovalStatus, PositionStatus as S, Roles, SlaSituation } from '../domain/enums.js';
 import { activeRhAnalysts } from '../domain/order.js';
-import { links, notify } from './notifications.js';
-import { positionFields } from './notice-fields.js';
+import { dataTable, mutedText, sectionTitle } from './email-layout.js';
+import { deliver, links, notify, resolveRecipients } from './notifications.js';
+import { clientUnit, positionFields, unitLabel } from './notice-fields.js';
 import { describe } from './positions.js';
 
 /**
@@ -14,7 +15,8 @@ import { describe } from './positions.js';
  * Cada alerta dispara UMA vez — "nunca a cada execução do job". O que já foi avisado fica em position_alerts, com
  * chave única: a rotina pode rodar de novo no mesmo dia (ou o servidor reiniciar no meio dela) sem repetir aviso.
  * Em risco e Vencido valem uma vez por posição (fase 2: "o escalonamento dispara uma única vez por posição"); vaga
- * parada, uma vez por período parado — a referência é o instante da última atualização.
+ * parada, uma vez por período parado — a referência é o instante da última atualização. As vagas paradas vão num
+ * aviso por pedido e destinatário (melhoria pedida pelo usuário em 22/10/2026), não um por posição.
  */
 
 /** Escalonamento (Vencido): Coordenação de RH (Gestor de RH), Diretor Comercial (Gestor) e Controladoria. */
@@ -54,6 +56,12 @@ export const idleDays = (p, today) => diffDays(localDateOf(lastActivity(p)), tod
 
 export const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
+/** Posição parada: tem próxima ação (não está pausada) e está sem atualização há `staleDays` dias ou mais. */
+export const isStale = (p, today, staleDays) => Boolean(nextAction(p)) && idleDays(p, today) >= staleDays;
+
+/** Linhas da tabela do aviso consolidado (decisão do usuário): o Gmail corta mensagens acima de ~100 KB. */
+export const STALE_EMAIL_MAX_ROWS = 100;
+
 const key = (positionId, kind, reference = '') => `${positionId}|${kind}|${reference}`;
 
 async function sentAlerts(positionIds) {
@@ -74,7 +82,8 @@ export async function runAlerts(uow, rows, today, staleDays) {
     sent.add(key(p.id, kind, reference));
     uow.add(entity('PositionAlert', { positionId: p.id, kind, reference, createdAt: utcNow() }));
   };
-  const counts = { atRisk: 0, overdue: 0, stale: 0 };
+  const counts = { atRisk: 0, overdue: 0, stale: 0, staleMessages: 0 };
+  const stale = [];
 
   for (const { p, m } of rows) {
     const action = nextAction(p);
@@ -124,28 +133,111 @@ export async function runAlerts(uow, rows, today, staleDays) {
       }, rhTeam(p.order));
     }
 
-    const reference = lastActivity(p);
-    const idle = idleDays(p, today);
-    if (action && idle >= staleDays && !sent.has(key(p.id, AlertKind.STALE, reference))) {
-      record(p, AlertKind.STALE, reference);
-      counts.stale += 1;
-      await notify(uow, {
-        type: NotificationTypes.PositionStale,
-        entityId: p.id,
-        subject: `Posição sem atualização há ${plural(idle, 'dia')} · Pedido ${p.order.number} · posição ${p.slotNumber}`,
-        message: `${describe(p)}: sem atualização desde ${formatBr(localDateOf(reference))} (${plural(idle, 'dia')}).${next}`,
-        link: links.position(p.id),
-        email: {
-          title: 'Posição sem atualização',
-          summary: 'Nenhuma etapa desta posição foi registrada nos últimos dias.',
-          status: { label: `Parada há ${plural(idle, 'dia')}`, tone: 'warning' },
-          fields: [...positionFields(p), ['Última atualização', formatBr(localDateOf(reference)), { strong: true }],
-            ['Próxima ação', action.label]],
-          action: `${action.label}. Se a etapa já aconteceu, registre-a no sistema.`,
-          button: 'Consultar posição',
-        },
-      }, { roles: action.roles, userIds: action.userIds });
+    if (isStale(p, today, staleDays)) {
+      const reference = lastActivity(p);
+      const isNew = !sent.has(key(p.id, AlertKind.STALE, reference));
+      if (isNew) {
+        record(p, AlertKind.STALE, reference);
+        counts.stale += 1;
+      }
+      stale.push({ p, action, idle: idleDays(p, today), since: localDateOf(reference), isNew });
     }
   }
+  counts.staleMessages = await notifyStale(uow, stale, staleDays);
   return counts;
+}
+
+/**
+ * Posições paradas, consolidadas: um aviso por pedido e destinatário, com as posições do pedido pelas quais ele
+ * responde (a próxima ação define quem: RH do pedido, NACC ou Comercial). Sai só quando há posição parada nova para
+ * ele; a tabela traz todas as paradas, com as novas marcadas (decisão do usuário). As novas já foram para
+ * position_alerts na mesma transação: a rotina rodada de novo no ciclo não repete o aviso.
+ * @returns {Promise<number>} avisos enviados
+ */
+async function notifyStale(uow, stale, staleDays) {
+  const audiences = new Map();
+  const audience = async ({ roles, userIds = [] }) => {
+    const cacheKey = JSON.stringify([roles, userIds]);
+    if (!audiences.has(cacheKey)) audiences.set(cacheKey, await resolveRecipients({ roles, userIds }));
+    return audiences.get(cacheKey);
+  };
+
+  const byOrder = new Map();
+  for (const item of stale) {
+    const { order } = item.p;
+    if (!byOrder.has(order.id)) byOrder.set(order.id, { order, people: new Map() });
+    const { people } = byOrder.get(order.id);
+    for (const user of (await audience(item.action)).values()) {
+      if (!people.has(user.id)) people.set(user.id, { user, items: [] });
+      people.get(user.id).items.push(item);
+    }
+  }
+
+  const reduced = await reducedByOrder([...byOrder.keys()]);
+  let messages = 0;
+  for (const { order, people } of byOrder.values()) {
+    const current = order.quantity - (reduced.get(order.id) ?? 0);
+    for (const { user, items } of people.values()) {
+      if (!items.some((i) => i.isNew)) continue;
+      deliver(uow, user, staleEvent(order, items, staleDays, current));
+      messages += 1;
+    }
+  }
+  return messages;
+}
+
+/** Posições retiradas do quadro por pedido, para a quantidade vigente (solicitada − reduzidas). */
+async function reducedByOrder(orderIds) {
+  if (!orderIds.length) return new Map();
+  const list = inList(orderIds);
+  const rows = await query(
+    `SELECT order_id, COUNT(*) AS n FROM positions WHERE status = ? AND order_id IN (${list.sql}) GROUP BY order_id`,
+    S.CLOSED_HEADCOUNT_REDUCED, ...list.params);
+  return new Map(rows.map((r) => [r.order_id, Number(r.n)]));
+}
+
+/** Aviso consolidado do pedido para um destinatário: as mais antigas primeiro, dias sem movimentação por posição. */
+export function staleEvent(order, items, staleDays, current) {
+  const sorted = [...items].sort((a, b) => b.idle - a.idle || a.p.slotNumber - b.p.slotNumber || a.p.cycle - b.p.cycle);
+  const total = sorted.length;
+  const fresh = sorted.filter((i) => i.isNew).length;
+  const marked = fresh < total;
+  const shown = sorted.slice(0, STALE_EMAIL_MAX_ROWS);
+  const count = `${total} ${total === 1 ? 'posição' : 'posições'} sem atualização`;
+  const actions = [...new Set(sorted.map((i) => i.action.label))];
+  const contract = order.contract;
+  const rest = total - shown.length;
+  return {
+    type: NotificationTypes.OrderPositionsStale,
+    entityId: order.id,
+    subject: `Pedido ${order.number} — ${count}`,
+    message: `Pedido ${order.number} · ${clientUnit(contract)}: ${count} há ${plural(staleDays, 'dia')} ou mais`
+      + `${marked ? ` (${fresh} ${fresh === 1 ? 'nova' : 'novas'} neste aviso)` : ''}. Próxima ação: ${actions.join('; ')}.`,
+    link: links.orderStale(order.id),
+    email: {
+      title: 'Posições sem atualização',
+      summary: `Nenhuma etapa foi registrada nestas posições do pedido há ${plural(staleDays, 'dia')} ou mais. `
+        + 'A próxima ação delas é sua.',
+      status: { label: `Até ${plural(sorted[0].idle, 'dia')} sem atualização`, tone: 'warning' },
+      fields: [
+        ['Pedido', `Nº ${order.number}`, { strong: true }],
+        ['Cliente', contract?.client?.legalName],
+        ['Unidade', unitLabel(contract)],
+        ['Contrato', contract?.name],
+        ['Cargo', order.jobRole?.name],
+        ['Local de trabalho', order.workLocation?.name],
+        ['Posições vigentes do pedido', String(current)],
+        ['Exigem atualização', String(total), { tone: 'warning' }],
+      ],
+      action: `${actions.join('; ')}. Se a etapa já aconteceu, registre-a no sistema.`,
+      bodyHtml: sectionTitle(`Posições sinalizadas (${total})`)
+        + dataTable(['Posição', 'Status atual', 'Última atualização', 'Dias sem movimentação'], shown.map((i) => [
+          `${order.number}-${i.p.slotNumber}${i.p.cycle > 1 ? ` (reposição nº ${i.p.cycle - 1})` : ''}${marked && i.isNew ? ' · novo aviso' : ''}`,
+          Labels.positionStatus[i.p.status], formatBr(i.since), String(i.idle),
+        ]))
+        + (marked ? mutedText('"Novo aviso": posição que ficou parada depois do último aviso deste pedido.') : '')
+        + (rest ? mutedText(`… e mais ${rest} ${rest === 1 ? 'posição' : 'posições'}. Consulte todas no sistema.`) : ''),
+      button: 'Consultar posições do pedido',
+    },
+  };
 }

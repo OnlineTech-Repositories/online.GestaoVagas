@@ -310,7 +310,9 @@ export async function newOrderScreen(target) {
 // Detalhe do pedido
 // ---------------------------------------------------------------------
 
-export async function orderDetailScreen(target, id) {
+export async function orderDetailScreen(target, id, query) {
+  // Vindo do aviso de posições sem atualização: as paradas aparecem primeiro e destacadas.
+  const highlightStale = query?.get('paradas') === '1';
   async function reload(data) {
     const o = data ?? (await api.get(`/api/orders/${id}`));
     const s = o.summary;
@@ -378,7 +380,7 @@ export async function orderDetailScreen(target, id) {
       panel('Descrição da vaga', o.jobDescription
         ? el('div', { class: 'texto-livre' }, o.jobDescription)
         : el('p', { class: 'texto-fraco mb-0' }, 'Nenhuma descrição informada.')),
-      panelNoPadding('Posições', slotsTable(o)),
+      panelNoPadding('Posições', slotsTable(o, highlightStale)),
     );
   }
 
@@ -409,15 +411,24 @@ function slotSummary(o) {
  * Uma linha por vaga: o ciclo atual (colaborador ou candidato, status, reposição). Dias descobertos e valores somam
  * todos os ciclos da vaga; “Ver histórico de ocupantes” abre os ciclos anteriores logo abaixo da linha.
  */
-function slotsTable(o) {
+function slotsTable(o, highlightStale = false) {
+  const idle = new Map(highlightStale ? o.stale.positions.map((x) => [x.positionId, x.idleDays]) : []);
   const rows = o.slots.map((sl) => ({
     ...sl.current,
     uncoveredDays: sl.uncoveredDaysTotal,
     lost: sl.lostTotal ?? sl.current.lost,
     deferred: sl.deferredTotal ?? sl.current.deferred,
     slot: sl,
+    idleDays: idle.get(sl.current.id) ?? null,
   }));
+  // As paradas primeiro, das mais antigas para as mais recentes; as demais na ordem das vagas.
+  if (idle.size) rows.sort((a, b) => (b.idleDays ?? -1) - (a.idleDays ?? -1));
   const columns = [
+    ...(idle.size ? [{
+      title: 'Sem atualização',
+      cls: 'nowrap',
+      render: (r) => (r.idleDays === null ? el('span', { class: 'texto-fraco' }, '—') : `${r.idleDays} dia${r.idleDays === 1 ? '' : 's'}`),
+    }] : []),
     ...positionColumns({ money: state.user.canSeeDetailedValues, employee: true, client: false, rh: false }),
     {
       title: 'Ocupantes',
@@ -427,8 +438,18 @@ function slotsTable(o) {
         : el('span', { class: 'texto-fraco' }, '—')),
     },
   ];
+  const n = o.stale.positions.length;
+  const staleNotice = highlightStale ? el('div', { class: 'aviso-painel', role: 'status' }, n
+    ? `${n} ${n === 1 ? 'posição está' : 'posições estão'} sem atualização há ${o.stale.days} dias ou mais: aparecem primeiro, destacadas. `
+      + 'Se a etapa já aconteceu, registre-a na posição.'
+    : 'Nenhuma posição deste pedido está sem atualização agora.') : null;
   return el('div', {},
-    table(columns, rows, { onClick: (p) => navigate(`/posicoes/${p.id}`), rowClass: positionRowClass, dense: true }),
+    staleNotice,
+    table(columns, rows, {
+      onClick: (p) => navigate(`/posicoes/${p.id}`),
+      rowClass: (r) => (r.idleDays !== null ? 'linha-alerta' : positionRowClass(r)),
+      dense: true,
+    }),
     el('div', { class: 'aviso-painel' }, 'Uma linha por vaga contratada. Dias descobertos e valores somam todos os ciclos da vaga (reposições incluídas).'));
 }
 

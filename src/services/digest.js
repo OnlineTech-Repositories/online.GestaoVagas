@@ -1,7 +1,7 @@
 import { activeUsersByRoles } from '../db/repository.js';
 import { diffDays, formatBr, localDateOf } from '../domain/dates.js';
 import { Labels, PositionStatus as S, Roles, SlaSituation } from '../domain/enums.js';
-import { idleDays, lastActivity, nextAction, plural } from './alerts.js';
+import { idleDays, isStale, lastActivity, nextAction, plural } from './alerts.js';
 import { dataTable, mutedText, renderLayout, sectionTitle } from './email-layout.js';
 import { links, queueEmail } from './notifications.js';
 import { describe } from './positions.js';
@@ -62,7 +62,7 @@ export function buildDigest(rows, today, staleDays) {
     .sort((a, b) => b.days - a.days);
 
   const stale = rows
-    .filter(({ p }) => nextAction(p) && idleDays(p, today) >= staleDays)
+    .filter(({ p }) => isStale(p, today, staleDays))
     .map(({ p }) => ({
       position: describe(p), since: localDateOf(lastActivity(p)), days: idleDays(p, today), next: nextAction(p).label,
     }))

@@ -332,3 +332,12 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     conta até a data efetiva, como no cancelamento (segue "perda no cancelamento após abertura"). Data futura pede
     confirmação, como as demais datas. O pedido mostra a quantidade vigente e, ao lado, a do registro, os acréscimos e
     as reduções; o histórico guarda quem, quando, a data efetiva, as posições e as quantidades antes e depois.
+32. **Posições sem atualização consolidadas por pedido (melhoria pedida pelo usuário em 22/10/2026):** a rotina diária
+    manda um aviso por pedido e destinatário (e-mail e sino), não um por posição, com as posições do pedido pelas quais
+    a pessoa responde (a próxima ação define quem: RH do pedido, NACC ou Comercial). Assunto "Pedido N — X posições sem
+    atualização"; quadro com pedido, cliente, unidade, contrato, cargo, posições vigentes e quantas exigem atualização;
+    tabela com posição, status atual, última atualização e dias sem movimentação de cada uma, das mais antigas para as
+    mais recentes (até 100 linhas; o restante no sistema). Mesmos critérios, destinatários e periodicidade: o aviso sai
+    quando há posição parada nova para a pessoa e traz todas as paradas do pedido, com as novas marcadas (decisão do
+    usuário); reprocessar a rotina não repete. "Consultar posições do pedido" abre o pedido com as paradas primeiro, em
+    destaque e com os dias sem atualização.

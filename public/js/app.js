@@ -62,7 +62,7 @@ const ROUTES = [
     pattern: new RegExp(`^/pedidos/${GUID}$`),
     title: 'Pedido',
     section: 'Operação',
-    render: (target, [id]) => orderDetailScreen(target, id),
+    render: (target, [id], query) => orderDetailScreen(target, id, query),
   },
   {
     pattern: /^\/desligamentos\/novo$/,
