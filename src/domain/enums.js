@@ -14,6 +14,8 @@ export const PositionStatus = values(
   'AWAITING_CONFIRMATION', 'OPEN', 'RECRUITING', 'CANDIDATE_APPROVED', 'IN_ADMISSION',
   // Admissão concluída (com matrícula): aguarda só a confirmação do 1º dia pelo NACC.
   'AWAITING_FIRST_DAY', 'PAUSED', 'FILLED', 'CLOSED_CLIENT_CANCELLED', 'CLOSED_CONTRACT_ENDED',
+  // Retirada do quadro do pedido pelo ADMIN, a pedido do cliente (redução de posições): encerra como o cancelamento.
+  'CLOSED_HEADCOUNT_REDUCED',
 );
 
 /** Calculado, não persistido. */
@@ -21,7 +23,8 @@ export const OrderStatus = values('IN_PROGRESS', 'FULFILLED', 'CANCELLED');
 /** Aprovação formal do pedido pelo cliente: todo pedido nasce aguardando. */
 export const OrderApprovalStatus = values('AWAITING_CLIENT_APPROVAL', 'APPROVED', 'NOT_APPROVED');
 export const CandidateSex = values('FEMALE', 'MALE', 'NOT_INFORMED');
-export const EvidenceKind = values('FIRST_DAY');
+/** FIRST_DAY: comparecimento no 1º dia. HEADCOUNT_REDUCTION: solicitação do cliente para reduzir o quadro. */
+export const EvidenceKind = values('FIRST_DAY', 'HEADCOUNT_REDUCTION');
 /** Calculado, não persistido. */
 export const SlaSituation = values('ON_TIME', 'AT_RISK', 'OVERDUE', 'NO_TARGET');
 export const RateStatus = values('PENDING', 'VALIDATED', 'REJECTED');
@@ -43,7 +46,7 @@ export const RhStage = values(
 );
 
 /** Status que encerram a posição: fora do "estado aberto". */
-export const CLOSED_STATUSES = Object.freeze(['FILLED', 'CLOSED_CLIENT_CANCELLED', 'CLOSED_CONTRACT_ENDED']);
+export const CLOSED_STATUSES = Object.freeze(['FILLED', 'CLOSED_CLIENT_CANCELLED', 'CLOSED_CONTRACT_ENDED', 'CLOSED_HEADCOUNT_REDUCED']);
 
 /** Perfis do sistema (seção 4 da SPEC). Um usuário pode ter vários. */
 export const Roles = Object.freeze({
@@ -123,6 +126,7 @@ export const Labels = Object.freeze({
     PAUSED: 'Pausada',
     FILLED: 'Preenchida',
     CLOSED_CLIENT_CANCELLED: 'Encerrada: cliente cancelou',
+    CLOSED_HEADCOUNT_REDUCED: 'Cancelada por redução do quadro',
     CLOSED_CONTRACT_ENDED: 'Encerrada: contrato encerrou',
   },
   demandType: { NEW: 'Vaga nova', REPLACEMENT: 'Reposição' },

@@ -1,4 +1,5 @@
 import { query } from '../db/index.js';
+import { entity } from '../db/model.js';
 import {
   activeUsersByRoles, getById, getContract, getOrder, listOrders as listOrderRows, nextSequence, userNames,
 } from '../db/repository.js';
@@ -6,11 +7,11 @@ import { calculate, isLegacyOrigin, sumValues } from '../domain/calculator.js';
 import { formatBr, today as todayDate, utcNow } from '../domain/dates.js';
 import { BusinessRuleError, ForbiddenError, NotFoundError } from '../domain/errors.js';
 import {
-  ALL_ROLES, ContractStatus, DemandType, Labels, Modality, NotificationTypes, OrderApprovalStatus, OrderStatus,
+  ALL_ROLES, ContractStatus, DemandType, EvidenceKind, Labels, Modality, NotificationTypes, OrderApprovalStatus, OrderStatus,
   PositionStatus, Roles, SlaTargetSource, TermType,
 } from '../domain/enums.js';
 import {
-  cleanMultiline, DateGuard, hasAnyRole, hasRole, isRhAnalyst, JOB_DESCRIPTION_MAX_LENGTH, Permissions, RhAccess,
+  cleanMultiline, DateGuard, EvidenceFiles, hasAnyRole, hasRole, isRhAnalyst, JOB_DESCRIPTION_MAX_LENGTH, Permissions, RhAccess,
 } from '../domain/guards.js';
 import * as O from '../domain/order.js';
 import * as P from '../domain/position.js';
@@ -237,6 +238,72 @@ export async function correctOrderDate(ctx, id, body) {
   return getOrderDetail(ctx, order.id);
 }
 
+/**
+ * Redução do quadro do pedido (ADMIN, a pedido do cliente; melhoria de 22/10/2026). As posições escolhidas — ciclo
+ * atual Aberta, Em recrutamento ou Pausada, sem candidato — são encerradas como "Cancelada por redução do quadro",
+ * com a data efetiva, a justificativa e a evidência opcional; registros e histórico ficam. A quantidade vigente cai;
+ * a solicitada (registro + acréscimos) é preservada. O histórico do pedido guarda quem, quando, a data efetiva, as
+ * posições e as quantidades antes e depois.
+ */
+export async function reducePositions(ctx, id, body, evidence = null) {
+  Permissions.require(ctx.user, Roles.Admin);
+  const input = new Input(body);
+  const positionIds = input.ids('positionIds');
+  const date = input.date('date', { message: 'Informe a data efetiva da redução.' });
+  const rawJustification = input.text('justification');
+  input.done();
+  const justification = DateGuard.requireText(rawJustification, 'Informe a justificativa da redução (a solicitação do cliente).', 'justification');
+  if (!positionIds.length) throw new BusinessRuleError('Selecione as posições que saem do quadro.', 'positionIds');
+  if (new Set(positionIds).size !== positionIds.length) throw new BusinessRuleError('A mesma posição foi selecionada duas vezes.', 'positionIds');
+
+  const order = await requireOrder(ctx, id);
+  if (!O.isApproved(order) || order.isLegacy) {
+    throw new BusinessRuleError('A redução de posições vale para pedido aprovado pelo cliente.');
+  }
+  const file = evidence ? EvidenceFiles.validate(evidence) : null;
+  const before = quantities(order).currentQuantity;
+  const eligible = order.positions.filter(P.canReduce).length;
+  if (positionIds.length > eligible) {
+    throw new BusinessRuleError(`Só ${eligible} posição(ões) deste pedido podem sair do quadro agora.`, 'positionIds');
+  }
+
+  // Data futura ou antes da solicitação: aviso antes de salvar (date-review.js).
+  const review = new DateReview(ctx).watchOrder(order);
+  const reduced = positionIds.map((pid) => {
+    const p = order.positions.find((x) => x.id === pid);
+    if (!p) throw new BusinessRuleError('Posição não encontrada neste pedido.', 'positionIds');
+    P.reduceHeadcount(p, date, justification);
+    return p;
+  });
+  review.settle();
+
+  // A evidência é gravada uma vez; as outras posições apontam para o mesmo arquivo.
+  if (file) {
+    const [first, ...others] = reduced;
+    const key = P.attachEvidence(first, EvidenceKind.HEADCOUNT_REDUCTION, file.fileName, file.contentType, evidence.content).storageKey;
+    for (const p of others) {
+      p.evidences.push(entity('PositionEvidence', {
+        positionId: p.id, kind: EvidenceKind.HEADCOUNT_REDUCTION, fileName: file.fileName, contentType: file.contentType,
+        sizeBytes: evidence.content.length, storageKey: key,
+      }));
+    }
+  }
+  const after = quantities(order).currentQuantity;
+  ctx.uow.log({
+    entity: 'Order', entityId: order.id, action: 'REDUCE_POSITIONS', field: 'CurrentQuantity',
+    oldValue: String(before), newValue: String(after),
+  });
+  ctx.uow.log({
+    entity: 'Order', entityId: order.id, action: 'REDUCE_POSITIONS', field: 'Summary',
+    newValue: JSON.stringify({
+      effectiveDate: date, positions: reduced.map((p) => `${order.number}-${p.slotNumber}`), quantityBefore: before,
+      quantityAfter: after, evidence: file?.fileName ?? null,
+    }),
+  });
+  await ctx.uow.save({ action: 'REDUCE_POSITIONS', justification });
+  return getOrderDetail(ctx, order.id);
+}
+
 /** Cargos que o pedido do contrato pode usar: ativos e com valor validado no contrato. */
 export async function listJobRolesForContract(ctx, contractId) {
   const rows = await query(
@@ -332,6 +399,12 @@ export async function getOrderDetail(ctx, id) {
     candidateImport: canImportCandidates(ctx.user, order) ? { pending: eligiblePositions(order).length } : null,
     admissionImport: canImportAdmissions(ctx.user, order) ? { pending: eligibleForAdmission(order).length } : null,
     firstDayBatch: firstDayBatchInfo(ctx.user, order),
+    headcountReduction: hasRole(ctx.user, Roles.Admin) && O.isApproved(order) && !order.isLegacy ? {
+      eligible: order.positions.filter(P.canReduce).sort((a, b) => a.slotNumber - b.slotNumber).map((p) => ({
+        positionId: p.id, position: `${order.number}-${p.slotNumber}`, cycle: p.cycle, demandType: p.demandType,
+        status: p.status, stageStatus: P.stageStatus(p),
+      })),
+    } : null,
     slots: buildSlots(order, metrics, names, showMoney),
   };
 }
@@ -570,6 +643,23 @@ async function addNewPositions(ctx, order, quantity, desiredStartDate, openedAt,
   }
 }
 
+/**
+ * Quantidades do pedido: a solicitada no registro, os acréscimos, as reduções (posições retiradas do quadro) e a
+ * vigente. `quantity` continua sendo o total solicitado (registro + acréscimos), que o histórico conhece; as vagas
+ * originais são as gravadas junto com o pedido, os acréscimos as gravadas depois.
+ */
+function quantities(o) {
+  const created = (o.positions ?? []).filter((p) => p.demandType === DemandType.NEW);
+  const original = created.filter((p) => p.createdAt && p.createdAt === o.createdAt).length || created.length;
+  const reduced = O.currentPositions(o).filter((p) => p.status === PositionStatus.CLOSED_HEADCOUNT_REDUCED).length;
+  return {
+    originalQuantity: Math.min(original, o.quantity),
+    addedQuantity: Math.max(0, o.quantity - Math.min(original, o.quantity)),
+    reducedQuantity: reduced,
+    currentQuantity: o.quantity - reduced,
+  };
+}
+
 export function orderSummary(o) {
   const current = O.currentPositions(o);
   return {
@@ -581,6 +671,7 @@ export function orderSummary(o) {
     jobRoleName: o.jobRole?.name ?? '',
     workLocationName: o.workLocation?.name ?? '',
     quantity: o.quantity,
+    ...quantities(o),
     clientRequestDate: o.clientRequestDate,
     desiredStartDate: o.desiredStartDate,
     registeredAt: o.registeredAt,

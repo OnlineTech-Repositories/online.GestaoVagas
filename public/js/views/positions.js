@@ -191,6 +191,7 @@ const AUDIT_ACTION = {
   UPDATE: 'Alteração',
   CREATE_ORDER: 'Pedido criado',
   ADD_POSITIONS: 'Posições acrescentadas',
+  REDUCE_POSITIONS: 'Redução do quadro',
   REGISTER_TERMINATION: 'Desligamento registrado',
   REGISTER_LEGACY_TERMINATION: 'Desligamento avulso',
   CLIENT_DECISION_REPLACE: 'Cliente decidiu repor',
@@ -342,7 +343,7 @@ function renderDetail(p, reasons, reload) {
             : 'A posição entra em "Em recrutamento" quando o RH informar a publicação no JobConvo no pedido.')
         : null,
       // O Analista de RH executa o recrutamento só nos pedidos atribuídos a ele.
-      hasRole(state.user, 'RH') && !p.canActAsRh && !['FILLED', 'CLOSED_CLIENT_CANCELLED', 'CLOSED_CONTRACT_ENDED'].includes(s.status)
+      hasRole(state.user, 'RH') && !p.canActAsRh && !['FILLED', 'CLOSED_CLIENT_CANCELLED', 'CLOSED_CONTRACT_ENDED', 'CLOSED_HEADCOUNT_REDUCED'].includes(s.status)
         ? el('div', { class: 'mensagem info' },
           el('strong', {}, 'Você não está entre os analistas de RH responsáveis por este pedido.'),
           p.rhAnalysts.length
@@ -378,7 +379,7 @@ function renderDetail(p, reasons, reload) {
       ].join('')),
       p.termAdjustJustification ? detail('Ajuste de vigência', p.termAdjustJustification) : null,
       detail('Analistas de RH responsáveis (do pedido)', rhTeam(p.rhAnalysts.map((a) => a.name),
-        !['FILLED', 'CLOSED_CLIENT_CANCELLED', 'CLOSED_CONTRACT_ENDED'].includes(s.status))),
+        !['FILLED', 'CLOSED_CLIENT_CANCELLED', 'CLOSED_CONTRACT_ENDED', 'CLOSED_HEADCOUNT_REDUCED'].includes(s.status))),
       detail('Publicação no JobConvo (do pedido)', jobconvoText(p.jobconvoPublished, p.jobconvoCode, p.jobconvoPublishedAt)),
       p.jobconvoNotes ? detail(p.jobconvoPublished === false ? 'Motivo de não publicar' : 'Observações da publicação', p.jobconvoNotes) : null,
       p.orderNotes ? detail('Observações do pedido', p.orderNotes) : null,
@@ -600,7 +601,13 @@ function buildTimeline(p) {
     list.append(el('li', { class: 'encerrado' },
       el('div', { class: 'quando' }, date(p.closedAt)),
       el('div', { class: 'quem' }, LABELS.positionStatus[p.summary.status]),
-      p.cancellationReason ? el('div', { class: 'motivo' }, p.cancellationReason) : null));
+      p.cancellationReason ? el('div', { class: 'motivo' }, p.cancellationReason) : null,
+      p.reductionEvidence
+        ? el('div', { class: 'texto-pequeno' }, 'Evidência da solicitação: ', p.reductionEvidence.canDownload
+          ? el('a', { href: `/api/positions/${p.summary.id}/evidences/${p.reductionEvidence.id}`, download: p.reductionEvidence.fileName },
+            p.reductionEvidence.fileName)
+          : p.reductionEvidence.fileName)
+        : null));
   }
   return list;
 }
@@ -815,8 +822,8 @@ function correctableDates(p) {
     ['CANDIDATE_APPROVED_AT', 'Aprovação do candidato', p.candidateApprovedAt],
     ['ADMISSION_AT', 'Admissão', p.admissionAt],
     ['FIRST_DAY_AT', '1º dia efetivo', p.firstDayAt],
-    ['CLOSED_AT', 'Data do cancelamento',
-      p.summary.status === 'CLOSED_CLIENT_CANCELLED' && t?.clientDecision !== 'NOT_REPLACE' ? p.closedAt : null],
+    ['CLOSED_AT', p.summary.status === 'CLOSED_HEADCOUNT_REDUCED' ? 'Data efetiva da redução' : 'Data do cancelamento',
+      ['CLOSED_CLIENT_CANCELLED', 'CLOSED_HEADCOUNT_REDUCED'].includes(p.summary.status) && t?.clientDecision !== 'NOT_REPLACE' ? p.closedAt : null],
     ['CLIENT_DECISION_AT', 'Decisão do cliente', t?.clientDecisionAt],
     ['LAST_WORKED_DAY', 'Último dia trabalhado (origem)', t?.lastWorkedDay],
     ['TERMINATION_REGISTERED_AT', 'Registro do desligamento', t?.registeredAt],

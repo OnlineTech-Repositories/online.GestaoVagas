@@ -9,7 +9,7 @@ import {
 import { EvidenceFiles } from '../domain/guards.js';
 import {
   addPositions, approveOrder, correctOrderDate, createOrder, getOrderDetail, listJobRolesForContract, listOrdersDto,
-  recordJobconvo, rejectOrder, setRhAnalysts,
+  recordJobconvo, reducePositions, rejectOrder, setRhAnalysts,
 } from '../services/orders.js';
 import { routeId } from '../services/input.js';
 import { ID, idParam, queryOf } from './helpers.js';
@@ -36,6 +36,23 @@ orderRoutes.post(`/:id${ID}/approval`, route(async (req, res) => res.json(await 
 orderRoutes.post(`/:id${ID}/rejection`, route(async (req, res) => res.json(await rejectOrder(req.ctx, idParam(req), req.body))));
 orderRoutes.post(`/:id${ID}/jobconvo`, route(async (req, res) => res.json(await recordJobconvo(req.ctx, idParam(req), req.body))));
 orderRoutes.post(`/:id${ID}/positions`, route(async (req, res) => res.json(await addPositions(req.ctx, idParam(req), req.body))));
+// Redução do quadro (ADMIN): JSON ou multipart com a evidência no campo "evidence" (até 10 MB).
+const reductionEvidence = multer({ storage: multer.memoryStorage(), limits: { fileSize: EvidenceFiles.MAX_BYTES + 1, files: 1 } });
+orderRoutes.post(`/:id${ID}/position-reductions`, (req, res, next) => (req.is('multipart/form-data')
+  ? reductionEvidence.single('evidence')(req, res, next)
+  : next()), route(async (req, res) => {
+  const body = { ...req.body };
+  // No multipart a lista vem como texto JSON.
+  if (typeof body.positionIds === 'string') {
+    try {
+      body.positionIds = JSON.parse(body.positionIds);
+    } catch {
+      body.positionIds = null;
+    }
+  }
+  const file = req.file?.size ? { fileName: req.file.originalname, content: req.file.buffer } : null;
+  res.json(await reducePositions(req.ctx, idParam(req), body, file));
+}));
 orderRoutes.post(`/:id${ID}/date-corrections`, route(async (req, res) =>
   res.json(await correctOrderDate(req.ctx, idParam(req), req.body))));
 

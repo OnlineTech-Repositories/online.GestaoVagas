@@ -58,7 +58,8 @@ export function uncoveredEndExclusive(p, today) {
   switch (p.status) {
     case S.FILLED: return minDate(p.firstDayAt ?? uncoveredStart(p), today);
     case S.CLOSED_CONTRACT_ENDED: return p.termEndDate ? addDays(p.termEndDate, 1) : p.closedAt ?? today;
-    case S.CLOSED_CLIENT_CANCELLED: return minDate(p.closedAt ?? today, today);
+    case S.CLOSED_CLIENT_CANCELLED:
+    case S.CLOSED_HEADCOUNT_REDUCED: return minDate(p.closedAt ?? today, today);
     default:
       if (p.termType === TermType.FIXED_END && p.termEndDate) return minDate(today, addDays(p.termEndDate, 1));
       return today;
@@ -147,7 +148,8 @@ export function moneyOf(p, uncoveredDays, settings) {
   // Pedido que o cliente não aprovou: o posto nunca foi contratado, não há perda.
   if (p.order?.approvalStatus === OrderApprovalStatus.NOT_APPROVED) return none;
   if (p.demandType === DemandType.REPLACEMENT && p.termination?.clientDecision === ClientDecision.NOT_REPLACE) return none;
-  if (p.status === S.CLOSED_CLIENT_CANCELLED && !settings.lossOnCancelAfterOpen) return none;
+  // Redução do quadro conta como cancelamento (decisão do usuário em 22/10/2026).
+  if ((p.status === S.CLOSED_CLIENT_CANCELLED || p.status === S.CLOSED_HEADCOUNT_REDUCED) && !settings.lossOnCancelAfterOpen) return none;
   if (p.termType === TermType.PRESERVED_DURATION) return { daily, lost: 0, deferred: amount, status };
   return { daily, lost: amount, deferred: 0, status };
 }

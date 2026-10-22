@@ -92,6 +92,7 @@ export async function getPositionDetail(ctx, id) {
   const firstDayEvidence = p.evidences.filter((e) => e.kind === EvidenceKind.FIRST_DAY)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
   const active = P.activeCandidate(p);
+  const reductionEvidence = p.evidences.find((e) => e.kind === EvidenceKind.HEADCOUNT_REDUCTION) ?? null;
 
   return {
     summary: toSummary(p, metrics, showMoney),
@@ -134,6 +135,10 @@ export async function getPositionDetail(ctx, id) {
       .sort((a, b) => b.withdrawnAt.localeCompare(a.withdrawnAt))
       .map((c) => candidateDto(c, fullCandidate, names)),
     admissionRegistration: p.admissionRegistration,
+    reductionEvidence: reductionEvidence ? {
+      id: reductionEvidence.id, fileName: reductionEvidence.fileName, sizeBytes: reductionEvidence.sizeBytes,
+      canDownload: canDownload || hasRole(ctx.user, Roles.Admin),
+    } : null,
     firstDay: p.firstDayAt ? {
       date: p.firstDayAt,
       justification: p.firstDayJustification,
@@ -493,7 +498,8 @@ function targetOf(p, field, pauseId) {
     case CORRECTABLE.ADMISSION_AT: return position('AdmissionAt', p.admissionAt);
     case CORRECTABLE.FIRST_DAY_AT: return position('FirstDayAt', p.firstDayAt);
     case CORRECTABLE.CLOSED_AT:
-      if (p.status !== PositionStatus.CLOSED_CLIENT_CANCELLED || p.termination?.clientDecision === ClientDecision.NOT_REPLACE) {
+      if (![PositionStatus.CLOSED_CLIENT_CANCELLED, PositionStatus.CLOSED_HEADCOUNT_REDUCED].includes(p.status)
+        || p.termination?.clientDecision === ClientDecision.NOT_REPLACE) {
         throw new BusinessRuleError('Apenas a data de cancelamento pode ser corrigida aqui.');
       }
       return position('ClosedAt', p.closedAt);

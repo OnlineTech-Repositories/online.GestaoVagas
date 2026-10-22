@@ -31,11 +31,11 @@ export async function ordersScreen(target, _params, query) {
             render: (o) => el('div', {}, el('div', {}, o.jobRoleName),
               el('div', { class: 'texto-fraco texto-pequeno' }, `${LABELS.modalityShort[o.modality]} · ${o.workLocationName}`)),
           },
-          { title: 'Qtd.', cls: 'num', render: (o) => String(o.quantity) },
+          { title: 'Qtd.', cls: 'num', render: (o) => String(o.currentQuantity ?? o.quantity) },
           {
-            title: 'Preenchidas / contratadas',
+            title: 'Preenchidas / vigentes',
             cls: 'num',
-            render: (o) => el('div', {}, `${o.filledPositions} / ${o.quantity}`,
+            render: (o) => el('div', {}, `${o.filledPositions} / ${o.currentQuantity ?? o.quantity}`,
               o.replacementCount ? el('div', { class: 'texto-fraco texto-pequeno' },
                 `${o.replacementCount} reposição${o.replacementCount > 1 ? 'ões' : ''}`) : null),
           },
@@ -320,6 +320,7 @@ export async function orderDetailScreen(target, id) {
       o.canDecideApproval && awaiting ? button('Registrar aprovação do cliente', () => openApprove(o, reload)) : null,
       o.canDecideApproval && awaiting ? button('Cliente não aprovou', () => openReject(o, reload), 'secundario') : null,
       o.canAddPositions ? button('Acrescentar posições', () => openAddPositions(o, reload)) : null,
+      o.headcountReduction ? button('Reduzir posições', () => openReducePositions(o, reload), 'secundario') : null,
       o.canCorrectDates ? button('Corrigir datas', () => openCorrectDates(o, reload), 'secundario') : null,
     ];
 
@@ -352,7 +353,7 @@ export async function orderDetailScreen(target, id) {
             detail('Modalidade', label(LABELS.modality, s.modality)),
             detail('Cargo', s.jobRoleName),
             detail('Local', s.workLocationName),
-            detail('Quantidade', String(s.quantity)),
+            detail('Quantidade', quantityText(s)),
             detail('Situação das vagas', slotSummary(o)),
             detail('Solicitação do cliente', date(s.clientRequestDate)),
             detail('Registro', `${date(s.registeredAt)}${o.createdByName ? ` · por ${o.createdByName}` : ''}`),
@@ -385,12 +386,21 @@ export async function orderDetailScreen(target, id) {
   await reload();
 }
 
-/** Contratadas, preenchidas agora (ciclo atual), em reposição e reposições realizadas. */
+/** Quantidade vigente e a composição: solicitada no registro, acréscimos e reduções do quadro. */
+function quantityText(s) {
+  if (!s.addedQuantity && !s.reducedQuantity) return String(s.currentQuantity);
+  const parts = [`${s.originalQuantity} no registro`];
+  if (s.addedQuantity) parts.push(`+${s.addedQuantity} acrescentada(s)`);
+  if (s.reducedQuantity) parts.push(`−${s.reducedQuantity} reduzida(s)`);
+  return el('div', {}, el('div', {}, `${s.currentQuantity} vigentes`), el('div', { class: 'texto-fraco texto-pequeno' }, parts.join(' · ')));
+}
+
+/** Vigentes, preenchidas agora (ciclo atual), em reposição e reposições realizadas. */
 function slotSummary(o) {
   const inReplacement = o.slots.filter((sl) => sl.current.demandType === 'REPLACEMENT'
-    && !['FILLED', 'CLOSED_CLIENT_CANCELLED', 'CLOSED_CONTRACT_ENDED'].includes(sl.current.status)).length;
+    && !['FILLED', 'CLOSED_CLIENT_CANCELLED', 'CLOSED_CONTRACT_ENDED', 'CLOSED_HEADCOUNT_REDUCED'].includes(sl.current.status)).length;
   const s = o.summary;
-  return [`${s.quantity} contratadas`, `${s.filledPositions} preenchidas agora`,
+  return [`${s.currentQuantity} vigentes`, `${s.filledPositions} preenchidas agora`,
     inReplacement ? `${inReplacement} em reposição` : null,
     `${s.replacementCount} reposição(ões) realizada(s)`].filter(Boolean).join(' · ');
 }
@@ -902,6 +912,133 @@ function openFirstDayBatch(order, reload) {
   // A tabela tem campos por linha (data, justificativa, evidências): a janela usa a largura da tela.
   reference.box.classList.add('extra-largo');
 }
+
+// ---------------------------------------------------------------------
+// Redução do quadro (ADMIN)
+// ---------------------------------------------------------------------
+
+/**
+ * Reduz o quadro a pedido do cliente: escolhe as posições (só as sem candidato, admissão ou colaborador), informa a
+ * data efetiva, a justificativa e a evidência; revisa o resumo e confirma.
+ */
+function openReducePositions(order, reload) {
+  const s = order.summary;
+  const { eligible } = order.headcountReduction;
+  const statusText = (it) => `${LABELS.positionStatus[it.status]}${it.status === 'PAUSED' ? ` (${LABELS.positionStatus[it.stageStatus]})` : ''}`;
+  const rows = eligible.map((it) => ({ it, check: el('input', { type: 'checkbox', 'aria-label': `Retirar a posição ${it.position}` }) }));
+  const amount = el('input', { type: 'number', min: '0', max: String(eligible.length), value: '0', 'aria-label': 'Quantidade a reduzir' });
+  const newQuantity = el('strong', {}, String(s.currentQuantity));
+  const dateInput = el('input', { type: 'date', value: today(), 'aria-label': 'Data efetiva da redução' });
+  const justification = el('textarea', { rows: '3', maxlength: '1000', 'aria-label': 'Justificativa da redução',
+    placeholder: 'Ex.: cliente reduziu o quadro por e-mail em 21/10' });
+  const evidence = el('input', { type: 'file', accept: '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png' });
+  const selected = () => rows.filter((r) => r.check.checked);
+
+  const reviewButton = button('Revisar redução', () => review());
+  const sync = () => {
+    const n = selected().length;
+    amount.value = String(n);
+    newQuantity.textContent = String(s.currentQuantity - n);
+    reviewButton.disabled = n === 0;
+  };
+  rows.forEach((r) => r.check.addEventListener('change', sync));
+  // Digitar a quantidade marca as primeiras posições da lista; dá para trocar a seleção depois.
+  amount.addEventListener('input', () => {
+    const n = Math.max(0, Math.min(eligible.length, Number(amount.value) || 0));
+    rows.forEach((r, i) => { r.check.checked = i < n; });
+    sync();
+  });
+
+  const formStep = el('div', {},
+    el('div', { class: 'mensagem info' },
+      'Só entram posições sem candidato selecionado, admissão ou colaborador. As demais passam antes pela desistência, pelo não '
+      + 'comparecimento ou pelo desligamento. As retiradas ficam no histórico como "Cancelada por redução do quadro".'),
+    el('div', { class: 'detalhe-grade' },
+      el('div', { class: 'detalhe-item' }, el('div', { class: 'rotulo' }, 'Quantidade atual'), el('div', { class: 'valor' }, String(s.currentQuantity))),
+      el('div', { class: 'campo' }, el('label', {}, 'Posições a reduzir', el('span', { class: 'obrigatorio' }, '*')), amount),
+      el('div', { class: 'detalhe-item' }, el('div', { class: 'rotulo' }, 'Nova quantidade'), el('div', { class: 'valor' }, newQuantity)),
+      el('div', { class: 'campo' }, el('label', {}, 'Data efetiva da redução', el('span', { class: 'obrigatorio' }, '*')), dateInput)),
+    eligible.length
+      ? table([
+        { title: 'Retirar', cls: 'centro', render: (r) => r.check },
+        { title: 'Vaga', cls: 'nowrap', render: (r) => `${r.it.position}${r.it.cycle > 1 ? ` (reposição nº ${r.it.cycle - 1})` : ''}` },
+        { title: 'Tipo', render: (r) => LABELS.demandType[r.it.demandType] },
+        { title: 'Situação', render: (r) => statusTextEl(statusText(r.it)) },
+      ], rows, { dense: true })
+      : el('p', { class: 'texto-fraco' }, 'Nenhuma posição pode sair do quadro agora.'),
+    el('div', { class: 'campo', style: { marginTop: '12px' } },
+      el('label', {}, 'Justificativa (solicitação do cliente)', el('span', { class: 'obrigatorio' }, '*')), justification),
+    el('div', { class: 'campo' }, el('label', {}, 'Evidência (opcional)'), evidence,
+      el('div', { class: 'ajuda' }, 'PDF, JPG ou PNG até 10 MB: o documento ou a comunicação do cliente. Fica vinculada a cada posição retirada.')));
+
+  const summaryStep = el('div', { class: 'oculto' });
+  const confirmButton = button('Confirmar redução', () => save(), 'perigo');
+  const footerForm = el('div', { class: 'barra-botoes' }, button('Cancelar', () => reference.close(), 'secundario'), reviewButton);
+  const footerSummary = el('div', { class: 'barra-botoes oculto' }, button('Voltar', () => toggle(false), 'secundario'), confirmButton);
+  const toggle = (summary) => {
+    formStep.classList.toggle('oculto', summary);
+    footerForm.classList.toggle('oculto', summary);
+    summaryStep.classList.toggle('oculto', !summary);
+    footerSummary.classList.toggle('oculto', !summary);
+  };
+
+  function review() {
+    const chosen = selected();
+    if (!justification.value.trim()) {
+      toast('Informe a justificativa da redução.', 'erro');
+      return;
+    }
+    if (!dateInput.value) {
+      toast('Informe a data efetiva da redução.', 'erro');
+      return;
+    }
+    clear(summaryStep).append(
+      el('div', { class: 'mensagem alerta' },
+        el('strong', {}, `O pedido ${s.number} passa de ${s.currentQuantity} para ${s.currentQuantity - chosen.length} posições vigentes.`),
+        `${chosen.length} posição(ões) serão encerradas como "Cancelada por redução do quadro" em ${date(dateInput.value)}. `
+        + 'Os dias descobertos até essa data contam no faturamento perdido, como no cancelamento.'),
+      table([
+        { title: 'Vaga', cls: 'nowrap', render: (r) => r.it.position },
+        { title: 'Tipo', render: (r) => LABELS.demandType[r.it.demandType] },
+        { title: 'Situação atual', render: (r) => statusText(r.it) },
+        { title: 'Nova situação', render: () => 'Cancelada por redução do quadro' },
+      ], chosen, { dense: true }),
+      el('p', { class: 'texto-suave', style: { marginTop: '10px' } }, el('strong', {}, 'Justificativa: '), justification.value.trim()),
+      el('p', { class: 'texto-suave' }, el('strong', {}, 'Evidência: '), evidence.files?.[0]?.name ?? 'nenhuma'));
+    confirmButton.textContent = `Confirmar redução (${chosen.length})`;
+    toggle(true);
+  }
+
+  async function save() {
+    const chosen = selected();
+    const body = new FormData();
+    body.append('positionIds', JSON.stringify(chosen.map((r) => r.it.positionId)));
+    body.append('date', dateInput.value);
+    body.append('justification', justification.value.trim());
+    if (evidence.files?.length) body.append('evidence', evidence.files[0], evidence.files[0].name);
+    confirmButton.disabled = true;
+    try {
+      const updated = await api.postForm(`/api/orders/${s.id}/position-reductions`, body);
+      reference.close();
+      toast(`Quadro reduzido: o pedido ${s.number} tem agora ${updated.summary.currentQuantity} posições vigentes.`, 'sucesso', 8000);
+      await reload(updated);
+    } catch (e) {
+      clear(summaryStep).prepend(errorMessage(e.message));
+      toast(e.message, 'erro');
+      confirmButton.disabled = false;
+    }
+  }
+
+  sync();
+  const reference = modal({
+    title: `Reduzir posições · pedido ${s.number}`,
+    wide: true,
+    body: el('div', {}, formStep, summaryStep),
+    footer: [footerForm, footerSummary],
+  });
+}
+
+const statusTextEl = (text) => el('span', { class: 'texto-suave' }, text);
 
 function openJobconvo(order, reload) {
   const j = order.jobconvo;

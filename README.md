@@ -323,3 +323,12 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     (com confirmação). A senha gerada volta só na resposta (sem cache) e aparece uma única vez, com botão de copiar.
     Sessões do usuário encerradas, troca obrigatória no próximo acesso e registro no histórico de quem redefiniu, de
     quem e quando — sem a senha nem o hash. O cadastro de usuário novo usa a mesma escolha (decisão do usuário).
+31. **Redução do quadro do pedido pelo ADMIN (melhoria pedida pelo usuário em 22/10/2026):** "Reduzir posições", ao lado
+    de "Acrescentar posições", só para o Administrador e em pedido aprovado. Entram só posições do ciclo atual Abertas,
+    Em recrutamento ou Pausadas, sem candidato, admissão ou colaborador (decisão do usuário). O formulário mostra a
+    quantidade vigente, a quantidade a reduzir (pré-seleciona as primeiras), a seleção das posições, a nova quantidade,
+    a data efetiva, a justificativa obrigatória e a evidência opcional (um arquivo, vinculado a todas as posições); um
+    resumo antes de confirmar. As posições ficam "Cancelada por redução do quadro", com registros e histórico; a perda
+    conta até a data efetiva, como no cancelamento (segue "perda no cancelamento após abertura"). Data futura pede
+    confirmação, como as demais datas. O pedido mostra a quantidade vigente e, ao lado, a do registro, os acréscimos e
+    as reduções; o histórico guarda quem, quando, a data efetiva, as posições e as quantidades antes e depois.

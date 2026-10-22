@@ -19,7 +19,19 @@ const label = (status) => Labels.positionStatus[status] ?? status;
 
 // ---------------------------------------------------------------- estado derivado
 
-export const isClosed = (p) => p.status === S.CLOSED_CLIENT_CANCELLED || p.status === S.CLOSED_CONTRACT_ENDED;
+export const isClosed = (p) => p.status === S.CLOSED_CLIENT_CANCELLED || p.status === S.CLOSED_CONTRACT_ENDED
+  || p.status === S.CLOSED_HEADCOUNT_REDUCED;
+
+/** Cancelada (pelo cliente ou por redução do quadro): a perda conta até a data de encerramento, como no cancelamento. */
+export const isCancelled = (p) => p.status === S.CLOSED_CLIENT_CANCELLED || p.status === S.CLOSED_HEADCOUNT_REDUCED;
+
+/**
+ * Pode sair do quadro na redução de posições (decisão do usuário em 22/10/2026): ciclo atual Aberta, Em recrutamento
+ * ou Pausada (sem candidato selecionado). Com candidato, admissão ou colaborador, a posição passa antes pelo fluxo de
+ * desistência, não comparecimento ou desligamento; a reposição aguardando o cliente tem a decisão "não repor".
+ */
+export const canReduce = (p) => isCurrentCycle(p) && !activeCandidate(p)
+  && [S.OPEN, S.RECRUITING].includes(p.status === S.PAUSED ? p.previousStatus : p.status);
 /** "Estado aberto" = qualquer status exceto FILLED e CLOSED_*. */
 export const isOpen = (p) => p.status !== S.FILLED && !isClosed(p);
 export const activePause = (p) => (p.pauses ?? []).find((x) => !x.endDate) ?? null;
@@ -383,6 +395,23 @@ export function cancel(p, closedAt, reason) {
     throw new BusinessRuleError('A data de cancelamento não pode ser anterior ao início da pausa ativa.', 'date');
   }
   close(p, S.CLOSED_CLIENT_CANCELLED, closedAt);
+  p.cancellationReason = reason.trim();
+}
+
+/**
+ * Redução do quadro (ADMIN, a pedido do cliente): encerra a posição com o próprio status, preservando registros e
+ * histórico. Uma pausa ativa termina na mesma data, como no cancelamento.
+ */
+export function reduceHeadcount(p, closedAt, reason) {
+  if (!canReduce(p)) {
+    throw new BusinessRuleError(`A posição ${p.slotNumber} não pode ser retirada do quadro: está "${label(p.status)}".`, 'positionIds');
+  }
+  if (!reason?.trim()) throw new BusinessRuleError('Informe a justificativa da redução.', 'justification');
+  const pause = activePause(p);
+  if (pause && closedAt < pause.startDate) {
+    throw new BusinessRuleError(`A data efetiva não pode ser anterior ao início da pausa da posição ${p.slotNumber}.`, 'date');
+  }
+  close(p, S.CLOSED_HEADCOUNT_REDUCED, closedAt);
   p.cancellationReason = reason.trim();
 }
 

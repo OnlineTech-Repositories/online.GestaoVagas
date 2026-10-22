@@ -171,6 +171,7 @@ export const LABELS = {
     PAUSED: 'Pausada',
     FILLED: 'Preenchida',
     CLOSED_CLIENT_CANCELLED: 'Encerrada: cliente cancelou',
+    CLOSED_HEADCOUNT_REDUCED: 'Cancelada por redução do quadro',
     CLOSED_CONTRACT_ENDED: 'Encerrada: contrato encerrou',
   },
   orderStatus: { IN_PROGRESS: 'Em andamento', FULFILLED: 'Atendido', CANCELLED: 'Cancelado' },
@@ -248,6 +249,7 @@ const STATUS_COLORS = {
   FILLED: 'verde',
   CLOSED_CLIENT_CANCELLED: 'cinza',
   CLOSED_CONTRACT_ENDED: 'cinza',
+  CLOSED_HEADCOUNT_REDUCED: 'cinza',
 };
 
 /** `notReplaced` = reposição que o cliente decidiu não repor: a vaga termina ali. */
@@ -849,7 +851,7 @@ export function positionColumns({ money: showMoney = false, employee = false, cl
     },
     ...(rh
       ? [{ title: 'Analistas de RH', render: (p) => rhTeam(p.rhAnalystNames,
-        !['FILLED', 'CLOSED_CLIENT_CANCELLED', 'CLOSED_CONTRACT_ENDED'].includes(p.status)) }]
+        !['FILLED', 'CLOSED_CLIENT_CANCELLED', 'CLOSED_CONTRACT_ENDED', 'CLOSED_HEADCOUNT_REDUCED'].includes(p.status)) }]
       : []),
     { title: 'Abertura', cls: 'nowrap', render: (p) => date(p.openedAt) },
     { title: 'Dias descobertos', cls: 'num', render: (p) => String(p.uncoveredDays) },

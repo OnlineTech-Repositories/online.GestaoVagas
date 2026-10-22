@@ -1248,7 +1248,7 @@ test('Reposição como novo ciclo da vaga: uma linha por vaga, histórico de ocu
 
   const orderScreen = await open(`/pedidos/${orderId}`, 'Pedido');
   assert.ok([...orderScreen.querySelectorAll('button')].some((b) => b.textContent === 'Ver histórico de ocupantes (2)'));
-  assert.match(orderScreen.textContent, /2 contratadas · 0 preenchidas agora · 1 em reposição · 1 reposição\(ões\) realizada\(s\)/);
+  assert.match(orderScreen.textContent, /2 vigentes · 0 preenchidas agora · 1 em reposição · 1 reposição\(ões\) realizada\(s\)/);
   assert.match(orderScreen.textContent, new RegExp(`${order.summary.number}-1`));
   assert.doesNotMatch(orderScreen.textContent, new RegExp(`${order.summary.number}-3`), 'a reposição não vira uma 3ª vaga');
 

@@ -84,6 +84,7 @@ export function positionDateIssues(p, today) {
   c.future('p:admission', 'A data de admissão', p.admissionAt);
   c.future('p:firstDay', 'O 1º dia efetivo', p.firstDayAt);
   if (p.status === S.CLOSED_CLIENT_CANCELLED) c.future('p:closed', 'A data de cancelamento', p.closedAt);
+  if (p.status === S.CLOSED_HEADCOUNT_REDUCED) c.future('p:closed', 'A data efetiva da redução', p.closedAt);
   for (const x of p.pauses ?? []) {
     c.future(`pause:${x.id}:start`, 'O início da pausa', x.startDate);
     c.future(`pause:${x.id}:end`, 'O fim da pausa', x.endDate);
@@ -95,7 +96,7 @@ export function positionDateIssues(p, today) {
 
   if (isNew) {
     c.sequence('p:opened<request', 'A abertura da posição', p.openedAt, 'a solicitação do cliente', order.clientRequestDate);
-    if (p.status === S.CLOSED_CLIENT_CANCELLED) {
+    if (p.status === S.CLOSED_CLIENT_CANCELLED || p.status === S.CLOSED_HEADCOUNT_REDUCED) {
       c.sequence('p:closed<request', 'A data de cancelamento', p.closedAt, 'a solicitação do cliente', order.clientRequestDate);
     }
   }
