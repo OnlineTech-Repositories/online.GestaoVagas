@@ -12,6 +12,7 @@ import { startServer } from './server.js';
  * Admissões em lote por planilha (melhoria de 19/10/2026): modelo com as posições "Candidato selecionado", conferência
  * com erro por linha e campo e avisos de data, bloqueio enquanto houver erro, linha em branco ignorada, gravação pela
  * mesma regra do registro individual, um aviso ao NACC por importação e nenhuma duplicidade ao reenviar o arquivo.
+ * Desde 25/10/2026, nascimento e CPF são pedidos aqui, com o telefone para conferência, completando o mesmo candidato.
  */
 
 let server;
@@ -59,9 +60,12 @@ function cpf(base9) {
   return base9 + first + check(base9 + first);
 }
 
-const KEYS = ['order', 'position', 'candidate', 'admissionAt', 'registration', 'justification', 'positionId', 'candidateId', 'orderId'];
-const TITLES = ['Pedido', 'Vaga', 'Candidato', 'Data da admissão *', 'Matrícula', 'Justificativa', 'ID da posição (não alterar)',
-  'ID do candidato (não alterar)', 'ID do pedido (não alterar)'];
+const KEYS = ['order', 'position', 'candidate', 'sex', 'phone', 'birthDate', 'cpf', 'admissionAt', 'registration', 'justification',
+  'positionId', 'candidateId', 'orderId'];
+const TITLES = ['Pedido', 'Vaga', 'Candidato', 'Sexo', 'Telefone com DDD *', 'Data de nascimento *', 'CPF *', 'Data da admissão *',
+  'Matrícula', 'Justificativa', 'ID da posição (não alterar)', 'ID do candidato (não alterar)', 'ID do pedido (não alterar)'];
+const DATE_COLUMNS = new Set(['birthDate', 'admissionAt']);
+const TEXT_COLUMNS = new Set(['phone', 'cpf', 'registration']);
 
 const templateRows = (buffer) => readXlsx(buffer)[0].rows.slice(1)
   .map((cells) => Object.fromEntries(KEYS.map((k, i) => [k, cells[i] ?? null]))).filter((r) => r.positionId);
@@ -69,7 +73,7 @@ const templateRows = (buffer) => readXlsx(buffer)[0].rows.slice(1)
 /** Planilha preenchida com as colunas do modelo (a matrícula como texto, como o modelo formata a coluna). */
 const filled = (list) => generateXlsx([{
   name: 'Admissões',
-  columns: TITLES.map((title, i) => ({ key: `c${i}`, title, type: i === 3 ? 'date' : undefined, editable: i === 4 })),
+  columns: TITLES.map((title, i) => ({ key: `c${i}`, title, type: DATE_COLUMNS.has(KEYS[i]) ? 'date' : undefined, editable: TEXT_COLUMNS.has(KEYS[i]) })),
   rows: list.map((r) => Object.fromEntries(KEYS.map((k, i) => [`c${i}`, r[k]]))),
 }]);
 
@@ -88,7 +92,7 @@ test('modelo: uma linha por posição com candidato selecionado, com pedido, vag
   const recruiting = order.positions.filter((p) => p.status === 'RECRUITING').slice(0, 3);
   for (const [i, p] of recruiting.entries()) {
     const r = await grh.post(`/api/positions/${p.id}/candidate-approval`, {
-      date: addDays(today, -2), fullName: `Admitido ${i + 1}`, birthDate: '1990-01-01', sex: 'FEMALE', cpf: cpf(`70011122${i}`),
+      date: addDays(today, -2), fullName: `Admitido ${i + 1}`, phone: `(11) 9800${i}-1234`, sex: 'FEMALE',
     });
     assert.equal(r.status, 200, JSON.stringify(r.data));
   }
@@ -103,6 +107,14 @@ test('modelo: uma linha por posição com candidato selecionado, com pedido, vag
   const names = rows.map((r) => r.candidate);
   for (const i of [1, 2, 3]) assert.ok(names.includes(`Admitido ${i}`), `candidato ${i} no modelo`);
   assert.deepEqual(readXlsx(res.buffer).map((s) => s.name), ['Admissões', 'Orientações']);
+  assert.deepEqual(readXlsx(res.buffer)[0].rows[0].slice(0, TITLES.length), TITLES);
+
+  // Telefone e sexo do cadastro para conferência; nascimento e CPF em branco para quem ainda não tem, preenchidos para quem tem.
+  const first = rows.find((r) => r.candidate === 'Admitido 1');
+  assert.deepEqual([first.phone, first.sex, first.cpf ?? '', first.birthDate ?? null], ['(11) 98000-1234', 'Feminino', '', null]);
+  const demo = rows.find((r) => !/^Admitido/.test(r.candidate));
+  assert.match(demo.cpf, /^\d{3}\.\d{3}\.\d{3}-\d{2}$/, 'o CPF já gravado vem preenchido');
+  assert.ok(demo.birthDate, 'o nascimento já gravado vem preenchido');
 });
 
 test('só o RH do pedido baixa o modelo e importa; a tela do Comercial não mostra a importação', async () => {
@@ -112,26 +124,38 @@ test('só o RH do pedido baixa o modelo e importa; a tela do Comercial não most
 });
 
 const mine = () => rows.filter((r) => /^Admitido [123]$/.test(r.candidate)).sort((a, b) => a.candidate.localeCompare(b.candidate));
+const docs = (i) => ({ birthDate: '1990-01-0' + (i + 1), cpf: cpf(`70011122${i}`) });
 
 test('conferência: erro por linha e campo, linha em branco ignorada e nada gravado enquanto houver erro', async () => {
   const [a, b, c] = mine();
   const sheet = filled([
-    { ...a, admissionAt: today, registration: '000123' },
+    { ...a, ...docs(0), admissionAt: today, registration: '000123' },
     { ...b },
-    { ...c, admissionAt: '31/02/2026', registration: 'X'.repeat(60) },
+    { ...c, admissionAt: '31/02/2026', registration: 'X'.repeat(60), phone: '1234', cpf: '529.982.247-24' },
   ]);
   const r = await upload('gestor.rh', `${base()}/admissions-import/preview`, sheet);
   assert.equal(r.status, 200, JSON.stringify(r.data));
   const byName = Object.fromEntries(r.data.rows.map((row) => [row.candidate, row]));
   assert.equal(byName['Admitido 1'].status, 'ready');
   assert.equal(byName['Admitido 1'].registration, '000123', 'zeros à esquerda preservados');
-  assert.equal(byName['Admitido 2'].status, 'blank');
+  assert.deepEqual([byName['Admitido 1'].cpf, byName['Admitido 1'].phone], [`${docs(0).cpf.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')}`, '(11) 98000-1234']);
+  assert.equal(byName['Admitido 2'].status, 'blank', 'telefone e sexo preenchidos no modelo não contam como linha preenchida');
   const bad = byName['Admitido 3'];
   assert.equal(bad.status, 'error');
   const fields = Object.fromEntries(bad.errors.map((e) => [e.field, e.message]));
   assert.match(fields.admissionAt, /Data inválida/);
   assert.match(fields.registration, /no máximo 50 caracteres/);
+  assert.match(fields.phone, /Telefone inválido/);
+  assert.match(fields.birthDate, /Informe a data de nascimento/);
+  assert.match(fields.cpf, /CPF inválido/);
   assert.equal(r.data.summary.canConfirm, false);
+
+  // CPF repetido na planilha ou já selecionado em outra posição aberta.
+  const repeated = await upload('gestor.rh', `${base()}/admissions-import/preview`, filled([
+    { ...a, ...docs(0), admissionAt: today }, { ...b, ...docs(0), admissionAt: today },
+  ]));
+  const second = repeated.data.rows.find((row) => row.candidate === 'Admitido 2');
+  assert.match(second.errors.find((e) => e.field === 'cpf').message, /CPF repetido na planilha/);
 
   const blocked = await upload('gestor.rh', `${base()}/admissions-import`, sheet);
   assert.equal(blocked.status, 422);
@@ -142,8 +166,8 @@ test('conferência: erro por linha e campo, linha em branco ignorada e nada grav
 test('confirmação: grava com a regra individual, avisa datas fora do esperado, um aviso ao NACC e sem duplicar no reenvio', async () => {
   const [a, b, c] = mine();
   const sheet = filled([
-    { ...a, admissionAt: today, registration: '000123' },
-    { ...b, admissionAt: addDays(today, 5) },
+    { ...a, ...docs(0), admissionAt: today, registration: '000123' },
+    { ...b, ...docs(1), admissionAt: addDays(today, 5) },
     { ...c },
   ]);
   const preview = await upload('gestor.rh', `${base()}/admissions-import/preview`, sheet);
@@ -161,6 +185,10 @@ test('confirmação: grava com a regra individual, avisa datas fora do esperado,
   assert.deepEqual(await status(a), { status: 'AWAITING_FIRST_DAY', admission_at: today, admission_registration: '000123' });
   assert.deepEqual(await status(b), { status: 'IN_ADMISSION', admission_at: addDays(today, 5), admission_registration: null });
   assert.equal((await status(c)).status, 'CANDIDATE_APPROVED', 'linha em branco: a posição segue aguardando');
+
+  // Nascimento e CPF completam o mesmo candidato (o que já existia, pelo ID do cadastro).
+  const completed = { ...(await queryOne('SELECT id, birth_date, cpf, phone FROM candidates WHERE id = ?', a.candidateId)) };
+  assert.deepEqual(completed, { id: a.candidateId, birth_date: docs(0).birthDate, cpf: docs(0).cpf, phone: '11980001234' });
 
   // Histórico de cada posição e o registro da importação (quem, quando, arquivo e admissões).
   assert.ok((await query("SELECT 1 FROM audit_logs WHERE entity_id = ? AND action = 'IMPORT_ADMISSIONS'", a.positionId)).length);
@@ -190,13 +218,13 @@ test('carga inicial encerrada: data passada sem justificativa é erro da linha; 
   assert.equal((await admin.put('/api/parameters/INITIAL_LOAD_OPEN', { value: 'false' })).status, 200);
   try {
     const [, , c] = mine();
-    const missing = await upload('gestor.rh', `${base()}/admissions-import/preview`, filled([{ ...c, admissionAt: addDays(today, -1) }]));
+    const missing = await upload('gestor.rh', `${base()}/admissions-import/preview`, filled([{ ...c, ...docs(2), admissionAt: addDays(today, -1) }]));
     const row = missing.data.rows[0];
     assert.equal(row.status, 'error');
     assert.match(row.errors.find((e) => e.field === 'justification').message, /anterior a hoje: informe a justificativa/);
 
     const ok = await upload('gestor.rh', `${base()}/admissions-import`,
-      filled([{ ...c, admissionAt: addDays(today, -1), registration: '42', justification: 'Admitido ontem; lançado hoje.' }]));
+      filled([{ ...c, ...docs(2), admissionAt: addDays(today, -1), registration: '42', justification: 'Admitido ontem; lançado hoje.' }]));
     assert.equal(ok.status, 200, JSON.stringify(ok.data));
     const p = await queryOne('SELECT status, has_retroactive_dates FROM positions WHERE id = ?', c.positionId);
     assert.equal(p.status, 'AWAITING_FIRST_DAY');

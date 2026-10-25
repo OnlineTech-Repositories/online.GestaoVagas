@@ -75,7 +75,7 @@ test('recusa: sem justificativa, posição com candidato e mais posições do qu
   const grh = await as('gestor.rh');
   const recruiting = order.headcountReduction.eligible.find((e) => e.status === 'RECRUITING');
   await grh.post(`/api/positions/${recruiting.positionId}/candidate-approval`, {
-    date: today, fullName: 'Candidata Reservada', birthDate: '1990-01-01', sex: 'FEMALE', cpf: '111.444.777-35',
+    date: today, fullName: 'Candidata Reservada', phone: '(11) 93333-4444', sex: 'FEMALE',
   });
   const withCandidate = await reduce('admin', { positionIds: [recruiting.positionId], date: today, justification: 'Cliente pediu.' });
   assert.equal(withCandidate.status, 422);

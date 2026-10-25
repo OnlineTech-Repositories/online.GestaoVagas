@@ -72,9 +72,11 @@ test('o NACC vê no pedido os admitidos aguardando o 1º dia; os sem matrícula 
   const recruiting = order.positions.filter((p) => p.status === 'RECRUITING').slice(0, 4);
   for (const [i, p] of recruiting.entries()) {
     await grh.post(`/api/positions/${p.id}/candidate-approval`, {
-      date: addDays(today, -6), fullName: `Colaborador ${i + 1}`, birthDate: '1991-05-05', sex: 'MALE', cpf: cpf(`90033344${i}`),
+      date: addDays(today, -6), fullName: `Colaborador ${i + 1}`, phone: `(11) 9700${i}-5555`, sex: 'MALE',
     });
-    const r = await grh.post(`/api/positions/${p.id}/admission`, { date: addDays(today, -3), registration: i < 3 ? `00${i + 1}` : null });
+    const r = await grh.post(`/api/positions/${p.id}/admission`, {
+      date: addDays(today, -3), registration: i < 3 ? `00${i + 1}` : null, birthDate: '1991-05-05', cpf: cpf(`90033344${i}`),
+    });
     assert.equal(r.status, 200, JSON.stringify(r.data));
   }
 

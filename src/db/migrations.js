@@ -22,6 +22,17 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const ADDED_COLUMNS = [
   // Bandeira/marca (19/10/2026): clientes antigos continuam clientes comuns.
   ['clients', 'is_brand', 'INTEGER NOT NULL DEFAULT 0'],
+  // Telefone do candidato (25/10/2026): vazio nos já cadastrados, pedido na admissão.
+  ['candidates', 'phone', 'TEXT'],
+];
+
+/**
+ * Colunas que deixaram de ser obrigatórias: [tabela, coluna]. Acrescentar aqui E tirar o NOT NULL do schema.sql.
+ * Nascimento e CPF do candidato passaram para a admissão (25/10/2026); os valores já gravados ficam.
+ */
+export const RELAXED_COLUMNS = [
+  ['candidates', 'birth_date'],
+  ['candidates', 'cpf'],
 ];
 
 /**
@@ -57,10 +68,40 @@ export async function migrate() {
     }
   }
   for (const index of DROPPED_INDEXES) await execRaw(`DROP INDEX IF EXISTS ${index};`);
+  await relaxColumns(postgres);
 
   await execRaw(readSchema(postgres));
 
   await execRaw(postgres ? postgresTriggers() : sqliteTriggers());
+}
+
+/**
+ * Tira o NOT NULL das RELAXED_COLUMNS. No PostgreSQL é um ALTER COLUMN (sem efeito se já opcional). O SQLite não altera
+ * coluna: a tabela é recriada com a definição do schema.sql e os dados copiados, coluna a coluna, na mesma transação;
+ * índices e gatilhos voltam logo depois, pelo próprio schema.sql e pelos gatilhos de proteção.
+ */
+async function relaxColumns(postgres) {
+  const tables = [...new Set(RELAXED_COLUMNS.map(([table]) => table))];
+  for (const table of tables) {
+    if (!(await db.tableExists(table))) continue;
+    const columns = RELAXED_COLUMNS.filter(([t]) => t === table).map(([, column]) => column);
+    if (postgres) {
+      for (const column of columns) await execRaw(`ALTER TABLE ${table} ALTER COLUMN ${column} DROP NOT NULL;`);
+      continue;
+    }
+    const info = await db.tableColumns(table);
+    if (!info.some((c) => columns.includes(c.name) && c.notnull)) continue;
+    const create = readSchema(false).match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\([\\s\\S]*?\\n\\);`))?.[0];
+    if (!create) throw new Error(`Definição de ${table} não encontrada no schema.sql.`);
+    const copied = info.map((c) => c.name).join(', ');
+    await execRaw(`BEGIN;
+ALTER TABLE ${table} RENAME TO ${table}_antiga;
+${create.replace(`CREATE TABLE IF NOT EXISTS ${table}`, `CREATE TABLE ${table}`)}
+INSERT INTO ${table} (${copied}) SELECT ${copied} FROM ${table}_antiga;
+DROP TABLE ${table}_antiga;
+COMMIT;`);
+    console.log(`[migração] colunas opcionais: ${columns.map((c) => `${table}.${c}`).join(', ')}`);
+  }
 }
 
 /**

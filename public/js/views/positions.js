@@ -3,7 +3,7 @@ import {
   el, clear, field, table, panel, panelNoPadding, loading, detail, date, dateTime, days, money, label, LABELS, options,
   statusTag, slaTag, approvalTag, slotLabel, cycleLabel, moneyValue, positionColumns, positionRowClass, formModal, requireFields, orNull, intOrNull,
   today, toast, debounce, button, errorMessage, termFields, locationLabel, jobconvoText, rhTeam, rhFilterOptions,
-  cpfField, isValidCpf, validationError,
+  cpfField, isValidCpf, phone, phoneField, isValidPhone, validationError,
 } from '../ui.js';
 import { navigate, state, hasRole } from '../app.js';
 
@@ -250,14 +250,16 @@ const FIELD_LABEL = {
   BirthDate: 'Data de nascimento',
   Sex: 'Sexo',
   Cpf: 'CPF',
+  Phone: 'Telefone',
   WithdrawnAt: 'Saída do candidato',
   WithdrawalReason: 'Motivo da saída',
   AdmissionRegistration: 'Matrícula (admissão)',
   FirstDayJustification: 'Justificativa do 1º dia',
 };
 
-const auditValue = (value) => {
+const auditValue = (value, field) => {
   if (value === null || value === '') return '—';
+  if (field === 'Phone') return /^\d{10,11}$/.test(value) ? phone(value) : value;
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return date(value);
   if (/^\d{11}$/.test(value)) return value.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
   return LABELS.positionStatus[value] ?? LABELS.termType[value] ?? LABELS.clientDecision[value]
@@ -476,7 +478,7 @@ function renderDetail(p, reasons, reload) {
         {
           title: 'Alteração',
           render: (h) => (h.field
-            ? `${FIELD_LABEL[h.field] ?? h.field}: ${auditValue(h.oldValue)} → ${auditValue(h.newValue)}`
+            ? `${FIELD_LABEL[h.field] ?? h.field}: ${auditValue(h.oldValue, h.field)} → ${auditValue(h.newValue, h.field)}`
             : el('span', { class: 'texto-fraco' }, 'Registro criado')),
         },
         { title: 'Justificativa', render: (h) => h.justification },
@@ -502,11 +504,14 @@ function buildCandidatePanel(p, reasons, reload) {
   const c = p.candidate;
   const canEdit = p.allowedActions.includes('CORRECT_CANDIDATE');
   if (!c && !p.previousCandidates.length && !canEdit) return null;
+  // Nascimento e CPF são informados na admissão: antes dela, ficam pendentes.
+  const atAdmission = () => el('span', { class: 'texto-fraco' }, 'Informado na admissão');
   const info = (x) => el('div', { class: 'detalhe-grade' },
     detail('Nome completo', x.fullName),
-    detail('CPF', x.cpf),
-    detail('Data de nascimento', x.restricted ? 'Restrito' : date(x.birthDate)),
+    detail('Telefone', x.restricted ? 'Restrito' : x.phone ?? el('span', { class: 'texto-fraco' }, 'Não informado')),
     detail('Sexo', x.restricted ? 'Restrito' : label(LABELS.candidateSex, x.sex)),
+    detail('CPF', x.cpf ?? atAdmission()),
+    detail('Data de nascimento', x.restricted ? 'Restrito' : x.birthDate ? date(x.birthDate) : atAdmission()),
     detail('Aprovado em', date(x.approvedAt)),
     detail('Cadastrado', `${x.recordedByName ? `${x.recordedByName} em ` : ''}${dateTime(x.recordedAt)}`),
     x.updatedAt && x.updatedByName ? detail('Última alteração', `${x.updatedByName} em ${dateTime(x.updatedAt)}`) : null,
@@ -514,7 +519,7 @@ function buildCandidatePanel(p, reasons, reload) {
   const body = el('div', {},
     c ? info(c) : el('p', { class: 'texto-fraco' }, 'Nenhum candidato selecionado no momento.'),
     c?.restricted
-      ? el('p', { class: 'texto-fraco texto-pequeno mb-0' }, 'CPF, nascimento e sexo completos ficam restritos ao RH do pedido, ao NACC e ao DP.')
+      ? el('p', { class: 'texto-fraco texto-pequeno mb-0' }, 'Telefone, CPF, nascimento e sexo completos ficam restritos ao RH do pedido, ao NACC e ao DP.')
       : null,
     p.previousCandidates.length
       ? el('details', { class: 'mais-filtros' },
@@ -545,24 +550,38 @@ function buildFirstDayPanel(p) {
       : 'Nenhuma evidência anexada')));
 }
 
-/** Campos do candidato (aprovação e correção). */
+/** Dados do cadastro do candidato (melhoria de 25/10/2026): nome, telefone com DDD e sexo. */
 function candidateFields(c) {
   return [
     field({ name: 'fullName', label: 'Nome completo', value: c?.fullName ?? '', required: true, attributes: { maxlength: '200' } }),
     el('div', { class: 'linha-campos' },
-      field({ name: 'birthDate', label: 'Data de nascimento', type: 'date', value: c?.birthDate ?? '', required: true,
-        attributes: { max: today() } }),
+      phoneField({ value: c?.phone ?? '' }),
       field({ name: 'sex', label: 'Sexo', type: 'select', value: c?.sex ?? '', required: true,
-        options: options(LABELS.candidateSex, 'Selecione') }),
-      cpfField({ value: c?.cpf ?? '' })),
+        options: options(LABELS.candidateSex, 'Selecione') })),
   ];
 }
 
+const PHONE_ERROR = 'Telefone inválido: informe o DDD e o número (celular com 9 dígitos, fixo com 8).';
+
 function candidateBody(d) {
-  requireFields(d, { fullName: 'O nome completo', birthDate: 'A data de nascimento', sex: 'O sexo', cpf: 'O CPF' });
-  if (d.birthDate > today()) throw validationError({ birthDate: 'A data de nascimento não pode ser uma data futura.' });
-  if (!isValidCpf(d.cpf)) throw validationError({ cpf: 'CPF inválido: confira os dígitos.' });
-  return { fullName: d.fullName, birthDate: d.birthDate, sex: d.sex, cpf: d.cpf };
+  requireFields(d, { fullName: 'O nome completo', phone: 'O telefone', sex: 'O sexo' });
+  if (!isValidPhone(d.phone)) throw validationError({ phone: PHONE_ERROR });
+  return { fullName: d.fullName, phone: d.phone, sex: d.sex };
+}
+
+/** Nascimento e CPF: obrigatórios na admissão; na correção, só depois dela. */
+function documentFields(c, required) {
+  return [el('div', { class: 'linha-campos' },
+    field({ name: 'birthDate', label: 'Data de nascimento', type: 'date', value: c?.birthDate ?? '', required,
+      attributes: { max: today() } }),
+    cpfField({ value: c?.cpf ?? '', required }))];
+}
+
+function documentBody(d, required) {
+  if (required) requireFields(d, { birthDate: 'A data de nascimento', cpf: 'O CPF' });
+  if (d.birthDate && d.birthDate > today()) throw validationError({ birthDate: 'A data de nascimento não pode ser uma data futura.' });
+  if (d.cpf && !isValidCpf(d.cpf)) throw validationError({ cpf: 'CPF inválido: confira os dígitos.' });
+  return { birthDate: orNull(d.birthDate), cpf: orNull(d.cpf) };
 }
 
 function buildTimeline(p) {
@@ -660,21 +679,38 @@ const ACTIONS = {
     method: 'put',
     intro: 'Os valores anteriores, quem alterou e quando ficam no histórico da posição.',
     fields: (p) => [...candidateFields(p.candidate),
-      field({ name: 'justification', label: 'Motivo da correção (opcional)', type: 'textarea' })],
-    body: (d) => ({ ...candidateBody(d), justification: orNull(d.justification) }),
+      ...documentFields(p.candidate, Boolean(p.admissionAt)),
+      p.admissionAt ? null : el('p', { class: 'texto-fraco texto-pequeno' }, 'Nascimento e CPF são obrigatórios na admissão; aqui, opcionais.'),
+      field({ name: 'justification', label: 'Motivo da correção (opcional)', type: 'textarea' })].filter(Boolean),
+    body: (d, p) => ({ ...candidateBody(d), ...documentBody(d, Boolean(p.admissionAt)), justification: orNull(d.justification) }),
   },
   REGISTER_ADMISSION: {
     title: 'Registrar admissão',
     path: 'admission',
-    fields: () => [
-      dateField('date', 'Data da admissão'),
-      field({ name: 'registration', label: 'Matrícula (opcional)', attributes: { maxlength: '50' },
-        help: 'Quando informada, já vem preenchida na confirmação do 1º dia.' }),
-      justification(),
-    ],
+    intro: 'Nascimento e CPF completam o cadastro do candidato selecionado. Nome, telefone e sexo vêm do cadastro, para conferência.',
+    fields: (p) => {
+      const c = p.candidate;
+      return [
+        el('div', { class: 'linha-campos' },
+          field({ name: 'candidateName', label: 'Candidato', value: c?.fullName ?? '', attributes: { readonly: true, tabindex: '-1' } }),
+          field({ name: 'candidateSex', label: 'Sexo', value: c ? label(LABELS.candidateSex, c.sex) : '',
+            attributes: { readonly: true, tabindex: '-1' } })),
+        // Telefone: confere o do cadastro; o candidato antigo, sem telefone, informa aqui.
+        phoneField({ value: c?.phone ?? '', help: c?.hasPhone ? 'Do cadastro do candidato; altere se mudou.' : 'O candidato ainda não tem telefone no cadastro.' }),
+        ...documentFields(c, true),
+        dateField('date', 'Data da admissão'),
+        field({ name: 'registration', label: 'Matrícula (opcional)', attributes: { maxlength: '50' },
+          help: 'Quando informada, já vem preenchida na confirmação do 1º dia.' }),
+        justification(),
+      ];
+    },
     body: (d) => {
-      requireFields(d, { date: 'A data' });
-      return { date: d.date, registration: orNull(d.registration), justification: orNull(d.justification) };
+      requireFields(d, { phone: 'O telefone', date: 'A data' });
+      if (!isValidPhone(d.phone)) throw validationError({ phone: PHONE_ERROR });
+      return {
+        phone: d.phone, ...documentBody(d, true), date: d.date, registration: orNull(d.registration),
+        justification: orNull(d.justification),
+      };
     },
   },
   CONFIRM_FIRST_DAY: {
@@ -859,7 +895,7 @@ function openAction(action, p, reasons, reload) {
     danger: config.danger,
     submit: async (data) => {
       const url = `/api/positions/${p.summary.id}/${config.path}`;
-      const body = config.body(data);
+      const body = config.body(data, p);
       const updated = config.method === 'put' ? await api.put(url, body)
         : typeof FormData !== 'undefined' && body instanceof FormData ? await api.postForm(url, body)
           : await api.post(url, body);

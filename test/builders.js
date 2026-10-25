@@ -10,8 +10,9 @@ import * as P from '../src/domain/position.js';
 export const NOW = '2026-10-16T12:00:00.000Z';
 
 /** Candidato válido (CPF 529.982.247-25, exemplo clássico de CPF válido). */
+/** Candidato com nascimento e CPF já gravados (registro anterior à admissão com esses campos). */
 export const candidate = (cpf = '52998224725') => ({
-  fullName: 'Maria da Silva', birthDate: '1995-04-10', sex: CandidateSex.FEMALE, cpf,
+  fullName: 'Maria da Silva', phone: '11912345678', birthDate: '1995-04-10', sex: CandidateSex.FEMALE, cpf,
 });
 
 export const rate = (status = RateStatus.VALIDATED) =>

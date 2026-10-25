@@ -108,7 +108,7 @@ test('etapas fora de ordem: avisam, gravam com confirmação e ficam "fora de se
   const pid = approved.positions[0].id;
 
   const early = await unconfirmed(grh, 'POST', `/api/positions/${pid}/candidate-approval`, {
-    date: d(-11), fullName: 'Pessoa Fora de Ordem', birthDate: '1991-02-03', sex: 'FEMALE', cpf: '111.444.777-35',
+    date: d(-11), fullName: 'Pessoa Fora de Ordem', phone: '(11) 91111-2222', sex: 'FEMALE',
   });
   assert.equal(early.status, 422);
   const kinds = early.data.avisos.map((a) => a.tipo);
@@ -116,9 +116,11 @@ test('etapas fora de ordem: avisam, gravam com confirmação e ficam "fora de se
   assert.match(early.data.avisos.find((a) => a.tipo === 'SEQUENCE').mensagem, /anterior à etapa precedente: a abertura da posição/);
 
   await grh.post(`/api/positions/${pid}/candidate-approval`, {
-    date: d(-11), fullName: 'Pessoa Fora de Ordem', birthDate: '1991-02-03', sex: 'FEMALE', cpf: '111.444.777-35',
+    date: d(-11), fullName: 'Pessoa Fora de Ordem', phone: '(11) 91111-2222', sex: 'FEMALE',
   });
-  await grh.post(`/api/positions/${pid}/admission`, { date: d(-5), registration: 'M-SEQ' });
+  await grh.post(`/api/positions/${pid}/admission`, {
+    date: d(-5), registration: 'M-SEQ', birthDate: '1991-02-03', cpf: '111.444.777-35',
+  });
   const form = new FormData();
   form.set('date', d(-7));
   form.set('justification', 'Começou antes da admissão formal.');
@@ -160,9 +162,11 @@ test('1º dia agendado: a vaga fica "Aguardando 1º dia" no Painel de RH e os di
   await grh.post(`/api/orders/${id}/jobconvo`, { published: true, code: 'JC-FUT', publishedAt: d(-9) });
   const pid = (await com.post(`/api/orders/${id}/approval`, { date: d(-8) })).data.positions[0].id;
   await grh.post(`/api/positions/${pid}/candidate-approval`, {
-    date: d(-2), fullName: 'Pessoa Agendada', birthDate: '1990-06-07', sex: 'MALE', cpf: '390.533.447-05',
+    date: d(-2), fullName: 'Pessoa Agendada', phone: '(21) 3123-4567', sex: 'MALE',
   });
-  await grh.post(`/api/positions/${pid}/admission`, { date: d(-1), registration: 'M-FUT' });
+  await grh.post(`/api/positions/${pid}/admission`, {
+    date: d(-1), registration: 'M-FUT', birthDate: '1990-06-07', cpf: '390.533.447-05',
+  });
   const form = new FormData();
   form.set('date', d(4));
   form.set('justification', 'Início combinado com o cliente.');
@@ -194,9 +198,9 @@ test('o impossível continua bloqueando: fim de pausa antes do início, nascimen
 
   await grh.post(`/api/orders/${order.summary.id}/jobconvo`, { published: true, code: 'JC-IMP', publishedAt: d(-1) });
   await com.post(`/api/orders/${order.summary.id}/approval`, { date: d(-1) });
-  const born = await grh.post(`/api/positions/${p2}/candidate-approval`, {
-    date: T, fullName: 'Nascida Amanhã', birthDate: d(1), sex: 'FEMALE', cpf: '529.982.247-25',
-  });
+  // Nascimento é informado na admissão: lá, data futura continua bloqueando.
+  await grh.post(`/api/positions/${p2}/candidate-approval`, { date: T, fullName: 'Nascida Amanhã', phone: '(11) 92222-3333', sex: 'FEMALE' });
+  const born = await grh.post(`/api/positions/${p2}/admission`, { date: T, birthDate: d(1), cpf: '529.982.247-25' });
   assert.equal(born.status, 422);
   assert.equal(born.data.campos.birthDate, 'A data de nascimento não pode ser uma data futura.');
 

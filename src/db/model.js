@@ -64,7 +64,7 @@ export const ENTITIES = {
     removedAt: 'datetime', removedBy: 'text',
   }),
   Candidate: define('candidates', {
-    positionId: 'text', fullName: 'text', birthDate: 'date', sex: 'text', cpf: 'text', approvedAt: 'date',
+    positionId: 'text', fullName: 'text', birthDate: 'date', sex: 'text', cpf: 'text', phone: 'text', approvedAt: 'date',
     withdrawnAt: 'datetime', withdrawalReason: 'text',
   }),
   PositionEvidence: define('position_evidences', {

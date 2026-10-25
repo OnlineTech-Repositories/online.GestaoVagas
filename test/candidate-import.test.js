@@ -61,34 +61,26 @@ async function upload(user, path, buffer, name = 'candidatos.xlsx') {
   return c.request('POST', path, undefined, { form });
 }
 
-/** CPF válido a partir de 9 dígitos (calcula os verificadores). */
-function cpf(base9) {
-  const check = (digits) => {
-    const rest = [...digits].reduce((s, c, i) => s + Number(c) * (digits.length + 1 - i), 0) % 11;
-    return rest < 2 ? 0 : 11 - rest;
-  };
-  const first = check(base9);
-  return base9 + first + check(base9 + first);
-}
-
 /** Lê o modelo e devolve as linhas como objetos, mais um "preencher" que gera a planilha de volta (inlineStr). */
 function templateRows(buffer) {
   const [sheet] = readXlsx(buffer);
   const header = sheet.rows[0];
-  const keys = ['order', 'position', 'approvedAt', 'fullName', 'birthDate', 'sex', 'cpf', 'justification', 'positionId', 'orderId'];
+  const keys = ['order', 'position', 'approvedAt', 'fullName', 'phone', 'sex', 'justification', 'positionId', 'orderId'];
   return sheet.rows.slice(1).map((cells) => Object.fromEntries(keys.map((k, i) => [k, cells[i] ?? null]))).filter((r) => r.positionId)
     .map((r) => ({ ...r, header }));
 }
 
+/** Colunas do modelo (melhoria de 25/10/2026: telefone no lugar de nascimento e CPF, que passaram para a admissão). */
+const TITLES = ['Pedido', 'Vaga', 'Data de aprovação *', 'Nome completo *', 'Telefone com DDD *', 'Sexo *', 'Justificativa',
+  'ID da posição (não alterar)', 'ID do pedido (não alterar)'];
+
 /** Planilha "preenchida": as mesmas colunas do modelo, com os valores informados. */
 function filled(rows) {
-  const columns = ['Pedido', 'Vaga', 'Data de aprovação *', 'Nome completo *', 'Data de nascimento *', 'Sexo *', 'CPF *', 'Justificativa',
-    'ID da posição (não alterar)', 'ID do pedido (não alterar)']
-    .map((title, i) => ({ key: `c${i}`, title, type: [2, 4].includes(i) ? 'date' : undefined }));
+  const columns = TITLES.map((title, i) => ({ key: `c${i}`, title, type: i === 2 ? 'date' : undefined, editable: i === 4 }));
   return generateXlsx([{
     name: 'Candidatos',
     columns,
-    rows: rows.map((r) => Object.fromEntries([r.order, r.position, r.approvedAt, r.fullName, r.birthDate, r.sex, r.cpf, r.justification,
+    rows: rows.map((r) => Object.fromEntries([r.order, r.position, r.approvedAt, r.fullName, r.phone, r.sex, r.justification,
       r.positionId, r.orderId].map((v, i) => [`c${i}`, v]))),
   }]);
 }
@@ -111,6 +103,7 @@ test('modelo: uma linha por posição pendente, pedido e posição bloqueados, s
   const rows = templateRows(res.buffer);
   assert.equal(rows.length, order.candidateImport.pending);
   assert.ok(rows.every((r) => r.order === order.summary.number && r.orderId === order.summary.id));
+  assert.deepEqual(rows[0].header.slice(0, TITLES.length), TITLES, 'sem nascimento nem CPF');
 
   const sheets = readXlsx(res.buffer).map((s) => s.name);
   assert.deepEqual(sheets, ['Candidatos', 'Orientações']);
@@ -141,26 +134,25 @@ test('só o RH do pedido (analista responsável ou Gestor de RH) baixa o modelo 
 test('prévia: erro por linha e campo, linha em branco ignorada, nada gravado', async () => {
   const rows = templateRows((await download('gestor.rh', `/api/orders/${order.summary.id}/candidates-template`)).buffer);
   const sheet = filled([
-    { ...rows[0], approvedAt: today, fullName: 'Ana Souza', birthDate: '1990-05-10', sex: 'Feminino', cpf: cpf('038123456') },
+    { ...rows[0], approvedAt: today, fullName: 'Ana Souza', phone: '11 91234 5678', sex: 'Feminino' },
     { ...rows[1] }, // em branco: a posição continua pendente
-    { ...rows[2], approvedAt: addDays(today, 3), fullName: '', birthDate: '31/02/1990', sex: 'X', cpf: '123.456.789-00' },
-    ...(rows[3] ? [{ ...rows[3], approvedAt: today, fullName: 'Bia Lima', birthDate: '1992-01-01', sex: 'f', cpf: cpf('038123456') }] : []),
+    { ...rows[2], approvedAt: addDays(today, 3), fullName: '', phone: '91234-5678', sex: 'X' },
+    ...(rows[3] ? [{ ...rows[3], approvedAt: today, fullName: 'Bia Lima', sex: 'f' }] : []),
   ]);
   const r = await upload('gestor.rh', `/api/orders/${order.summary.id}/candidates-import/preview`, sheet);
   assert.equal(r.status, 200, JSON.stringify(r.data));
-  const [ok, blank, bad, dup] = r.data.rows;
+  const [ok, blank, bad, noPhone] = r.data.rows;
   assert.equal(ok.status, 'ready');
-  assert.equal(ok.cpf, '038.123.456-' + cpf('038123456').slice(9), 'CPF formatado, com o zero à esquerda');
+  assert.equal(ok.phone, '(11) 91234-5678', 'telefone formatado');
   assert.equal(blank.status, 'blank');
   assert.equal(bad.status, 'error');
   assert.equal(bad.line, 4, 'linha do Excel (o cabeçalho é a 1)');
   const fields = Object.fromEntries(bad.errors.map((e) => [e.field, e.message]));
   assert.equal(fields.approvedAt, undefined, 'data futura não é erro: vira aviso');
   assert.match(fields.fullName, /Informe o nome completo/);
-  assert.match(fields.birthDate, /Data inválida/);
+  assert.match(fields.phone, /Telefone inválido/);
   assert.match(fields.sex, /Opção inválida/);
-  assert.match(fields.cpf, /CPF inválido/);
-  if (dup) assert.match(dup.errors.find((e) => e.field === 'cpf').message, /CPF repetido na planilha \(também na linha 2\)/);
+  if (noPhone) assert.match(noPhone.errors.find((e) => e.field === 'phone').message, /Informe o telefone com DDD/);
   assert.equal(r.data.summary.canConfirm, false);
 
   // A linha 2 está correta, mas há linha com erro: a confirmação recusa tudo (decisão do usuário).
@@ -194,20 +186,18 @@ test('planilha de outro pedido, linhas fora do modelo e colunas trocadas são re
   assert.match(notXlsx.data.detail, /não é um \.xlsx/);
 });
 
-test('planilha salva no formato do Excel (textos compartilhados, texto rico, data em número, CPF digitado como número)', async () => {
+test('planilha salva no formato do Excel (textos compartilhados, texto rico, data em número, telefone digitado como número)', async () => {
   const [row] = templateRows((await download('gestor.rh', `/api/orders/${order.summary.id}/candidates-template`)).buffer);
-  const shared = ['Pedido', 'Vaga', 'Data de aprovação *', 'Nome completo *', 'Data de nascimento *', 'Sexo *', 'CPF *', 'Justificativa',
-    'ID da posição (não alterar)', 'ID do pedido (não alterar)', row.position, 'Feminino', row.positionId, row.orderId];
+  const shared = [...TITLES, row.position, 'Feminino', row.positionId, row.orderId];
   const si = (t, i) => (i === 3 ? '<si><r><t>Nome </t></r><r><rPr><b/></rPr><t>completo *</t></r></si>' : `<si><t>${t.replace(/&/g, '&amp;')}</t></si>`);
   const serial = (iso) => Math.round((Date.parse(`${iso}T00:00:00Z`) - Date.UTC(1899, 11, 30)) / 86_400_000);
-  const cpfNumber = Number(cpf('012345678')); // começa com 0: o Excel guardaria 12345678xx
   const xml = (r, cells) => `<row r="${r}">${cells.join('')}</row>`;
   const s = (ref, i) => `<c r="${ref}" t="s"><v>${i}</v></c>`;
   const n = (ref, v) => `<c r="${ref}"><v>${v}</v></c>`;
   const sheetXml = `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${
-    xml(1, shared.slice(0, 10).map((_, i) => s(`${'ABCDEFGHIJ'[i]}1`, i)))}${
-    xml(2, [n('A2', row.order), s('B2', 10), n('C2', serial(today)), `<c r="D2" t="inlineStr"><is><t>Eva_x0020_Nunes</t></is></c>`,
-      n('E2', serial('1993-08-20')), s('F2', 11), n('G2', cpfNumber), s('I2', 12), s('J2', 13)])}</sheetData></worksheet>`;
+    xml(1, TITLES.map((_, i) => s(`${'ABCDEFGHI'[i]}1`, i)))}${
+    xml(2, [n('A2', row.order), s('B2', 9), n('C2', serial(today)), `<c r="D2" t="inlineStr"><is><t>Eva_x0020_Nunes</t></is></c>`,
+      n('E2', 11987654321), s('F2', 10), s('H2', 11), s('I2', 12)])}</sheetData></worksheet>`;
   const buffer = zip([
     { name: '[Content_Types].xml', content: '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>' },
     { name: 'xl/workbook.xml', content: '<workbook xmlns:r="r"><sheets><sheet name="Candidatos" sheetId="1" r:id="rId1"/></sheets></workbook>' },
@@ -221,16 +211,15 @@ test('planilha salva no formato do Excel (textos compartilhados, texto rico, dat
   assert.deepEqual(line.errors, []);
   assert.equal(line.fullName, 'Eva Nunes', 'escape _x0020_ decodificado');
   assert.equal(line.approvedAt, today);
-  assert.equal(line.birthDate, '1993-08-20');
+  assert.equal(line.phone, '(11) 98765-4321', 'telefone digitado como número');
   assert.equal(line.sexLabel, 'Feminino');
-  assert.equal(line.cpf.replace(/\D/g, ''), cpf('012345678'), 'zero à esquerda recuperado');
 });
 
 test('confirmação: grava com as regras do cadastro individual, registra a importação e o novo modelo traz só as que faltam', async () => {
   const rows = templateRows((await download('gestor.rh', `/api/orders/${order.summary.id}/candidates-template`)).buffer);
   const sheet = filled([
-    { ...rows[0], approvedAt: today, fullName: '  Ana   Souza ', birthDate: '10/05/1990', sex: 'Feminino', cpf: cpf('038123456') },
-    { ...rows[1], approvedAt: today, fullName: 'Carlos Dias', birthDate: '1988-03-02', sex: 'Masculino', cpf: cpf('529982247') },
+    { ...rows[0], approvedAt: today, fullName: '  Ana   Souza ', phone: '(11) 91234-5678', sex: 'Feminino' },
+    { ...rows[1], approvedAt: today, fullName: 'Carlos Dias', phone: '(21) 3123-4567', sex: 'Masculino' },
   ]);
   const r = await upload('gestor.rh', `/api/orders/${order.summary.id}/candidates-import`, sheet, 'lote-1.xlsx');
   assert.equal(r.status, 200, JSON.stringify(r.data));
@@ -240,8 +229,7 @@ test('confirmação: grava com as regras do cadastro individual, registra a impo
   assert.ok(positions.every((p) => p.status === 'CANDIDATE_APPROVED'));
   const ana = await queryOne('SELECT * FROM candidates WHERE position_id = ?', rows[0].positionId);
   assert.equal(ana.full_name, 'Ana Souza', 'nome normalizado como no cadastro individual');
-  assert.equal(ana.cpf, cpf('038123456'));
-  assert.equal(ana.birth_date, '1990-05-10');
+  assert.deepEqual([ana.phone, ana.cpf, ana.birth_date], ['11912345678', null, null], 'nascimento e CPF ficam para a admissão');
 
   const summary = await queryOne("SELECT user_id, new_value FROM audit_logs WHERE action = 'IMPORT_CANDIDATES' AND field = 'Summary'");
   assert.match(summary.new_value, /"file":"lote-1\.xlsx","imported":2/);
@@ -258,7 +246,7 @@ test('data retroativa com a carga inicial encerrada exige justificativa, gravada
   await execute("UPDATE system_parameters SET param_value = 'false' WHERE param_key = 'INITIAL_LOAD_OPEN'");
   try {
     const [row] = templateRows((await download('gestor.rh', `/api/orders/${order.summary.id}/candidates-template`)).buffer);
-    const base = { ...row, approvedAt: addDays(today, -2), fullName: 'Duda Reis', birthDate: '1995-07-07', sex: 'Não informado', cpf: cpf('111444777') };
+    const base = { ...row, approvedAt: addDays(today, -2), fullName: 'Duda Reis', phone: '(31) 99876-5432', sex: 'Não informado' };
     const missing = await upload('gestor.rh', `/api/orders/${order.summary.id}/candidates-import/preview`, filled([base]));
     assert.equal(missing.data.rows[0].errors[0].field, 'justification');
     const ok = await upload('gestor.rh', `/api/orders/${order.summary.id}/candidates-import`,

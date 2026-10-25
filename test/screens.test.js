@@ -974,7 +974,7 @@ test('RH: Gestor de RH distribui o pedido; o Analista de RH age só nos pedidos 
   await open('/posicoes?rh=MINE', 'Posições');
 });
 
-test('Candidato selecionado: dados por posição, CPF validado e único, correção com histórico e dados restritos', async (t) => {
+test('Candidato selecionado: nome, telefone e sexo no cadastro; nascimento e CPF na admissão; correção e dados restritos', async (t) => {
   if (skip(t)) return;
   await signIn('comercial@demo.local');
   const todayIso = ui.today();
@@ -1001,37 +1001,59 @@ test('Candidato selecionado: dados por posição, CPF validado e único, correç
   await signIn('rh@demo.local');
   await apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: true, code: 'JC-CAND', publishedAt: todayIso, justification: null });
 
-  // "Adicionar Candidato" abre o formulário com os dados do candidato.
+  // "Adicionar Candidato" pede só nome, telefone e sexo; nascimento e CPF ficam para a admissão.
   const screen = await open(`/posicoes/${first}`, 'Posição');
   const approveButton = [...screen.querySelectorAll('button')].find((b) => b.textContent === 'Adicionar Candidato');
   approveButton.click();
   const modal = document.getElementById('modal-area').querySelector('.modal');
-  for (const name of ['fullName', 'birthDate', 'sex', 'cpf']) assert.ok(modal.querySelector(`[data-campo="${name}"]`), name);
+  for (const name of ['fullName', 'phone', 'sex']) assert.ok(modal.querySelector(`[data-campo="${name}"]`), name);
+  for (const name of ['birthDate', 'cpf']) assert.ok(!modal.querySelector(`[data-campo="${name}"]`), `sem ${name}`);
   modal.querySelector('.modal-fechar').click();
 
-  const candidate = { fullName: 'Maria da Silva', birthDate: '1995-04-10', sex: 'FEMALE', cpf: '529.982.247-25' };
+  const candidate = { fullName: 'Maria da Silva', phone: '(11) 91234-5678', sex: 'FEMALE' };
   const approve = (id, data) => apiModule.api.post(`/api/positions/${id}/candidate-approval`,
     { date: todayIso, justification: null, ...data });
-  await assert.rejects(approve(first, { ...candidate, cpf: '529.982.247-24' }), (e) => e.status === 422 && 'cpf' in e.fields);
-  await assert.rejects(approve(first, { ...candidate, birthDate: '2999-01-01' }), (e) => e.status === 422 && 'birthDate' in e.fields);
+  await assert.rejects(approve(first, { ...candidate, phone: '1234-5678' }), (e) => e.status === 422 && 'phone' in e.fields);
   await assert.rejects(approve(first, { ...candidate, sex: null }), (e) => e.status === 422 && 'sex' in e.fields);
 
   const approved = await approve(first, candidate);
   assert.equal(approved.summary.status, 'CANDIDATE_APPROVED');
-  assert.equal(approved.candidate.cpf, '529.982.247-25');
+  assert.deepEqual([approved.candidate.phone, approved.candidate.cpf, approved.candidate.birthDate], ['(11) 91234-5678', null, null]);
   assert.equal(approved.candidate.restricted, false);
   assert.equal(approved.candidate.recordedByName, 'Rita RH (demo)');
   assert.equal(approved.summary.candidateName, 'Maria da Silva');
-
-  // Um candidato por posição: o mesmo CPF não ocupa outra posição aberta.
-  await assert.rejects(approve(second, candidate),
-    (e) => e.status === 422 && 'cpf' in e.fields && /já é o candidato selecionado da posição/.test(e.message));
-  const other = await approve(second, { fullName: 'João Pereira', birthDate: '1990-01-01', sex: 'MALE', cpf: '111.444.777-35' });
+  const other = await approve(second, { fullName: 'João Pereira', phone: '(21) 3123-4567', sex: 'MALE' });
   assert.equal(other.candidate.fullName, 'João Pereira');
+  const pendingScreen = await open(`/posicoes/${first}`, 'Posição');
+  assert.match(pendingScreen.textContent, /Informado na admissão/);
 
-  // Correção: quem alterou e quando; os valores anteriores ficam no histórico.
-  const corrected = await apiModule.api.put(`/api/positions/${first}/candidate`,
-    { fullName: 'Maria da Silva Santos', birthDate: '1995-04-10', sex: 'NOT_INFORMED', cpf: '52998224725', justification: 'Nome completo' });
+  // "Registrar admissão": nome e sexo para conferência, telefone do cadastro, nascimento e CPF obrigatórios.
+  const admissionScreen = await open(`/posicoes/${first}`, 'Posição');
+  [...admissionScreen.querySelectorAll('button')].find((b) => b.textContent === 'Registrar admissão').click();
+  const admissionModal = document.getElementById('modal-area').querySelector('.modal');
+  for (const name of ['phone', 'birthDate', 'cpf', 'date', 'registration']) assert.ok(admissionModal.querySelector(`[data-campo="${name}"]`), name);
+  assert.equal(admissionModal.querySelector('[data-campo="candidateName"]').querySelector('input').value, 'Maria da Silva');
+  assert.equal(admissionModal.querySelector('[data-campo="phone"]').querySelector('input').value, '(11) 91234-5678');
+  admissionModal.querySelector('.modal-fechar').click();
+
+  const admit = (id, data) => apiModule.api.post(`/api/positions/${id}/admission`,
+    { date: todayIso, registration: null, justification: null, ...data });
+  await assert.rejects(admit(first, { cpf: '529.982.247-25' }), (e) => e.status === 422 && 'birthDate' in e.fields);
+  await assert.rejects(admit(first, { birthDate: '1995-04-10', cpf: '529.982.247-24' }), (e) => e.status === 422 && 'cpf' in e.fields);
+  const admitted = await admit(first, { birthDate: '1995-04-10', cpf: '529.982.247-25' });
+  assert.deepEqual([admitted.candidate.id, admitted.candidate.cpf, admitted.candidate.birthDate], [approved.candidate.id, '529.982.247-25', '1995-04-10']);
+
+  // O mesmo CPF não ocupa outra posição aberta: conferido na admissão.
+  await assert.rejects(admit(second, { birthDate: '1990-01-01', cpf: '529.982.247-25' }),
+    (e) => e.status === 422 && 'cpf' in e.fields && /já é o candidato selecionado da posição/.test(e.message));
+
+  // Correção: quem alterou e quando; os valores anteriores ficam no histórico. Depois da admissão, com nascimento e CPF.
+  await assert.rejects(apiModule.api.put(`/api/positions/${first}/candidate`, { ...candidate, justification: null }),
+    (e) => e.status === 422 && 'birthDate' in e.fields);
+  const corrected = await apiModule.api.put(`/api/positions/${first}/candidate`, {
+    fullName: 'Maria da Silva Santos', phone: '(11) 91234-5678', sex: 'NOT_INFORMED', birthDate: '1995-04-10', cpf: '52998224725',
+    justification: 'Nome completo',
+  });
   assert.equal(corrected.candidate.fullName, 'Maria da Silva Santos');
   assert.equal(corrected.candidate.updatedByName, 'Rita RH (demo)');
   assert.ok(corrected.history.some((h) => h.action === 'CORRECT_CANDIDATE' && h.field === 'FullName'
@@ -1039,32 +1061,33 @@ test('Candidato selecionado: dados por posição, CPF validado e único, correç
   const detailScreen = await open(`/posicoes/${first}`, 'Posição');
   assert.match(detailScreen.textContent, /Candidato selecionado/);
   assert.match(detailScreen.textContent, /529\.982\.247-25/);
+  assert.match(detailScreen.textContent, /\(11\) 91234-5678/);
   assert.ok([...detailScreen.querySelectorAll('button')].some((b) => b.textContent === 'Corrigir dados'));
 
-  // Perfis fora do RH do pedido, NACC e DP: nome e CPF mascarado; nascimento e sexo restritos, também no histórico.
+  // Perfis fora do RH do pedido, NACC e DP: nome e CPF mascarado; telefone, nascimento e sexo restritos, também no histórico.
   await signIn('comercial@demo.local');
   const restricted = await apiModule.api.get(`/api/positions/${first}`);
   assert.equal(restricted.candidate.restricted, true);
   assert.equal(restricted.candidate.cpf, '***.982.247-**');
-  assert.equal(restricted.candidate.birthDate, null);
-  assert.equal(restricted.candidate.sex, null);
+  assert.deepEqual([restricted.candidate.birthDate, restricted.candidate.sex, restricted.candidate.phone], [null, null, null]);
   const sexChange = restricted.history.find((h) => h.field === 'Sex');
   assert.equal(sexChange.newValue, '(restrito)');
+  assert.ok(restricted.history.filter((h) => h.field === 'Phone').every((h) => h.newValue === '(restrito)'));
   assert.ok(!restricted.allowedActions.includes('CORRECT_CANDIDATE'));
   const restrictedScreen = await open(`/posicoes/${first}`, 'Posição');
   assert.match(restrictedScreen.textContent, /\*\*\*\.982\.247-\*\*/);
-  assert.doesNotMatch(restrictedScreen.textContent, /529\.982\.247-25/);
+  assert.doesNotMatch(restrictedScreen.textContent, /529\.982\.247-25|91234-5678/);
 
   await signIn('nacc@demo.local');
   assert.equal((await apiModule.api.get(`/api/positions/${first}`)).candidate.restricted, false, 'o NACC vê os dados');
 
-  // Desistência: o candidato vai para "anteriores" e o CPF fica livre.
+  // Desistência: o candidato vai para "anteriores"; o novo começa sem nascimento nem CPF.
   await signIn('rh@demo.local');
-  const withdrew = await apiModule.api.post(`/api/positions/${first}/candidate-withdrawal`, { justification: null });
+  const withdrew = await apiModule.api.post(`/api/positions/${second}/candidate-withdrawal`, { justification: null });
   assert.equal(withdrew.candidate, null);
   assert.equal(withdrew.previousCandidates[0].withdrawalReason, 'Candidato desistiu');
-  const again = await approve(first, { ...candidate, fullName: 'Maria da Silva Santos' });
-  assert.equal(again.candidate.cpf, '529.982.247-25');
+  const again = await approve(second, { ...candidate, fullName: 'Ana Souza' });
+  assert.equal(again.candidate.cpf, null);
   assert.equal(again.previousCandidates.length, 1);
 });
 
@@ -1096,10 +1119,10 @@ test('1º dia efetivo: dados do candidato e da admissão preenchidos, justificat
   await signIn('rh@demo.local');
   await apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: true, code: 'JC-1DIA', publishedAt: todayIso, justification: null });
   await apiModule.api.post(`/api/positions/${positionId}/candidate-approval`, { date: todayIso, justification: null,
-    fullName: 'Francisco Teste', birthDate: '1992-07-20', sex: 'MALE', cpf: '935.411.347-80' });
+    fullName: 'Francisco Teste', phone: '(11) 94444-5555', sex: 'MALE' });
   // Admissão sem matrícula (opcional): o NACC ainda não consegue confirmar.
   const admitted = await apiModule.api.post(`/api/positions/${positionId}/admission`,
-    { date: todayIso, registration: null, justification: null });
+    { date: todayIso, registration: null, justification: null, birthDate: '1992-07-20', cpf: '935.411.347-80' });
   assert.equal(admitted.admissionRegistration, null);
   assert.equal(admitted.summary.status, 'IN_ADMISSION', 'sem matrícula, a admissão não está concluída');
   assert.ok(!admitted.allowedActions.includes('CONFIRM_FIRST_DAY'));
@@ -1206,8 +1229,10 @@ test('Reposição como novo ciclo da vaga: uma linha por vaga, histórico de ocu
   await signIn('gestor.rh@demo.local');
   await apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: true, code: 'JC-CICLO', publishedAt: todayIso, justification: null });
   await apiModule.api.post(`/api/positions/${originId}/candidate-approval`, { date: todayIso, justification: null,
-    fullName: 'Primeiro Ocupante', birthDate: '1990-05-05', sex: 'MALE', cpf: '274.628.610-62' });
-  await apiModule.api.post(`/api/positions/${originId}/admission`, { date: todayIso, registration: 'M-CICLO-1', justification: null });
+    fullName: 'Primeiro Ocupante', phone: '(11) 95555-6666', sex: 'MALE' });
+  await apiModule.api.post(`/api/positions/${originId}/admission`, {
+    date: todayIso, registration: 'M-CICLO-1', justification: null, birthDate: '1990-05-05', cpf: '274.628.610-62',
+  });
   await signIn('nacc@demo.local');
   await apiModule.api.post(`/api/positions/${originId}/first-day`, { date: todayIso, justification: 'Cliente confirmou.' });
 

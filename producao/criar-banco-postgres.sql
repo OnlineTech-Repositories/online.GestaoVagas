@@ -34,9 +34,14 @@ END $$;
 
 -- ---- 1. Colunas acrescentadas a tabelas existentes -------------------------------------------------------------
 ALTER TABLE IF EXISTS clients ADD COLUMN IF NOT EXISTS is_brand INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE IF EXISTS candidates ADD COLUMN IF NOT EXISTS phone TEXT;
 
 -- Índices substituídos por outro no schema (removidos antes de criar o novo).
 DROP INDEX IF EXISTS ux_clients_cnpj;
+
+-- Colunas que deixaram de ser obrigatórias (os valores gravados ficam).
+ALTER TABLE IF EXISTS candidates ALTER COLUMN birth_date DROP NOT NULL;
+ALTER TABLE IF EXISTS candidates ALTER COLUMN cpf DROP NOT NULL;
 
 -- ---- 2. Tabelas e índices ------------------------------------------------------------------------------------
 
@@ -310,13 +315,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_order_rh_analysts_active ON order_rh_analys
 CREATE INDEX IF NOT EXISTS ix_order_rh_analysts_order ON order_rh_analysts (order_id);
 
 -- Candidato selecionado (um ativo por posição); quem desistiu fica com withdrawn_at.
+-- Nascimento e CPF são informados na admissão (melhoria de 25/10/2026): vazios até lá. Telefone com DDD, só dígitos;
+-- vazio nos candidatos cadastrados antes dele, pedido na admissão.
 CREATE TABLE IF NOT EXISTS candidates (
   id TEXT PRIMARY KEY,
   position_id TEXT NOT NULL REFERENCES positions (id),
   full_name TEXT NOT NULL,
-  birth_date TEXT NOT NULL,
+  birth_date TEXT,
   sex TEXT NOT NULL,
-  cpf TEXT NOT NULL,
+  cpf TEXT,
+  phone TEXT,
   approved_at TEXT NOT NULL,
   withdrawn_at TEXT,
   withdrawal_reason TEXT,

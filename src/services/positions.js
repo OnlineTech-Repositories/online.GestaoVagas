@@ -184,7 +184,7 @@ async function history(p, fullCandidate) {
 function protect(log, value, fullCandidate) {
   if (fullCandidate || value === null || log.entity !== 'Candidate') return value;
   if (log.field === 'Cpf') return Cpf.mask(value);
-  if (log.field === 'BirthDate' || log.field === 'Sex') return '(restrito)';
+  if (log.field === 'BirthDate' || log.field === 'Sex' || log.field === 'Phone') return '(restrito)';
   if (log.field === null) return '(dados do candidato restritos)';
   return value;
 }
@@ -245,14 +245,17 @@ export function decide(ctx, id, body) {
   });
 }
 
+/** Dados do cadastro do candidato (melhoria de 25/10/2026): nome, telefone com DDD e sexo. */
 function candidateData(input) {
   return {
     fullName: input.text('fullName'),
-    birthDate: input.date('birthDate', { required: false }),
+    phone: input.text('phone'),
     sex: input.option('sex', CandidateSex, { required: false }),
-    cpf: input.text('cpf'),
   };
 }
+
+/** Nascimento e CPF: pedidos na admissão; na correção, opcionais antes dela. */
+const documentData = (input) => ({ birthDate: input.date('birthDate', { required: false }), cpf: input.text('cpf') });
 
 export function approveCandidate(ctx, id, body) {
   const input = new Input(body);
@@ -262,8 +265,7 @@ export function approveCandidate(ctx, id, body) {
   input.done();
   return execute(ctx, id, Actions.ApproveCandidate, justification, async (p, review) => {
     await checkDate(review, p, date, 'A data de aprovação', justification);
-    const candidate = P.approveCandidate(p, date, data, todayDate());
-    await ensureCpfFree(p, candidate.cpf);
+    P.approveCandidate(p, date, data, todayDate());
     return 'APPROVE_CANDIDATE';
   });
 }
@@ -271,7 +273,7 @@ export function approveCandidate(ctx, id, body) {
 /** Correção dos dados do candidato pelo RH do pedido; quem e quando ficam no cadastro e no histórico. */
 export function correctCandidate(ctx, id, body) {
   const input = new Input(body);
-  const data = candidateData(input);
+  const data = { ...candidateData(input), ...documentData(input) };
   const justification = input.text('justification');
   input.done();
   return execute(ctx, id, Actions.CorrectCandidate, justification, async (p) => {
@@ -281,8 +283,12 @@ export function correctCandidate(ctx, id, body) {
   });
 }
 
-/** O mesmo CPF não pode ser o candidato selecionado de duas posições abertas. */
-async function ensureCpfFree(p, cpf) {
+/**
+ * O mesmo CPF não pode ser o candidato selecionado de duas posições abertas. Conferido quando o CPF é informado — na
+ * admissão ou na correção (decisão do usuário); antes disso o candidato é identificado pelo cadastro interno.
+ */
+export async function ensureCpfFree(p, cpf) {
+  if (!cpf) return;
   const other = await findOpenWithCandidateCpf(cpf, p.id);
   if (other) {
     throw new BusinessRuleError(
@@ -294,11 +300,13 @@ export function registerAdmission(ctx, id, body) {
   const input = new Input(body);
   const date = input.date('date');
   const registration = input.text('registration');
+  const documents = { ...documentData(input), phone: input.text('phone') };
   const justification = input.text('justification');
   input.done();
   return execute(ctx, id, Actions.RegisterAdmission, justification, async (p, review) => {
     await checkDate(review, p, date, 'A data de admissão', justification);
-    P.registerAdmission(p, date, registration);
+    P.registerAdmission(p, date, registration, documents, todayDate());
+    await ensureCpfFree(p, P.activeCandidate(p).cpf);
     const withRegistration = p.status === PositionStatus.AWAITING_FIRST_DAY;
     await notifyPosition(ctx, p, NotificationTypes.AdmissionRegistered, 'Admissão registrada',
       withRegistration

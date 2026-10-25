@@ -5,7 +5,7 @@ import {
   CandidateSex, EvidenceKind, OrderApprovalStatus, OrderStatus, PositionStatus as S, Roles, SlaTargetSource,
   TerminationSource, TerminationType,
 } from '../src/domain/enums.js';
-import { Cpf, EvidenceFiles, RhAccess } from '../src/domain/guards.js';
+import { Cpf, EvidenceFiles, Phone, RhAccess } from '../src/domain/guards.js';
 import {
   activeRhAnalysts, awaitingRhAssignment, computeStatus, currentPositions, recordJobconvo, reject, setRhAnalysts,
 } from '../src/domain/order.js';
@@ -202,49 +202,105 @@ for (const [cpf, valid] of [
 
 test('CPF mascarado para quem não vê os dados completos', () => assert.equal(Cpf.mask('529.982.247-25'), '***.982.247-**'));
 
-test('a aprovação guarda o candidato na posição', () => {
+/** Cadastro do candidato (melhoria de 25/10/2026): só nome, telefone e sexo. */
+const newcomer = (overrides = {}) => ({ fullName: 'Maria da Silva', phone: '(11) 91234-5678', sex: CandidateSex.FEMALE, ...overrides });
+
+test('a aprovação guarda o candidato na posição, sem nascimento nem CPF', () => {
   const p = recruiting();
-  const c = P.approveCandidate(p, TODAY, {
-    fullName: '  Maria   da Silva ', birthDate: '1995-04-10', sex: CandidateSex.FEMALE, cpf: '529.982.247-25',
-  }, TODAY);
+  const c = P.approveCandidate(p, TODAY, newcomer({ fullName: '  Maria   da Silva ' }), TODAY);
   assert.equal(P.activeCandidate(p), c);
-  assert.equal(c.fullName, 'Maria da Silva');
-  assert.equal(c.cpf, '52998224725');
+  assert.deepEqual([c.fullName, c.phone, c.sex, c.birthDate, c.cpf], ['Maria da Silva', '11912345678', CandidateSex.FEMALE, null, null]);
   assert.equal(p.status, S.CANDIDATE_APPROVED);
 });
 
-for (const [name, birth, sex, cpf, field] of [
-  ['', '1995-04-10', CandidateSex.FEMALE, '52998224725', 'fullName'],
-  ['Maria', null, CandidateSex.FEMALE, '52998224725', 'birthDate'],
-  ['Maria', '2026-12-03', CandidateSex.FEMALE, '52998224725', 'birthDate'],
-  ['Maria', '1995-04-10', null, '52998224725', 'sex'],
-  ['Maria', '1995-04-10', CandidateSex.MALE, '52998224724', 'cpf'],
-  ['Maria', '1995-04-10', CandidateSex.MALE, null, 'cpf'],
+for (const [data, field] of [
+  [newcomer({ fullName: '' }), 'fullName'],
+  [newcomer({ phone: '' }), 'phone'],
+  [newcomer({ phone: '91234-5678' }), 'phone'],
+  [newcomer({ phone: '(11) 81234-5678' }), 'phone'],
+  [newcomer({ sex: null }), 'sex'],
 ]) {
-  test(`a aprovação valida o campo ${field} (${name || 'sem nome'}, ${birth}, ${sex}, ${cpf})`, () => {
+  test(`a aprovação valida o campo ${field} (${JSON.stringify(data)})`, () => {
     const p = recruiting();
-    assert.equal(ruleField(() => P.approveCandidate(p, TODAY, { fullName: name, birthDate: birth, sex, cpf }, TODAY)), field);
+    assert.equal(ruleField(() => P.approveCandidate(p, TODAY, data, TODAY)), field);
     assert.equal(p.status, S.RECRUITING);
     assert.equal(p.candidates.length, 0);
   });
 }
 
-test('a correção altera o candidato ativo', () => {
+for (const [typed, digits] of [
+  ['(11) 91234-5678', '11912345678'], ['11 3123-4567', '1131234567'], ['+55 21 99876-5432', '21998765432'],
+  ['0 11 91234-5678', '11912345678'],
+]) {
+  test(`telefone ${typed} é aceito e gravado como ${digits}`, () => assert.equal(Phone.require(typed), digits));
+}
+test('telefone formatado para exibição', () => {
+  assert.equal(Phone.format('11912345678'), '(11) 91234-5678');
+  assert.equal(Phone.format('1131234567'), '(11) 3123-4567');
+});
+
+test('a admissão exige nascimento e CPF e completa o cadastro do mesmo candidato', () => {
+  const p = recruiting();
+  const c = P.approveCandidate(p, TODAY, newcomer(), TODAY);
+  assert.equal(ruleField(() => P.registerAdmission(p, TODAY, null, { cpf: '52998224725' }, TODAY)), 'birthDate');
+  assert.equal(ruleField(() => P.registerAdmission(p, TODAY, null, { birthDate: '1995-04-10' }, TODAY)), 'cpf');
+  assert.equal(ruleField(() => P.registerAdmission(p, TODAY, null, { birthDate: '1995-04-10', cpf: '52998224724' }, TODAY)), 'cpf');
+  assert.equal(ruleField(() => P.registerAdmission(p, TODAY, null, { birthDate: '2999-01-01', cpf: '52998224725' }, TODAY)), 'birthDate');
+  assert.equal(p.status, S.CANDIDATE_APPROVED);
+  P.registerAdmission(p, TODAY, 'M-1', { birthDate: '1995-04-10', cpf: '529.982.247-25' }, TODAY);
+  assert.deepEqual([P.activeCandidate(p), c.birthDate, c.cpf, c.phone], [c, '1995-04-10', '52998224725', '11912345678']);
+  assert.equal(p.candidates.length, 1, 'o mesmo cadastro, não outro');
+});
+
+test('admissão de candidato antigo: nascimento e CPF gravados valem; o telefone que falta é pedido', () => {
+  const p = recruiting();
+  const c = P.approveCandidate(p, TODAY, candidate(), TODAY);
+  c.phone = null; // cadastrado antes do telefone
+  assert.equal(ruleField(() => P.registerAdmission(p, TODAY, null, {}, TODAY)), 'phone');
+  P.registerAdmission(p, TODAY, null, { phone: '11 3123-4567' }, TODAY);
+  assert.deepEqual([c.birthDate, c.cpf, c.phone], ['1995-04-10', '52998224725', '1131234567']);
+});
+
+test('na admissão, nascimento e CPF informados de novo corrigem o cadastro', () => {
+  const p = recruiting();
+  const c = P.approveCandidate(p, TODAY, candidate(), TODAY);
+  P.registerAdmission(p, TODAY, null, { birthDate: '1995-04-11', cpf: '111.444.777-35' }, TODAY);
+  assert.deepEqual([c.birthDate, c.cpf], ['1995-04-11', '11144477735']);
+});
+
+test('admissão sem candidato cadastrado é recusada', () => {
   const p = recruiting();
   P.approveCandidate(p, TODAY, candidate(), TODAY);
-  P.correctCandidate(p, { fullName: 'Maria da Silva Santos', birthDate: '1995-04-11', sex: CandidateSex.NOT_INFORMED,
-    cpf: '52998224725' }, TODAY);
-  assert.equal(P.activeCandidate(p).fullName, 'Maria da Silva Santos');
-  assert.equal(P.activeCandidate(p).sex, CandidateSex.NOT_INFORMED);
+  p.candidates.length = 0; // aprovada antes do cadastro de candidatos
+  assert.equal(ruleField(() => P.registerAdmission(p, TODAY, null, { birthDate: '1995-04-10', cpf: '52998224725' }, TODAY)), 'candidate');
+});
+
+test('a correção altera o candidato ativo; antes da admissão, nascimento e CPF são opcionais', () => {
+  const p = recruiting();
+  P.approveCandidate(p, TODAY, candidate(), TODAY);
+  P.correctCandidate(p, newcomer({ fullName: 'Maria da Silva Santos', sex: CandidateSex.NOT_INFORMED, birthDate: '1995-04-11',
+    cpf: '52998224725' }), TODAY);
+  const c = P.activeCandidate(p);
+  assert.deepEqual([c.fullName, c.sex, c.birthDate], ['Maria da Silva Santos', CandidateSex.NOT_INFORMED, '1995-04-11']);
+  P.correctCandidate(p, newcomer(), TODAY);
+  assert.deepEqual([c.birthDate, c.cpf], [null, null]);
   assert.equal(p.candidates.length, 1);
+});
+
+test('depois da admissão, a correção exige nascimento e CPF', () => {
+  const p = recruiting();
+  P.approveCandidate(p, TODAY, candidate(), TODAY);
+  P.registerAdmission(p, TODAY);
+  assert.equal(ruleField(() => P.correctCandidate(p, newcomer(), TODAY)), 'birthDate');
+  assert.equal(ruleField(() => P.correctCandidate(p, newcomer({ birthDate: '1995-04-10' }), TODAY)), 'cpf');
 });
 
 test('a desistência guarda o candidato anterior e libera a posição', () => {
   const p = recruiting();
   P.approveCandidate(p, TODAY, candidate(), TODAY);
   P.candidateWithdrew(p, NOW);
-  P.approveCandidate(p, TODAY, { fullName: 'João Pereira', birthDate: '1990-01-01', sex: CandidateSex.MALE, cpf: '11144477735' }, TODAY);
-  P.registerAdmission(p, TODAY);
+  P.approveCandidate(p, TODAY, newcomer({ fullName: 'João Pereira', sex: CandidateSex.MALE }), TODAY);
+  P.registerAdmission(p, TODAY, null, { birthDate: '1990-01-01', cpf: '11144477735' }, TODAY);
   P.admissionNoShow(p, NOW);
   assert.equal(P.activeCandidate(p), null);
   assert.deepEqual(p.candidates.map((c) => c.withdrawalReason), ['Candidato desistiu', 'Admitido não compareceu']);
@@ -328,8 +384,8 @@ test('posição aprovada antes da regra do candidato recebe o candidato pelo RH'
   p.candidates.length = 0; // aprovada antes do cadastro de candidatos
   assert.ok(P.canRegisterMissingCandidate(p));
   assert.equal(ruleField(() => P.confirmFirstDay(p, '2026-12-05', 'Ok', null, FIRST_DAY_NOW)), 'employeeName');
-  const c = P.correctCandidate(p, { fullName: 'João Pereira', birthDate: '1990-01-01', sex: CandidateSex.MALE,
-    cpf: '11144477735' }, '2026-12-04');
+  const c = P.correctCandidate(p, newcomer({ fullName: 'João Pereira', birthDate: '1990-01-01', sex: CandidateSex.MALE,
+    cpf: '11144477735' }), '2026-12-04');
   assert.equal(c.approvedAt, '2026-12-02');
   P.confirmFirstDay(p, '2026-12-05', 'Ok', null, FIRST_DAY_NOW);
   assert.equal(p.employeeName, 'João Pereira');

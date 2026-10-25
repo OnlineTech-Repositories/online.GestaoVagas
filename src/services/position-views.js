@@ -6,7 +6,7 @@ import {
 } from '../domain/position.js';
 import { OrderApprovalStatus, PositionStatus as S, Roles } from '../domain/enums.js';
 import { ForbiddenError } from '../domain/errors.js';
-import { Cpf, hasAnyRole, hasRole, RhAccess } from '../domain/guards.js';
+import { Cpf, hasAnyRole, hasRole, Phone, RhAccess } from '../domain/guards.js';
 
 /**
  * O que a tela recebe de uma posição: o resumo da lista, as métricas, as ações permitidas e os dados do candidato
@@ -187,13 +187,18 @@ export const canSeeFullCandidate = (user, order) => RhAccess.canAct(user, order)
 /** Quem baixa as evidências da posição: RH do pedido, NACC, DP e Gestor. */
 export const canDownloadEvidence = (user, order) => canSeeFullCandidate(user, order) || hasRole(user, Roles.Manager);
 
-/** Para quem não vê os dados completos, CPF mascarado e nascimento/sexo nulos (restricted = true). */
+/**
+ * Para quem não vê os dados completos, CPF mascarado e nascimento/sexo/telefone nulos (restricted = true). Nascimento
+ * e CPF vazios até a admissão (null).
+ */
 export const candidateDto = (c, full, names) => ({
   id: c.id,
   fullName: c.fullName,
   birthDate: full ? c.birthDate : null,
   sex: full ? c.sex : null,
-  cpf: full ? Cpf.format(c.cpf) : Cpf.mask(c.cpf),
+  phone: full && c.phone ? Phone.format(c.phone) : null,
+  hasPhone: Boolean(c.phone),
+  cpf: !c.cpf ? null : full ? Cpf.format(c.cpf) : Cpf.mask(c.cpf),
   restricted: !full,
   approvedAt: c.approvedAt,
   recordedAt: c.createdAt,

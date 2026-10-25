@@ -22,6 +22,39 @@ export const Cnpj = {
 };
 
 /** CPF: só os 11 dígitos, com os dígitos verificadores conferidos. */
+/**
+ * Telefone com DDD (melhoria de 25/10/2026): fixo com 8 dígitos (começando de 2 a 5) ou celular com 9 (começando
+ * por 9). Grava só os dígitos; aceita o 0 de longa distância e o +55 na digitação ou na planilha.
+ */
+export const Phone = {
+  normalize(value) {
+    let d = String(value ?? '').replace(/\D/g, '');
+    if (d.length >= 12 && d.startsWith('55')) d = d.slice(2);
+    if (d.length >= 11 && d.startsWith('0')) d = d.slice(1);
+    return d;
+  },
+  isValid(value) {
+    const d = Phone.normalize(value);
+    return /^[1-9]{2}(?:9\d{8}|[2-5]\d{7})$/.test(d);
+  },
+  require(value, field = null) {
+    if (value === null || value === undefined || String(value).trim() === '') {
+      throw new BusinessRuleError('Informe o telefone com DDD.', field);
+    }
+    if (!Phone.isValid(value)) {
+      throw new BusinessRuleError('Telefone inválido: informe o DDD e o número (celular com 9 dígitos, fixo com 8).', field);
+    }
+    return Phone.normalize(value);
+  },
+  /** (11) 91234-5678 ou (11) 3123-4567. */
+  format(value) {
+    const d = String(value ?? '');
+    if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+    if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+    return d;
+  },
+};
+
 export const Cpf = {
   normalize: (value) => String(value ?? '').replace(/\D/g, ''),
   isValid(value) {

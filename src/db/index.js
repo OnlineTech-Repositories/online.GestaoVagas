@@ -91,6 +91,8 @@ export async function lock(lockClass, key = 0) {
 export const db = {
   tableExists: (t) => driver.tableExists(t),
   columnExists: (t, c) => driver.columnExists(t, c),
+  /** Colunas da tabela no SQLite: [{ name, notnull }] (PRAGMA table_info). */
+  tableColumns: (t) => driver.tableColumns(t),
   prepareSchema: () => driver.prepareSchema?.(),
 };
 

@@ -153,24 +153,34 @@ test('fluxo completo: pedido, aprovação, RH, candidato, admissão, 1º dia com
   const positionId = approved.data.positions[0].id;
   assert.equal(approved.data.positions[0].openedAt, today);
 
-  // Candidato, admissão com matrícula.
-  const cpfInUse = await rh.post(`/api/positions/${positionId}/candidate-approval`, {
-    date: today, fullName: 'Fulano de Tal', birthDate: '1990-05-05', sex: 'MALE', cpf: '529.982.247-24',
+  // Candidato (nome, telefone e sexo); nascimento e CPF na admissão, com matrícula.
+  const noPhone = await rh.post(`/api/positions/${positionId}/candidate-approval`, {
+    date: today, fullName: 'Fulano de Tal', phone: '(11) 1234', sex: 'MALE',
   });
-  assert.equal(cpfInUse.status, 422);
-  assert.equal(cpfInUse.data.campos.cpf, 'CPF inválido: confira os dígitos.');
+  assert.equal(noPhone.status, 422);
+  assert.match(noPhone.data.campos.phone, /Telefone inválido/);
   const withCandidate = await rh.post(`/api/positions/${positionId}/candidate-approval`, {
-    date: today, fullName: 'Fulano de Tal', birthDate: '1990-05-05', sex: 'MALE', cpf: '529.982.247-25',
+    date: today, fullName: 'Fulano de Tal', phone: '(11) 98765-4321', sex: 'MALE',
   });
   assert.equal(withCandidate.data.summary.status, 'CANDIDATE_APPROVED');
-  assert.equal(withCandidate.data.candidate.cpf, '529.982.247-25');
-  const admitted = await rh.post(`/api/positions/${positionId}/admission`, { date: today, registration: 'MAT-900' });
+  assert.deepEqual([withCandidate.data.candidate.phone, withCandidate.data.candidate.cpf, withCandidate.data.candidate.birthDate],
+    ['(11) 98765-4321', null, null]);
+  const badCpf = await rh.post(`/api/positions/${positionId}/admission`, {
+    date: today, registration: 'MAT-900', birthDate: '1990-05-05', cpf: '529.982.247-24',
+  });
+  assert.equal(badCpf.status, 422);
+  assert.equal(badCpf.data.campos.cpf, 'CPF inválido: confira os dígitos.');
+  const admitted = await rh.post(`/api/positions/${positionId}/admission`, {
+    date: today, registration: 'MAT-900', birthDate: '1990-05-05', cpf: '529.982.247-25',
+  });
   assert.equal(admitted.data.summary.status, 'AWAITING_FIRST_DAY');
+  assert.deepEqual([admitted.data.candidate.cpf, admitted.data.candidate.birthDate, admitted.data.candidate.phone],
+    ['529.982.247-25', '1990-05-05', '(11) 98765-4321'], 'o mesmo cadastro, completado');
 
   // O Comercial vê o candidato mascarado (LGPD).
   const masked = await comercial.get(`/api/positions/${positionId}`);
   assert.equal(masked.data.candidate.cpf, '***.982.247-**');
-  assert.equal(masked.data.candidate.birthDate, null);
+  assert.deepEqual([masked.data.candidate.birthDate, masked.data.candidate.phone], [null, null]);
 
   // 1º dia com evidência (multipart): o NACC confirma; o download fica restrito.
   const form = new FormData();

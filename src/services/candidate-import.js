@@ -1,11 +1,11 @@
 import { transaction } from '../db/index.js';
-import { findOpenWithCandidateCpf, getOrder } from '../db/repository.js';
+import { getOrder } from '../db/repository.js';
 import { UnitOfWork } from '../db/unit-of-work.js';
 import { positionDateIssues, retroactiveMessage } from '../domain/date-checks.js';
 import { today as todayDate, formatBr } from '../domain/dates.js';
 import { BusinessRuleError, ForbiddenError, NotFoundError } from '../domain/errors.js';
 import { CandidateSex, PositionStatus as S } from '../domain/enums.js';
-import { Cpf, DateGuard, RhAccess } from '../domain/guards.js';
+import { DateGuard, Phone, RhAccess } from '../domain/guards.js';
 import { isApproved } from '../domain/order.js';
 import * as P from '../domain/position.js';
 import { getOrderDetail } from './orders.js';
@@ -24,9 +24,9 @@ import { generateXlsx } from './xlsx.js';
  * gravado até a planilha ser corrigida; linha totalmente em branco é ignorada e a posição continua pendente.
  *
  * Cada linha passa pelas MESMAS regras do cadastro individual: as funções de domínio (P.approveCandidate, que valida
- * nome, nascimento, sexo e CPF) rodam numa simulação descartada na prévia e de verdade na confirmação. A proteção da
- * planilha só evita erro de digitação — pode ser removida por quem quiser —, então o servidor confere tudo de novo:
- * pedido, posições, quantidade, duplicidade e CPF já usado em outra posição aberta.
+ * nome, telefone e sexo) rodam numa simulação descartada na prévia e de verdade na confirmação. Nascimento e CPF são
+ * da planilha de admissões (melhoria de 25/10/2026). A proteção da planilha só evita erro de digitação — pode ser
+ * removida por quem quiser —, então o servidor confere tudo de novo: pedido, posições, quantidade e duplicidade.
  */
 
 const SHEET = 'Candidatos';
@@ -37,9 +37,8 @@ const COLUMNS = [
   { key: 'position', title: 'Vaga', width: 9 },
   { key: 'approvedAt', title: 'Data de aprovação *', type: 'date', editable: true, width: 18 },
   { key: 'fullName', title: 'Nome completo *', editable: true, width: 38 },
-  { key: 'birthDate', title: 'Data de nascimento *', type: 'date', editable: true, width: 19 },
+  { key: 'phone', title: 'Telefone com DDD *', editable: true, width: 19 },
   { key: 'sex', title: 'Sexo *', editable: true, width: 16 },
-  { key: 'cpf', title: 'CPF *', editable: true, width: 17 },
   { key: 'justification', title: 'Justificativa', editable: true, width: 46 },
   { key: 'positionId', title: 'ID da posição (não alterar)', hidden: true, width: 38 },
   { key: 'orderId', title: 'ID do pedido (não alterar)', hidden: true, width: 38 },
@@ -92,9 +91,9 @@ export async function candidateTemplate(ctx, orderId) {
     ['Campos com *', 'Obrigatórios em toda linha preenchida.'],
     ['Data de aprovação *', 'Data em que o candidato foi aprovado, no formato dd/mm/aaaa. Data passada, futura ou anterior à abertura da posição é aceita com aviso na prévia.'],
     ['Nome completo *', 'Nome completo do candidato.'],
-    ['Data de nascimento *', 'Formato dd/mm/aaaa. Não pode ser futura.'],
+    ['Telefone com DDD *', 'Celular com 9 dígitos ou fixo com 8, sempre com o DDD: (11) 91234-5678. Com ou sem pontuação.'],
     ['Sexo *', `Escolha na lista: ${sexList.join(', ')}.`],
-    ['CPF *', 'Com ou sem pontuação (000.000.000-00). Os dígitos verificadores são conferidos, e o mesmo CPF não pode estar em duas posições abertas.'],
+    ['Nascimento e CPF', 'Não fazem parte desta planilha: são informados na admissão (planilha de admissões ou "Registrar admissão").'],
     ['Justificativa', loadOpen
       ? 'Opcional enquanto a carga inicial estiver aberta (situação atual). Com a carga encerrada, passa a ser obrigatória quando a data de aprovação for anterior à data da importação.'
       : 'Obrigatória quando a data de aprovação for anterior à data da importação (RN-24). Opcional nos demais casos.'],
@@ -108,7 +107,7 @@ export async function candidateTemplate(ctx, orderId) {
       rows: positions.map((p) => ({ order: order.number, position: vaga(order, p), positionId: p.id, orderId: order.id })),
       validations: [
         { key: 'sex', type: 'list', values: sexList, errorTitle: 'Sexo', error: `Escolha uma opção da lista: ${sexList.join(', ')}.` },
-        ...['approvedAt', 'birthDate'].map((key) => ({ key, type: 'date', errorTitle: 'Data inválida', error: 'Informe uma data no formato dd/mm/aaaa.' })),
+        { key: 'approvedAt', type: 'date', errorTitle: 'Data inválida', error: 'Informe uma data no formato dd/mm/aaaa.' },
       ],
     },
     {
@@ -137,7 +136,6 @@ async function validate(order, buffer) {
   const byId = new Map(order.positions.map((p) => [p.id, p]));
   const fileErrors = fileChecks(lines, order);
   const usedPositions = new Set();
-  const usedCpfs = new Map();
 
   const rows = [];
   for (const { line, raw } of lines) {
@@ -147,7 +145,7 @@ async function validate(order, buffer) {
       line,
       position: p ? vaga(order, p) : cellText(raw.position) || '—',
       positionId,
-      approvedAt: null, fullName: cellText(raw.fullName), birthDate: null, sex: null, cpf: '', justification: cellText(raw.justification) || null,
+      approvedAt: null, fullName: cellText(raw.fullName), phone: '', sex: null, justification: cellText(raw.justification) || null,
       status: 'ready',
       errors: [],
       // Datas fora do esperado (passada, futura, antes da abertura): avisam e não impedem a importação.
@@ -178,32 +176,21 @@ async function validate(order, buffer) {
     }
 
     if (!row.fullName) fail('fullName', 'Informe o nome completo.');
-    row.birthDate = cellDate(raw.birthDate);
-    if (row.birthDate === null) fail('birthDate', 'Informe a data de nascimento.');
-    else if (row.birthDate === undefined) fail('birthDate', 'Data inválida: use o formato dd/mm/aaaa.');
+    row.phone = Phone.normalize(cellText(raw.phone));
+    if (!row.phone) fail('phone', 'Informe o telefone com DDD.');
+    else if (!Phone.isValid(row.phone)) fail('phone', 'Telefone inválido: informe o DDD e o número (celular com 9 dígitos, fixo com 8).');
 
     const sexText = cellText(raw.sex);
     row.sex = SEX_BY_TEXT.get(plain(sexText)) ?? null;
     if (!sexText) fail('sex', 'Selecione o sexo.');
     else if (!row.sex) fail('sex', `Opção inválida: use ${Object.values(SEX_LABELS).join(', ')}.`);
 
-    // CPF digitado como número perde o zero à esquerda (038... vira 38...): completa com zeros.
-    const digits = Cpf.normalize(cellText(raw.cpf));
-    row.cpf = typeof raw.cpf === 'number' ? digits.padStart(11, '0') : digits;
-    if (!row.cpf) fail('cpf', 'Informe o CPF.');
-    else if (!Cpf.isValid(row.cpf)) fail('cpf', 'CPF inválido: confira os dígitos.');
-    else if (usedCpfs.has(row.cpf)) fail('cpf', `CPF repetido na planilha (também na linha ${usedCpfs.get(row.cpf)}).`);
-    else {
-      usedCpfs.set(row.cpf, line);
-      const other = await findOpenWithCandidateCpf(row.cpf, positionId);
-      if (other) fail('cpf', `Este CPF já é o candidato selecionado da posição ${other.order_number}-${other.slot_number}, ainda aberta.`);
-    }
 
     // As regras do cadastro individual, na mesma função de domínio (simulação: o pedido em memória muda).
     if (!row.errors.length) {
       try {
         const before = new Set(positionDateIssues(p, today).map((i) => i.message));
-        P.approveCandidate(p, row.approvedAt, { fullName: row.fullName, birthDate: row.birthDate, sex: row.sex, cpf: row.cpf }, today);
+        P.approveCandidate(p, row.approvedAt, { fullName: row.fullName, phone: row.phone, sex: row.sex }, today);
         if (row.approvedAt < today) row.warnings.push(retroactiveMessage('A data de aprovação', row.approvedAt));
         row.warnings.push(...positionDateIssues(p, today).filter((i) => !before.has(i.message)).map((i) => i.message));
       } catch (error) {
@@ -218,7 +205,7 @@ async function validate(order, buffer) {
 
 const toDto = (row) => ({
   ...row,
-  cpf: row.cpf && Cpf.isValid(row.cpf) ? Cpf.format(row.cpf) : row.cpf,
+  phone: row.phone && Phone.isValid(row.phone) ? Phone.format(Phone.normalize(row.phone)) : row.phone,
   sexLabel: row.sex ? SEX_LABELS[row.sex] : null,
 });
 
@@ -256,7 +243,7 @@ export async function confirmCandidateImport(ctx, orderId, file) {
     // Uma gravação por linha (todas na mesma transação): cada candidato entra no log com a própria justificativa.
     for (const row of ready) {
       const p = byId.get(row.positionId);
-      P.approveCandidate(p, row.approvedAt, { fullName: row.fullName, birthDate: row.birthDate, sex: row.sex, cpf: row.cpf }, today);
+      P.approveCandidate(p, row.approvedAt, { fullName: row.fullName, phone: row.phone, sex: row.sex }, today);
       // RN-24: fora da carga inicial, a data passada (com a justificativa já conferida na validação) sinaliza a posição.
       if (!loadOpen && row.approvedAt < today) P.markRetroactive(p);
       await ctx.uow.save({ action: 'IMPORT_CANDIDATES', justification: DateGuard.clean(row.justification) });

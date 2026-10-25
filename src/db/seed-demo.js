@@ -133,10 +133,13 @@ export async function seedDemoData(password) {
   const nacc = users[Roles.Nacc].id;
   const publish = (o, code, publishedAt, notes = null) => recordJobconvo(o, true, code, D(publishedAt), notes, rh, now);
 
-  // Candidatos fictícios: CPFs com dígitos verificadores válidos, gerados a partir de um número.
+  // Candidatos fictícios: CPFs com dígitos verificadores válidos e celulares, gerados a partir de um número. Os
+  // dados de demonstração já trazem nascimento e CPF, como os cadastros anteriores à admissão com esses campos.
   const sexes = [CandidateSex.FEMALE, CandidateSex.MALE, CandidateSex.NOT_INFORMED];
   const candidate = (fullName, n) => ({
     fullName, birthDate: addDays(addYears(today, -20 - (n % 15)), -37 * n), sex: sexes[n % 3], cpf: fakeCpf(n),
+    // Celular fictício de São Paulo: 11 9 + 8 dígitos derivados do número.
+    phone: `119${String(10_000_000 + ((n * 7_919) % 90_000_000)).slice(-8)}`,
   });
   const approve = (p, approvedAt, data) => {
     P.approveCandidate(p, D(approvedAt), data, today).createdBy = rh;

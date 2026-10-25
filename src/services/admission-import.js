@@ -1,11 +1,11 @@
 import { transaction } from '../db/index.js';
-import { getOrder } from '../db/repository.js';
+import { findOpenWithCandidateCpf, getOrder } from '../db/repository.js';
 import { UnitOfWork } from '../db/unit-of-work.js';
 import { positionDateIssues, retroactiveMessage } from '../domain/date-checks.js';
 import { today as todayDate, formatBr } from '../domain/dates.js';
 import { BusinessRuleError, ForbiddenError, NotFoundError } from '../domain/errors.js';
 import { Labels, NotificationTypes, PositionStatus as S, Roles } from '../domain/enums.js';
-import { DateGuard, RhAccess } from '../domain/guards.js';
+import { Cpf, DateGuard, Phone, RhAccess } from '../domain/guards.js';
 import { activeRhAnalysts, isApproved } from '../domain/order.js';
 import * as P from '../domain/position.js';
 import { dataTable } from './email-layout.js';
@@ -27,6 +27,10 @@ import { generateXlsx } from './xlsx.js';
  * linha em branco é ignorada (a posição segue aguardando a admissão); um único aviso ao NACC por importação, com a
  * lista das admissões; o modelo não inclui posições já admitidas sem matrícula.
  *
+ * Nascimento e CPF são pedidos aqui (melhoria de 25/10/2026), com o telefone para conferência: as colunas vêm
+ * preenchidas com o que o cadastro já tem e, alteradas, corrigem o mesmo candidato (decisão do usuário). Telefone em
+ * branco mantém o gravado; sem nenhum, é obrigatório. A linha só conta como preenchida pelas colunas da admissão.
+ *
  * Cada linha passa pela MESMA função de domínio do registro individual (P.registerAdmission): com matrícula, a
  * posição vai para "Aguardando 1º dia"; sem, para "Em admissão". Data passada, futura ou antes da aprovação do
  * candidato avisa e não impede (regra de datas de 19/10/2026); fora da carga inicial, data passada pede justificativa
@@ -39,6 +43,10 @@ const COLUMNS = [
   { key: 'order', title: 'Pedido', type: 'int', width: 9 },
   { key: 'position', title: 'Vaga', width: 9 },
   { key: 'candidate', title: 'Candidato', width: 38 },
+  { key: 'sex', title: 'Sexo', width: 14 },
+  { key: 'phone', title: 'Telefone com DDD *', editable: true, prefilled: true, width: 19 },
+  { key: 'birthDate', title: 'Data de nascimento *', type: 'date', editable: true, prefilled: true, width: 19 },
+  { key: 'cpf', title: 'CPF *', editable: true, prefilled: true, width: 17 },
   { key: 'admissionAt', title: 'Data da admissão *', type: 'date', editable: true, width: 18 },
   { key: 'registration', title: 'Matrícula', editable: true, width: 18 },
   { key: 'justification', title: 'Justificativa', editable: true, width: 46 },
@@ -47,6 +55,9 @@ const COLUMNS = [
   { key: 'orderId', title: 'ID do pedido (não alterar)', hidden: true, width: 38 },
 ];
 const LABEL = Object.fromEntries(COLUMNS.map((c) => [c.key, c.title.replace(' *', '')]));
+/** Colunas que decidem se a linha foi preenchida: as da admissão (as do candidato já vêm preenchidas no modelo). */
+const ADMISSION_COLUMNS = COLUMNS.filter((c) => !c.prefilled);
+const SEX_LABELS = { FEMALE: 'Feminino', MALE: 'Masculino', NOT_INFORMED: 'Não informado' };
 
 const vaga = (order, p) => `${order.number}-${p.slotNumber}`;
 
@@ -82,7 +93,10 @@ export async function admissionTemplate(ctx, orderId) {
   const loadOpen = await isInitialLoadOpen();
   const guidance = [
     ['Como usar', `Uma linha por posição do pedido ${order.number} com candidato selecionado aguardando a admissão (${positions.length}). Preencha os campos em amarelo. Linha deixada totalmente em branco é ignorada: a posição continua aguardando a admissão.`],
-    ['Pedido, Vaga e Candidato', 'Já preenchidos e bloqueados: identificam a posição e o candidato. Não inclua, exclua nem reordene linhas.'],
+    ['Pedido, Vaga, Candidato e Sexo', 'Já preenchidos e bloqueados: identificam a posição e o candidato, para conferência. Não inclua, exclua nem reordene linhas.'],
+    ['Telefone com DDD *', 'Vem preenchido com o do cadastro, para conferência. Em branco, fica o do cadastro; se o candidato ainda não tem telefone, é obrigatório. Celular com 9 dígitos ou fixo com 8.'],
+    ['Data de nascimento *', 'Obrigatória, no formato dd/mm/aaaa; não pode ser futura. Vem preenchida quando o cadastro já tem; alterada, corrige o cadastro do candidato.'],
+    ['CPF *', 'Obrigatório, com ou sem pontuação. Vem preenchido quando o cadastro já tem. Os dígitos são conferidos, e o mesmo CPF não pode estar em duas posições abertas.'],
     ['Data da admissão *', 'Obrigatória, no formato dd/mm/aaaa. Data passada, futura ou anterior à aprovação do candidato é aceita com aviso na prévia.'],
     ['Matrícula', 'Opcional, até 50 caracteres. A coluna é texto: zeros à esquerda são mantidos. Com a matrícula, a admissão fica concluída e a posição passa a "Aguardando 1º dia"; sem, fica "Em admissão" até o RH ou o DP informá-la.'],
     ['Justificativa', loadOpen
@@ -97,9 +111,15 @@ export async function admissionTemplate(ctx, orderId) {
       columns: COLUMNS,
       rows: positions.map((p) => {
         const candidate = P.activeCandidate(p);
-        return { order: order.number, position: vaga(order, p), candidate: candidate.fullName, positionId: p.id, candidateId: candidate.id, orderId: order.id };
+        return {
+          order: order.number, position: vaga(order, p), candidate: candidate.fullName, sex: SEX_LABELS[candidate.sex] ?? '',
+          phone: candidate.phone ? Phone.format(candidate.phone) : '', birthDate: candidate.birthDate,
+          cpf: candidate.cpf ? Cpf.format(candidate.cpf) : '', positionId: p.id, candidateId: candidate.id, orderId: order.id,
+        };
       }),
-      validations: [{ key: 'admissionAt', type: 'date', errorTitle: 'Data inválida', error: 'Informe uma data no formato dd/mm/aaaa.' }],
+      validations: ['birthDate', 'admissionAt'].map((key) => ({
+        key, type: 'date', errorTitle: 'Data inválida', error: 'Informe uma data no formato dd/mm/aaaa.',
+      })),
     },
     {
       name: 'Orientações',
@@ -124,6 +144,7 @@ async function validate(order, buffer) {
   const byId = new Map(order.positions.map((p) => [p.id, p]));
   const fileErrors = fileChecks(lines, order);
   const usedPositions = new Set();
+  const usedCpfs = new Map();
 
   const rows = [];
   for (const { line, raw } of lines) {
@@ -135,6 +156,9 @@ async function validate(order, buffer) {
       position: p ? vaga(order, p) : cellText(raw.position) || '—',
       positionId,
       candidate: candidate?.fullName ?? (cellText(raw.candidate) || '—'),
+      phone: null,
+      birthDate: null,
+      cpf: null,
       admissionAt: null,
       // Matrícula digitada como número no Excel perde a formatação de texto: vira o texto do número, sem notação científica.
       registration: cellText(raw.registration) || null,
@@ -147,7 +171,7 @@ async function validate(order, buffer) {
     rows.push(row);
 
     if (!positionId) continue; // já contada nos erros do arquivo
-    if (isBlankLine(raw, COLUMNS)) {
+    if (isBlankLine(raw, ADMISSION_COLUMNS)) {
       row.status = 'blank';
       continue;
     }
@@ -170,11 +194,35 @@ async function validate(order, buffer) {
     }
     if (row.registration && row.registration.length > 50) fail('registration', 'A matrícula deve ter no máximo 50 caracteres.');
 
+    // Dados do candidato completados na admissão: telefone em branco mantém o do cadastro.
+    const phone = Phone.normalize(cellText(raw.phone)) || candidate?.phone || '';
+    if (!phone) fail('phone', 'O candidato não tem telefone: informe o telefone com DDD.');
+    else if (!Phone.isValid(phone)) fail('phone', 'Telefone inválido: informe o DDD e o número (celular com 9 dígitos, fixo com 8).');
+    else row.phone = Phone.normalize(phone);
+
+    row.birthDate = cellDate(raw.birthDate);
+    if (row.birthDate === null) fail('birthDate', 'Informe a data de nascimento.');
+    else if (row.birthDate === undefined) fail('birthDate', 'Data inválida: use o formato dd/mm/aaaa.');
+    else if (row.birthDate > today) fail('birthDate', 'A data de nascimento não pode ser uma data futura.');
+
+    // CPF digitado como número perde o zero à esquerda (038... vira 38...): completa com zeros.
+    const digits = Cpf.normalize(cellText(raw.cpf));
+    const cpf = typeof raw.cpf === 'number' ? digits.padStart(11, '0') : digits;
+    if (!cpf) fail('cpf', 'Informe o CPF.');
+    else if (!Cpf.isValid(cpf)) fail('cpf', 'CPF inválido: confira os dígitos.');
+    else if (usedCpfs.has(cpf)) fail('cpf', `CPF repetido na planilha (também na linha ${usedCpfs.get(cpf)}).`);
+    else {
+      usedCpfs.set(cpf, line);
+      row.cpf = cpf;
+      const other = await findOpenWithCandidateCpf(cpf, positionId);
+      if (other) fail('cpf', `Este CPF já é o candidato selecionado da posição ${other.order_number}-${other.slot_number}, ainda aberta.`);
+    }
+
     // A regra do registro individual, na mesma função de domínio (simulação: o pedido em memória muda).
     if (!row.errors.length) {
       try {
         const before = new Set(positionDateIssues(p, today).map((i) => i.message));
-        P.registerAdmission(p, row.admissionAt, row.registration);
+        P.registerAdmission(p, row.admissionAt, row.registration, documentsOf(row), today);
         if (row.admissionAt < today) row.warnings.push(retroactiveMessage('A data de admissão', row.admissionAt));
         row.warnings.push(...positionDateIssues(p, today).filter((i) => !before.has(i.message)).map((i) => i.message));
       } catch (error) {
@@ -187,12 +235,21 @@ async function validate(order, buffer) {
   return { rows, fileErrors };
 }
 
+const documentsOf = (row) => ({ birthDate: row.birthDate, cpf: row.cpf, phone: row.phone });
+
+/** Na conferência, telefone e CPF formatados. */
+const toDto = (row) => ({
+  ...row,
+  phone: row.phone ? Phone.format(row.phone) : null,
+  cpf: row.cpf ? Cpf.format(row.cpf) : null,
+});
+
 /** Conferência: lê, valida e devolve cada linha com o resultado e os avisos. Não grava nada. */
 export async function previewAdmissionImport(ctx, orderId, file) {
   if (!file?.content?.length) throw new BusinessRuleError('Selecione a planilha preenchida (.xlsx).', 'file');
   const probe = await loadOrder(ctx, orderId, new UnitOfWork({}));
   const { rows, fileErrors } = await validate(probe, file.content);
-  return { orderNumber: probe.number, fileName: file.fileName, fileErrors, rows, summary: summarize(rows, fileErrors) };
+  return { orderNumber: probe.number, fileName: file.fileName, fileErrors, rows: rows.map(toDto), summary: summarize(rows, fileErrors) };
 }
 
 /**
@@ -220,7 +277,7 @@ export async function confirmAdmissionImport(ctx, orderId, file) {
   await transaction(async () => {
     for (const row of ready) {
       const p = byId.get(row.positionId);
-      P.registerAdmission(p, row.admissionAt, row.registration);
+      P.registerAdmission(p, row.admissionAt, row.registration, documentsOf(row), today);
       // RN-24: fora da carga inicial, a data passada (com a justificativa já conferida) sinaliza a posição.
       if (!loadOpen && row.admissionAt < today) P.markRetroactive(p);
       done.push({ row, status: p.status });

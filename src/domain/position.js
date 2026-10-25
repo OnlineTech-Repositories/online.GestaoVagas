@@ -4,7 +4,7 @@ import { BusinessRuleError } from './errors.js';
 import {
   ClientDecision, DemandType, Labels, OrderApprovalStatus, PositionStatus as S, RhStage, SlaTargetSource, TermType,
 } from './enums.js';
-import { Cpf } from './guards.js';
+import { Cpf, Phone } from './guards.js';
 
 /**
  * Posição: cada vaga individual do pedido e unidade de controle do sistema. As transições da máquina de estados
@@ -245,7 +245,10 @@ export function openOnApproval(p, openedAt, slaTargetDays, slaSource) {
   p.slaTargetSource = slaSource;
 }
 
-/** Aprova o candidato e registra os dados dele, individualizados por posição. */
+/**
+ * Aprova o candidato e registra os dados dele, individualizados por posição: nome, telefone e sexo. Nascimento e CPF
+ * são da admissão (melhoria de 25/10/2026); vindos aqui (dados de demonstração e registros anteriores), são validados.
+ */
 export function approveCandidate(p, approvedAt, data, today) {
   ensureStatus(p, S.RECRUITING);
   ensureOrderApproved(p);
@@ -259,17 +262,18 @@ export function approveCandidate(p, approvedAt, data, today) {
 /**
  * Corrige os dados do candidato. Posição aprovada antes do cadastro de candidatos (sem candidato, em "Candidato
  * selecionado", "Em admissão" ou "Aguardando 1º dia"): registra o candidato com a data de aprovação já gravada.
+ * Nascimento e CPF: opcionais antes da admissão (vazio apaga); depois dela, obrigatórios.
  */
 export function correctCandidate(p, data, today) {
   const current = activeCandidate(p);
-  if (current) {
-    applyCandidate(current, data, today);
-    return current;
-  }
-  if (!canRegisterMissingCandidate(p)) throw new BusinessRuleError('A posição não tem candidato selecionado.');
-  const created = newCandidate(p, p.candidateApprovedAt ?? today, data, today);
-  p.candidates.push(created);
-  return created;
+  if (!current && !canRegisterMissingCandidate(p)) throw new BusinessRuleError('A posição não tem candidato selecionado.');
+  const candidate = current ?? newCandidate(p, p.candidateApprovedAt ?? today, data, today);
+  if (current) applyCandidate(current, data, today);
+  const admitted = Boolean(p.admissionAt);
+  candidate.birthDate = admitted || data.birthDate ? checkBirthDate(data.birthDate, today) : null;
+  candidate.cpf = admitted || hasText(data.cpf) ? Cpf.require(data.cpf, 'cpf') : null;
+  if (!current) p.candidates.push(candidate);
+  return candidate;
 }
 
 /** Anexa a evidência de um marco: metadados na posição, conteúdo no arquivo de evidência. */
@@ -300,11 +304,22 @@ export function setAdmissionRegistration(p, registration) {
   return completed;
 }
 
-export function registerAdmission(p, admissionAt, registration = null) {
+/**
+ * Admissão. Completa o cadastro do mesmo candidato com nascimento e CPF (obrigatórios; os já gravados valem sem nova
+ * digitação e, informados de novo, corrigem o cadastro) e com o telefone, quando ainda não houver.
+ * @param {{ birthDate?: string, cpf?: string, phone?: string }} documents
+ */
+export function registerAdmission(p, admissionAt, registration = null, documents = {}, today = admissionAt) {
   ensureStatus(p, S.CANDIDATE_APPROVED);
   ensureOrderApproved(p);
   const value = registration?.trim() ? registration.trim() : null;
   if (value && value.length > 50) throw new BusinessRuleError('A matrícula deve ter no máximo 50 caracteres.', 'registration');
+  const candidate = activeCandidate(p);
+  if (!candidate) {
+    throw new BusinessRuleError(
+      'A posição não tem candidato cadastrado: registre os dados do candidato antes da admissão.', 'candidate');
+  }
+  completeCandidate(candidate, documents, today);
   p.admissionAt = admissionAt;
   p.admissionRegistration = value;
   // Com a matrícula, a admissão já está concluída e só falta a confirmação do 1º dia.
@@ -500,29 +515,55 @@ const SEXES = ['FEMALE', 'MALE', 'NOT_INFORMED'];
 
 function newCandidate(p, approvedAt, data, today) {
   const candidate = entity('Candidate', {
-    positionId: p.id, fullName: '', birthDate: null, sex: null, cpf: '', approvedAt, withdrawnAt: null,
+    positionId: p.id, fullName: '', birthDate: null, sex: null, cpf: null, phone: null, approvedAt, withdrawnAt: null,
     withdrawalReason: null,
   });
   applyCandidate(candidate, data, today);
+  if (data.birthDate) candidate.birthDate = checkBirthDate(data.birthDate, today);
+  if (hasText(data.cpf)) candidate.cpf = Cpf.require(data.cpf, 'cpf');
   return candidate;
 }
 
-/** Valida e grava os dados: nome, nascimento (não futuro), sexo e CPF com dígitos verificadores. */
-function applyCandidate(candidate, data, today) {
+const hasText = (value) => value !== null && value !== undefined && String(value).trim() !== '';
+
+/** Valida e grava os dados do cadastro: nome, telefone com DDD e sexo. */
+function applyCandidate(candidate, data) {
   const name = String(data.fullName ?? '').split(' ').filter(Boolean).join(' ');
   if (!name) throw new BusinessRuleError('Informe o nome completo do candidato.', 'fullName');
   if (name.length > FULL_NAME_MAX_LENGTH) {
     throw new BusinessRuleError(`O nome deve ter no máximo ${FULL_NAME_MAX_LENGTH} caracteres.`, 'fullName');
   }
-  if (!data.birthDate) throw new BusinessRuleError('Informe a data de nascimento.', 'birthDate');
-  if (data.birthDate > today) throw new BusinessRuleError('A data de nascimento não pode ser uma data futura.', 'birthDate');
-  if (data.birthDate < '1900-01-01') throw new BusinessRuleError('Informe uma data de nascimento válida.', 'birthDate');
+  const phone = Phone.require(data.phone, 'phone');
   if (!SEXES.includes(data.sex)) throw new BusinessRuleError('Selecione o sexo.', 'sex');
-  const cpf = Cpf.require(data.cpf, 'cpf');
   candidate.fullName = name;
-  candidate.birthDate = data.birthDate;
+  candidate.phone = phone;
   candidate.sex = data.sex;
-  candidate.cpf = cpf;
+}
+
+/** Nascimento obrigatório, não futuro e plausível. */
+function checkBirthDate(value, today) {
+  if (!value) throw new BusinessRuleError('Informe a data de nascimento.', 'birthDate');
+  if (value > today) throw new BusinessRuleError('A data de nascimento não pode ser uma data futura.', 'birthDate');
+  if (value < '1900-01-01') throw new BusinessRuleError('Informe uma data de nascimento válida.', 'birthDate');
+  return value;
+}
+
+/**
+ * Dados da admissão no cadastro do candidato: o que vier informado valida e grava (corrige o já gravado); o que não
+ * vier fica como está. No fim, nascimento, CPF e telefone precisam existir.
+ */
+function completeCandidate(candidate, documents, today) {
+  const birthDate = documents.birthDate || candidate.birthDate;
+  const cpf = hasText(documents.cpf) ? documents.cpf : candidate.cpf;
+  const phone = hasText(documents.phone) ? documents.phone : candidate.phone;
+  const checked = {
+    birthDate: checkBirthDate(birthDate, today),
+    cpf: Cpf.require(cpf, 'cpf'),
+    phone: Phone.require(phone, 'phone'),
+  };
+  candidate.birthDate = checked.birthDate;
+  candidate.cpf = checked.cpf;
+  candidate.phone = checked.phone;
 }
 
 function withdraw(candidate, at, reason) {

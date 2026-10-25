@@ -58,6 +58,9 @@ export function createSqliteDriver() {
     async columnExists(table, column) {
       return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
     },
+    async tableColumns(table) {
+      return db.prepare(`PRAGMA table_info(${table})`).all().map((c) => ({ name: c.name, notnull: Boolean(c.notnull) }));
+    },
 
     async close() {
       db.close();

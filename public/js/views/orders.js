@@ -602,8 +602,7 @@ const SHEET_IMPORTS = {
       { title: 'Linha', cls: 'num', field: 'line' },
       { title: 'Vaga', cls: 'nowrap', field: 'position' },
       { title: 'Nome', field: 'fullName' },
-      { title: 'CPF', cls: 'nowrap', field: 'cpf' },
-      { title: 'Nascimento', cls: 'nowrap', render: (r) => (r.birthDate ? date(r.birthDate) : '—') },
+      { title: 'Telefone', cls: 'nowrap', render: (r) => r.phone || '—' },
       { title: 'Sexo', field: 'sexLabel' },
       { title: 'Aprovação', cls: 'nowrap', render: (r) => (r.approvedAt ? date(r.approvedAt) : '—') },
     ],
@@ -617,7 +616,7 @@ const SHEET_IMPORTS = {
     downloadLabel: 'Baixar modelo de admissões',
     importLabel: 'Importar admissões',
     pendingText: (n) => `${n} posição(ões) com candidato selecionado aguardando a admissão. Baixe o modelo (uma linha por posição), `
-      + 'preencha a data da admissão e a matrícula e importe: o sistema mostra a conferência antes de gravar.',
+      + 'confira o telefone, preencha nascimento, CPF, data da admissão e matrícula e importe: o sistema mostra a conferência antes de gravar.',
     emptyText: 'Nenhuma posição aguardando admissão: não há posição "Candidato selecionado" neste pedido.',
     modalTitle: 'Importar admissões',
     intro: 'Selecione a planilha preenchida a partir do modelo de admissões deste pedido. A conferência aplica as mesmas regras do registro '
@@ -628,6 +627,9 @@ const SHEET_IMPORTS = {
       { title: 'Linha', cls: 'num', field: 'line' },
       { title: 'Vaga', cls: 'nowrap', field: 'position' },
       { title: 'Candidato', field: 'candidate' },
+      { title: 'Telefone', cls: 'nowrap', render: (r) => r.phone ?? '—' },
+      { title: 'Nascimento', cls: 'nowrap', render: (r) => (r.birthDate ? date(r.birthDate) : '—') },
+      { title: 'CPF', cls: 'nowrap', render: (r) => r.cpf ?? '—' },
       { title: 'Admissão', cls: 'nowrap', render: (r) => (r.admissionAt ? date(r.admissionAt) : '—') },
       { title: 'Matrícula', cls: 'nowrap', render: (r) => r.registration ?? '—' },
       { title: 'Justificativa', render: (r) => r.justification ?? '—' },

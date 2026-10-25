@@ -341,3 +341,14 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     quando há posição parada nova para a pessoa e traz todas as paradas do pedido, com as novas marcadas (decisão do
     usuário); reprocessar a rotina não repete. "Consultar posições do pedido" abre o pedido com as paradas primeiro, em
     destaque e com os dias sem atualização.
+33. **Dados do candidato redistribuídos entre o cadastro e a admissão (melhoria pedida pelo usuário em 25/10/2026):**
+    "Adicionar Candidato" pede só nome, telefone com DDD (obrigatório; celular com 9 dígitos ou fixo com 8) e sexo, além
+    da data da aprovação e da justificativa. "Registrar admissão" pede nascimento e CPF (obrigatórios), mostra nome e
+    sexo para conferência e traz o telefone do cadastro; o candidato antigo sem telefone informa ali (decisão do
+    usuário). Os dados completam o MESMO cadastro, identificado pelo ID interno; CPF e nascimento já gravados vêm
+    preenchidos e, alterados, corrigem o cadastro com histórico. O CPF repetido em outra posição aberta passa a ser
+    conferido na admissão. Planilha de candidatos: telefone no lugar de nascimento e CPF; planilha de admissões: sexo,
+    telefone, nascimento e CPF (preenchidos com o que o cadastro tem), com as validações; as prévias mostram os campos
+    de cada etapa. Na correção do candidato, nascimento e CPF são opcionais antes da admissão e obrigatórios depois. O
+    telefone fica restrito como o nascimento (RH do pedido, NACC e DP). Banco: candidates.phone novo e birth_date/cpf
+    opcionais (migração na partida, preservando os registros).

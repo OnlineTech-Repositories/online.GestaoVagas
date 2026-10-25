@@ -96,6 +96,20 @@ export function isValidCpf(value) {
   return first === Number(d[9]) && digit(d.slice(0, 9) + first) === Number(d[10]);
 }
 
+/** Telefone com DDD com máscara enquanto digita: (11) 91234-5678 ou (11) 3123-4567. */
+export function phone(value) {
+  const d = String(value ?? '').replace(/\D/g, '').slice(0, 11);
+  if (d.length <= 2) return d.length ? `(${d}` : '';
+  const local = d.slice(2);
+  const split = d.length === 11 ? 5 : 4;
+  return `(${d.slice(0, 2)}) ${local.length > split ? `${local.slice(0, split)}-${local.slice(split)}` : local}`;
+}
+
+/** DDD + celular com 9 dígitos (começando por 9) ou fixo com 8 (começando de 2 a 5); a API valida de novo. */
+export function isValidPhone(value) {
+  return /^[1-9]{2}(?:9\d{8}|[2-5]\d{7})$/.test(String(value ?? '').replace(/\D/g, ''));
+}
+
 export function cnpj(value) {
   return String(value ?? '')
     .replace(/\D/g, '')
@@ -618,6 +632,24 @@ export function cpfField({ name = 'cpf', label: text = 'CPF', value = '', requir
   const input = block.querySelector('input');
   input.addEventListener('input', () => {
     input.value = cpf(input.value);
+  });
+  return block;
+}
+
+/** Telefone com DDD, com máscara; o valor enviado é o mascarado (a API normaliza para os dígitos). */
+export function phoneField({ name = 'phone', label: text = 'Telefone com DDD', value = '', required = true, help = null } = {}) {
+  const block = field({
+    name,
+    label: text,
+    value: phone(value),
+    required,
+    help,
+    placeholder: '(11) 91234-5678',
+    attributes: { inputmode: 'tel', autocomplete: 'off', maxlength: '15' },
+  });
+  const input = block.querySelector('input');
+  input.addEventListener('input', () => {
+    input.value = phone(input.value);
   });
   return block;
 }
