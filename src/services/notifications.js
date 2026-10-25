@@ -19,6 +19,7 @@ export const links = {
   /** Pedido com as posições sem atualização em destaque. */
   orderStale: (id) => `${config.baseUrl}/#/pedidos/${id}?paradas=1`,
   contractRates: () => `${config.baseUrl}/#/valores`,
+  firstDayPending: () => `${config.baseUrl}/#/confirmacoes-1o-dia`,
   dashboard: () => `${config.baseUrl}/#/`,
 };
 

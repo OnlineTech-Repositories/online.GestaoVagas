@@ -69,6 +69,7 @@ function validate(key, raw) {
     case ParameterKeys.AtRiskDays:
     case ParameterKeys.StaleDays:
     case ParameterKeys.EarlyReplacementWindowDays:
+    case ParameterKeys.FirstDayReminderDays:
       if (!/^\d+$/.test(value)) throw new BusinessRuleError('Informe um número inteiro maior ou igual a zero.', 'value');
       return String(Number(value));
     case ParameterKeys.DailyDigestTime:

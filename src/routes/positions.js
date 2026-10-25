@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { EvidenceFiles } from '../domain/guards.js';
 import { route } from '../middleware.js';
+import { getFirstDayPending } from '../services/first-day-pending.js';
 import * as positions from '../services/positions.js';
 import { ID, idParam, queryOf } from './helpers.js';
 
@@ -12,6 +13,9 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: Evi
 
 positionRoutes.get('/', route(async (req, res) =>
   res.json(await positions.listPositionsDto(req.ctx, queryOf(req, ['status', 'slaSituation'])))));
+
+// Confirmações do 1º dia pendentes (NACC): por pedido, com as sem matrícula à parte.
+positionRoutes.get('/first-day-pending', route(async (req, res) => res.json(await getFirstDayPending(req.ctx))));
 
 positionRoutes.get(`/:id${ID}`, route(async (req, res) => res.json(await positions.getPositionDetail(req.ctx, idParam(req)))));
 

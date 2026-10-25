@@ -313,8 +313,12 @@ export async function newOrderScreen(target) {
 export async function orderDetailScreen(target, id, query) {
   // Vindo do aviso de posições sem atualização: as paradas aparecem primeiro e destacadas.
   const highlightStale = query?.get('paradas') === '1';
+  // Vindo de "Confirmações do 1º dia": a confirmação em lote já abre.
+  const openBatch = query?.get('confirmar') === '1';
+  let current = null;
   async function reload(data) {
     const o = data ?? (await api.get(`/api/orders/${id}`));
+    current = o;
     const s = o.summary;
 
     const awaiting = s.approvalStatus === 'AWAITING_CLIENT_APPROVAL';
@@ -386,6 +390,7 @@ export async function orderDetailScreen(target, id, query) {
 
   clear(target).append(loading());
   await reload();
+  if (openBatch && current.firstDayBatch?.items.length) openFirstDayBatch(current, reload);
 }
 
 /** Quantidade vigente e a composição: solicitada no registro, acréscimos e reduções do quadro. */

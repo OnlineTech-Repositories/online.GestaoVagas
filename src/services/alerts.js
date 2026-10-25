@@ -133,7 +133,8 @@ export async function runAlerts(uow, rows, today, staleDays) {
       }, rhTeam(p.order));
     }
 
-    if (isStale(p, today, staleDays)) {
+    // "Aguardando 1º dia" vai no lembrete consolidado ao NACC (first-day-pending.js), não no alerta de parada.
+    if (p.status !== S.AWAITING_FIRST_DAY && isStale(p, today, staleDays)) {
       const reference = lastActivity(p);
       const isNew = !sent.has(key(p.id, AlertKind.STALE, reference));
       if (isNew) {

@@ -10,6 +10,7 @@ import { closeByContractEnd, isOpen } from '../domain/position.js';
 import { runAlerts } from './alerts.js';
 import { buildDigest, queueDigest } from './digest.js';
 import { EmailError, sendEmail } from './email.js';
+import { queueFirstDayReminder } from './first-day-pending.js';
 import { links, notify } from './notifications.js';
 import { calcSettings, getInt, getText } from './parameters.js';
 import { positionFields } from './notice-fields.js';
@@ -69,7 +70,9 @@ export async function hasRun(date) {
  *   1. encerra posições FIXED_END com vigência vencida;
  *   2. recalcula a situação do SLA e avisa as transições — Em risco, Vencido (escalonamento) — e as posições sem
  *      atualização há STALE_DAYS (alerts.js);
- *   3. envia o resumo diário (digest.js).
+ *   3. envia o resumo diário (digest.js);
+ *   4. lembra o NACC das confirmações do 1º dia pendentes, a cada FIRST_DAY_REMINDER_DAYS dias úteis
+ *      (first-day-pending.js).
  *
  * Idempotente: rodar de novo no mesmo dia não duplica encerramentos (a posição encerrada sai da consulta), alertas
  * (position_alerts) nem o resumo (só sai na primeira execução concluída do dia). Tudo grava num save() só.
@@ -114,12 +117,13 @@ export async function runDailyJob() {
     .map((p) => ({ p, m: calculate(p, today, settings) }));
   const alerts = await runAlerts(uow, rows, today, staleDays);
   const digestRecipients = firstRunToday ? await queueDigest(uow, buildDigest(rows, today, staleDays)) : 0;
+  const reminderRecipients = await queueFirstDayReminder(uow, today);
 
   run.finishedAt = utcNow();
   const summary = `Posições encerradas por fim de vigência: ${closed}. Em risco: ${alerts.atRisk}. `
     + `Vencidas (escalonamento): ${alerts.overdue}. Sem atualização: ${alerts.stale} `
     + `(${alerts.staleMessages} aviso(s) por pedido). `
-    + `Resumo diário: ${digestRecipients} destinatário(s).`;
+    + `Resumo diário: ${digestRecipients} destinatário(s). Lembrete do 1º dia: ${reminderRecipients} destinatário(s).`;
   // Nova execução no mesmo dia acrescenta: sobrescrever apagaria o registro do que a primeira fez (o resumo enviado).
   run.summary = firstRunToday ? summary : `${run.summary} | Nova execução: ${summary}`.slice(0, 4000);
   await uow.save({ action: 'DAILY_JOB' });

@@ -1283,3 +1283,17 @@ test('Reposição como novo ciclo da vaga: uma linha por vaga, histórico de ocu
   const replacementScreen = await open(`/posicoes/${termination.replacementPositionId}`, 'Posição');
   assert.match(replacementScreen.textContent, /Reposição nº 1/);
 });
+
+test('Confirmações do 1º dia: a relação do NACC no menu, com os indicadores e a nota de que pendência não é falta', async (t) => {
+  if (skip(t)) return;
+  await signIn('nacc@demo.local');
+  const screen = await open('/confirmacoes-1o-dia', 'Confirmações do 1º dia');
+  for (const text of ['Confirmações devidas', 'Inícios previstos', 'Aguardando matrícula', 'não uma falta do colaborador']) {
+    assert.ok(screen.textContent.includes(text), text);
+  }
+  assert.match(document.querySelector('.menu')?.textContent ?? '', /Confirmações do 1º dia/, 'item no menu');
+
+  await signIn('comercial@demo.local');
+  await open('/', 'Painel');
+  assert.doesNotMatch(document.querySelector('.menu')?.textContent ?? '', /Confirmações do 1º dia/, 'fora do menu do Comercial');
+});

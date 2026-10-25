@@ -77,6 +77,7 @@ export const ParameterKeys = Object.freeze({
   LossOnCancelAfterOpen: 'LOSS_ON_CANCEL_AFTER_OPEN',
   DailyDigestTime: 'DAILY_DIGEST_TIME',
   RequestEvidenceRequired: 'REQUEST_EVIDENCE_REQUIRED',
+  FirstDayReminderDays: 'FIRST_DAY_REMINDER_DAYS',
 });
 
 export const PARAMETER_DEFAULTS = Object.freeze({
@@ -88,6 +89,7 @@ export const PARAMETER_DEFAULTS = Object.freeze({
   LOSS_ON_CANCEL_AFTER_OPEN: ['true', 'Conta perda até o cancelamento de posição já aberta'],
   DAILY_DIGEST_TIME: ['07:00', 'Horário da rotina diária (HH:mm, America/Sao_Paulo)'],
   REQUEST_EVIDENCE_REQUIRED: ['false', 'Exige evidência da solicitação do cliente no pedido'],
+  FIRST_DAY_REMINDER_DAYS: ['1', 'Dias úteis entre os lembretes ao NACC das confirmações do 1º dia pendentes (0 desliga)'],
   // Metas dos KPIs (seção 11): vazias = "sem meta", como a SPEC pede enquanto não forem definidas.
   KPI_TARGET_COMMUNICATION_DAYS: ['', 'Meta do KPI: tempo médio de comunicação, em dias (vazio = sem meta)'],
   KPI_TARGET_FILL_DAYS: ['', 'Meta do KPI: tempo médio de preenchimento, em dias (vazio = sem meta)'],
@@ -157,6 +159,7 @@ export const NotificationTypes = Object.freeze({
   // Aviso antigo, um por posição; desde 22/10/2026 as posições paradas vão consolidadas por pedido.
   PositionStale: 'POSITION_STALE',
   OrderPositionsStale: 'ORDER_POSITIONS_STALE',
+  FirstDayPending: 'FIRST_DAY_PENDING',
 });
 
 /** Alertas da rotina diária registrados em position_alerts (um por posição; vaga parada, um por período parado). */

@@ -352,3 +352,14 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     de cada etapa. Na correção do candidato, nascimento e CPF são opcionais antes da admissão e obrigatórios depois. O
     telefone fica restrito como o nascimento (RH do pedido, NACC e DP). Banco: candidates.phone novo e birth_date/cpf
     opcionais (migração na partida, preservando os registros).
+34. **Confirmações do 1º dia pendentes para o NACC (melhoria pedida pelo usuário em 25/10/2026):** tela "Confirmações
+    do 1º dia" (menu do NACC e do Administrador) com os admitidos "Aguardando 1º dia" por pedido e cliente/unidade —
+    posição, colaborador, matrícula, cargo, admissão e situação — e, à parte, os "Em admissão" sem matrícula, que
+    dependem do RH ou do DP (decisão do usuário). Situação pela data da admissão: futura = "Início previsto para
+    dd/mm"; hoje ou antes = "Confirmação devida há N dias" (decisão do usuário). Clique na linha abre a posição
+    (confirmação individual); "Confirmar em lote" abre o pedido com o lote do 1º dia já aberto. A rotina diária manda
+    ao NACC um lembrete consolidado (e-mail e sino), com o botão "Consultar confirmações pendentes", a cada
+    FIRST_DAY_REMINDER_DAYS dias úteis (padrão 1; 0 desliga) enquanto houver pendência; reprocessar a rotina não
+    repete. Confirmada ou com "não compareceu", a posição sai da lista e o histórico fica. A falta de confirmação é
+    apresentada como pendência de verificação, nunca como falta. Para o NACC, o lembrete substitui o alerta de "sem
+    atualização" das posições aguardando o 1º dia (decisão do usuário).

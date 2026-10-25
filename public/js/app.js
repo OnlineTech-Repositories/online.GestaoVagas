@@ -12,6 +12,7 @@ import { parametersScreen } from './views/parameters.js';
 import { catalogsScreen } from './views/catalogs.js';
 import { reportsScreen } from './views/reports.js';
 import { rhDashboardScreen } from './views/rh-dashboard.js';
+import { firstDayPendingScreen } from './views/first-day-pending.js';
 import { notificationsScreen } from './views/notifications.js';
 
 /**
@@ -39,6 +40,8 @@ export const canCreateOrder = (u) => hasRole(u, 'COMMERCIAL') || (hasRole(u, 'NA
 const isAdmin = (u) => hasRole(u, 'ADMIN');
 /** Painel de RH: a gestão vê a equipe; o Analista de RH, os próprios pedidos. */
 const canSeeRhDashboard = (u) => hasRole(u, 'RH_MANAGER', 'MANAGER', 'ADMIN', 'RH');
+/** Confirmações do 1º dia pendentes: quem confirma (NACC) e o Administrador. */
+const canSeeFirstDayPending = (u) => hasRole(u, 'NACC', 'ADMIN');
 
 // ---------------------------------------------------------------------
 // Rotas
@@ -70,6 +73,13 @@ const ROUTES = [
     section: 'Operação',
     render: terminationScreen,
     requires: (u) => hasRole(u, 'DP', 'NACC'),
+  },
+  {
+    pattern: /^\/confirmacoes-1o-dia$/,
+    title: 'Confirmações do 1º dia',
+    section: 'Operação',
+    render: firstDayPendingScreen,
+    requires: canSeeFirstDayPending,
   },
   {
     pattern: /^\/painel-rh$/,
@@ -138,6 +148,7 @@ const MENU_ITEMS = [
   { href: '/posicoes', icon: '▤', label: 'Posições' },
   { href: '/pedidos', icon: '▣', label: 'Pedidos' },
   { href: '/pedidos/novo', icon: '◇', label: 'Novo pedido', visible: canCreateOrder },
+  { href: '/confirmacoes-1o-dia', icon: '✓', label: 'Confirmações do 1º dia', visible: canSeeFirstDayPending },
   { href: '/desligamentos/novo', icon: '⊘', label: 'Registrar desligamento', visible: hasAny('DP', 'NACC') },
   { group: 'Gestão' },
   { href: '/painel-rh', icon: '▧', label: 'Painel de RH', visible: canSeeRhDashboard },

@@ -26,6 +26,7 @@ const TITLES = {
   SLA_OVERDUE: 'Escalonamento: SLA vencido',
   POSITION_STALE: 'Posição sem atualização',
   ORDER_POSITIONS_STALE: 'Posições sem atualização no pedido',
+  FIRST_DAY_PENDING: 'Confirmações do 1º dia pendentes',
 };
 
 /** Notificações internas do usuário (seção 10.1); clicar abre o registro e marca como lida. */
@@ -48,6 +49,10 @@ export async function notificationsScreen(target) {
 
   async function open(n) {
     if (!n.readAt) api.post(`/api/notifications/${n.id}/read`).then(updateCounters).catch(() => {});
+    if (n.type === 'FIRST_DAY_PENDING') {
+      navigate('/confirmacoes-1o-dia');
+      return;
+    }
     if (!n.entityId) return;
     if (n.type === ORDER_STALE) navigate(`/pedidos/${n.entityId}?paradas=1`);
     else if (ORDER_TYPES.includes(n.type)) navigate(`/pedidos/${n.entityId}`);
