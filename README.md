@@ -363,3 +363,10 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     repete. Confirmada ou com "não compareceu", a posição sai da lista e o histórico fica. A falta de confirmação é
     apresentada como pendência de verificação, nunca como falta. Para o NACC, o lembrete substitui o alerta de "sem
     atualização" das posições aguardando o 1º dia (decisão do usuário).
+35. **Correções da etapa 1 da revisão geral (25/10/2026):** a atualização automática do contador de notificações
+    (a cada 60 s) não renova mais a sessão, que volta a expirar após 30 min sem ação do usuário mesmo com a aba
+    aberta; e toda sessão termina 12 h depois do login (`SESSAO_MAXIMA_HORAS`). Usuário desativado não recebe avisos
+    nem e-mails, mesmo indicado como analista de RH do pedido ou responsável comercial do contrato. Trocar de tela
+    fecha qualquer janela de ação aberta (antes, confirmada depois, ela valia para a tela anterior). A busca de
+    posições encontra o candidato ativo pelo nome antes do 1º dia. "Confirmar em lote" na tela "Confirmações do 1º
+    dia" aparece só ao NACC.

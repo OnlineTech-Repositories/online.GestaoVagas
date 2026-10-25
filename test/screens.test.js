@@ -1297,3 +1297,26 @@ test('Confirmações do 1º dia: a relação do NACC no menu, com os indicadores
   await open('/', 'Painel');
   assert.doesNotMatch(document.querySelector('.menu')?.textContent ?? '', /Confirmações do 1º dia/, 'fora do menu do Comercial');
 });
+
+test('Revisão geral (S1, F1): trocar de tela fecha a janela aberta; o lote do 1º dia só aparece ao NACC', async (t) => {
+  if (skip(t)) return;
+  await signIn('gestor.rh@demo.local');
+  const positions = await apiModule.api.get('/api/positions', { status: 'RECRUITING' });
+  const [first, second] = positions.items ?? positions;
+  const screen = await open(`/posicoes/${first.id}`, 'Posição');
+  [...screen.querySelectorAll('button')].find((b) => b.textContent === 'Adicionar Candidato').click();
+  const area = document.getElementById('modal-area');
+  assert.ok(area.querySelector('.modal'), 'janela aberta');
+  window.location.hash = `#/posicoes/${second.id}`;
+  window.dispatchEvent(new Event('hashchange'));
+  assert.equal(area.querySelector('.modal'), null, 'a troca de tela fechou a janela');
+  await wait(150);
+
+  await signIn('admin@demo.local');
+  const asAdmin = await open('/confirmacoes-1o-dia', 'Confirmações do 1º dia');
+  assert.ok(![...asAdmin.querySelectorAll('button')].some((b) => /Confirmar em lote/.test(b.textContent)), 'ADMIN só consulta');
+  await signIn('nacc@demo.local');
+  const asNacc = await open('/confirmacoes-1o-dia', 'Confirmações do 1º dia');
+  const pending = await apiModule.api.get('/api/positions/first-day-pending');
+  if (pending.groups.length) assert.ok([...asNacc.querySelectorAll('button')].some((b) => /Confirmar em lote/.test(b.textContent)), 'NACC confirma');
+});

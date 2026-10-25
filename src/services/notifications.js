@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { query, queryOne } from '../db/index.js';
 import { entity } from '../db/model.js';
-import { activeUsersByRoles, usersByIds } from '../db/repository.js';
+import { activeUsersByIds, activeUsersByRoles } from '../db/repository.js';
 import { utcNow } from '../domain/dates.js';
 import { ForbiddenError, NotFoundError } from '../domain/errors.js';
 import { EmailStatus } from '../domain/enums.js';
@@ -42,11 +42,15 @@ export async function notify(uow, event, audience = {}) {
   for (const r of (await resolveRecipients(audience)).values()) deliver(uow, r, event);
 }
 
-/** Usuários ativos dos perfis e/ou os usuários informados, sem repetir quem está nos dois (Map por id). */
+/**
+ * Usuários ativos dos perfis e/ou os usuários informados, sem repetir quem está nos dois (Map por id). Os informados
+ * também precisam estar ativos: o analista de RH ou o responsável comercial desativado não recebe mais avisos nem
+ * e-mails com dados de pedidos e candidatos (revisão geral de 25/10/2026, C1).
+ */
 export async function resolveRecipients({ roles = null, userIds = null } = {}) {
   const recipients = new Map();
   if (roles?.length) for (const u of await activeUsersByRoles(roles)) recipients.set(u.id, u);
-  if (userIds?.length) for (const u of (await usersByIds(userIds)).values()) recipients.set(u.id, u);
+  if (userIds?.length) for (const u of (await activeUsersByIds(userIds)).values()) recipients.set(u.id, u);
   return recipients;
 }
 

@@ -224,9 +224,12 @@ export async function listPositions(uow, f = {}) {
   if (f.currentCycleOnly) add('NOT EXISTS (SELECT 1 FROM terminations t WHERE t.origin_position_id = p.id)');
   if (f.search?.trim()) {
     const term = `%${f.search.trim().toLowerCase()}%`;
+    // O nome do colaborador só é gravado no 1º dia; antes dele, a busca acha o candidato ativo da posição.
     add(`(lower(COALESCE(p.employee_name, '')) LIKE ? OR lower(COALESCE(p.employee_registration, '')) LIKE ?
-          OR lower(COALESCE(o.jobconvo_code, '')) LIKE ? OR lower(cl.legal_name) LIKE ? OR lower(j.name) LIKE ?)`,
-    term, term, term, term, term);
+          OR lower(COALESCE(o.jobconvo_code, '')) LIKE ? OR lower(cl.legal_name) LIKE ? OR lower(j.name) LIKE ?
+          OR EXISTS (SELECT 1 FROM candidates ca WHERE ca.position_id = p.id AND ca.withdrawn_at IS NULL
+                       AND lower(ca.full_name) LIKE ?))`,
+    term, term, term, term, term, term);
   }
   const rows = await query(
     `SELECT p.* FROM positions p
@@ -302,6 +305,12 @@ export async function hasTermination(originPositionId) {
 export async function usersByIds(ids) {
   const rows = await rowsIn('users', 'id', ids);
   return new Map(rows.map((u) => [u.id, { id: u.id, name: u.name, email: u.email }]));
+}
+
+/** Usuários ATIVOS entre os informados (destinatários de avisos: quem foi desativado não recebe). */
+export async function activeUsersByIds(ids) {
+  const rows = await rowsIn('users', 'id', ids);
+  return new Map(rows.filter((u) => Number(u.active) === 1).map((u) => [u.id, { id: u.id, name: u.name, email: u.email }]));
 }
 
 /** Usuários ATIVOS com algum dos perfis. */

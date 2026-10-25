@@ -1,5 +1,5 @@
 import { api, events, setWarningHandler } from './api.js';
-import { el, clear, initials, toast, loading, LABELS, confirmWarnings } from './ui.js';
+import { el, clear, initials, toast, loading, LABELS, confirmWarnings, closeAllModals } from './ui.js';
 import { loginScreen, changePasswordScreen, openChangePassword } from './views/login.js';
 import { dashboardScreen } from './views/dashboard.js';
 import { positionsScreen, positionDetailScreen } from './views/positions.js';
@@ -319,10 +319,13 @@ export async function refreshSession() {
   }
 }
 
-/** Mantém o contador do menu em dia. Falha aqui é silenciosa: o contador é informativo. */
-export async function updateCounters() {
+/**
+ * Mantém o contador do menu em dia. Falha aqui é silenciosa: o contador é informativo. A atualização periódica
+ * (`background`) não renova a sessão: com a aba esquecida aberta, a sessão expira em 30 min e a tela volta ao login.
+ */
+export async function updateCounters(background = false) {
   try {
-    state.unread = (await api.get('/api/notifications/unread-count')) ?? 0;
+    state.unread = (await (background ? api.poll : api.get)('/api/notifications/unread-count')) ?? 0;
     const menu = sidebar?.querySelector('.menu');
     if (menu) {
       const fresh = buildMenu(currentLocation().path);
@@ -360,11 +363,16 @@ setWarningHandler(confirmWarnings);
 events.addEventListener('session-expired', () => {
   if (!state.user) return;
   state.user = null;
+  closeAllModals();
   toast('Sua sessão expirou por inatividade. Faça login novamente.', 'alerta', 8000);
   clear(root).append(loginScreen(login));
 });
 
-window.addEventListener('hashchange', render);
+// Troca de tela fecha qualquer janela aberta: confirmada depois, a ação valeria para a tela anterior.
+window.addEventListener('hashchange', () => {
+  closeAllModals();
+  render();
+});
 
 // ---------------------------------------------------------------------
 // Início
@@ -387,5 +395,5 @@ await render();
 
 // Contador de notificações a cada minuto.
 setInterval(() => {
-  if (state.user && !state.user.mustChangePassword) updateCounters();
+  if (state.user && !state.user.mustChangePassword) updateCounters(true);
 }, 60_000);

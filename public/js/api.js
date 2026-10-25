@@ -81,9 +81,11 @@ function toError(status, problem) {
   return new ApiError(message, { status, fields, code: problem?.title });
 }
 
-async function request(method, path, body, confirmed = false) {
+async function request(method, path, body, confirmed = false, background = false) {
   const headers = { Accept: 'application/json' };
   if (confirmed) headers['X-Confirm-Warnings'] = '1';
+  // Consulta automática (sem ação do usuário): o servidor não renova a sessão, que expira por inatividade.
+  if (background) headers['X-Background-Request'] = '1';
   // FormData (arquivo anexado): o navegador monta o multipart com o boundary.
   const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
   if (body !== undefined && !isForm) headers['Content-Type'] = 'application/json';
@@ -155,6 +157,8 @@ async function file(path, params) {
 
 export const api = {
   get: (path, params) => request('GET', path + query(params)),
+  /** GET automático, sem ação do usuário (contador de notificações): não renova a sessão. */
+  poll: (path) => request('GET', path, undefined, false, true),
   file,
   post: (path, body = {}) => request('POST', path, body),
   put: (path, body = {}) => request('PUT', path, body),

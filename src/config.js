@@ -199,6 +199,8 @@ export const config = {
 
   // ---- sessão e segurança (seção 12 da SPEC) ---------------------------------------------------------------------
   sessionTimeoutMin: num(env.SESSAO_TIMEOUT_MIN, 30),
+  /** Duração máxima da sessão desde o login, mesmo em uso (revisão geral de 25/10/2026, item B2). */
+  sessionMaxHours: num(env.SESSAO_MAXIMA_HORAS, 12),
   maxLoginAttempts: num(env.MAX_TENTATIVAS_LOGIN, 5),
   lockoutMin: num(env.BLOQUEIO_LOGIN_MIN, 15),
   /**

@@ -89,7 +89,8 @@ export async function loadUser(req, _res, next) {
   // Arquivos do front-end não precisam de sessão: sem consulta ao banco por imagem ou script.
   if (!req.path.startsWith('/api/')) return next();
   try {
-    req.user = await sessionUser(req.cookies[SESSION_COOKIE]);
+    // Consulta automática da tela (X-Background-Request: 1): confere a sessão sem renová-la.
+    req.user = await sessionUser(req.cookies[SESSION_COOKIE], { renew: req.get('x-background-request') !== '1' });
     const ip = req.ip ?? req.socket?.remoteAddress ?? null;
     req.ctx = {
       user: req.user ?? { id: null, roles: [] }, ip, uow: new UnitOfWork({ userId: req.user?.id ?? null, ip }),

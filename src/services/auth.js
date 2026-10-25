@@ -113,16 +113,19 @@ export async function endOtherSessions(userId, token) {
 }
 
 /**
- * Usuário da sessão, com os perfis. Sessão parada há mais que o tempo limite (30 min, seção 12) é descartada; a
- * sessão em uso é renovada (expiração por inatividade, não por tempo desde o login).
+ * Usuário da sessão, com os perfis. Sessão parada há mais que o tempo limite (30 min, seção 12) ou aberta há mais que
+ * a duração máxima (12 h) é descartada; a sessão em uso é renovada (expiração por inatividade). `renew: false` é a
+ * consulta automática da tela (contador de notificações): ela confere a sessão sem renová-la, senão uma aba esquecida
+ * aberta nunca expiraria (revisão geral de 25/10/2026, SEG1).
  */
-export async function sessionUser(token) {
+export async function sessionUser(token, { renew = true } = {}) {
   if (!token) return null;
   const hash = sha256(token);
   const session = await queryOne('SELECT * FROM sessions WHERE token_hash = ?', hash);
   if (!session) return null;
   const now = Date.now();
-  if (now - Date.parse(session.last_access) > config.sessionTimeoutMin * 60_000) {
+  if (now - Date.parse(session.last_access) > config.sessionTimeoutMin * 60_000
+    || now - Date.parse(session.created_at) > config.sessionMaxHours * 3_600_000) {
     await execute('DELETE FROM sessions WHERE token_hash = ?', hash);
     return null;
   }
@@ -132,7 +135,7 @@ export async function sessionUser(token) {
     return null;
   }
   // Renova no máximo uma vez por minuto: uma escrita por requisição seria custo sem ganho.
-  if (now - Date.parse(session.last_access) > 60_000) {
+  if (renew && now - Date.parse(session.last_access) > 60_000) {
     await execute('UPDATE sessions SET last_access = ? WHERE token_hash = ?', new Date(now).toISOString(), hash);
   }
   const roles = (await query('SELECT role FROM user_roles WHERE user_id = ?', user.id)).map((r) => r.role).sort();

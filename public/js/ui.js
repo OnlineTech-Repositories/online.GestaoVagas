@@ -328,14 +328,24 @@ export function toast(message, type = 'info', duration = 4500) {
 // Modal
 // ---------------------------------------------------------------------
 
+/** Janelas abertas: fechadas a cada troca de tela (closeAllModals), para a ação não valer para outra posição. */
+const openModals = new Set();
+
+/** Fecha todas as janelas abertas (troca de tela, sessão expirada). */
+export function closeAllModals() {
+  for (const close of [...openModals]) close();
+}
+
 export function modal({ title, body, footer, wide = false, onClose }) {
   const area = document.getElementById('modal-area');
 
   const close = () => {
+    if (!openModals.delete(close)) return;
     backdrop.remove();
     document.removeEventListener('keydown', onKeyDown);
     onClose?.();
   };
+  openModals.add(close);
 
   const onKeyDown = (event) => {
     if (event.key === 'Escape') close();

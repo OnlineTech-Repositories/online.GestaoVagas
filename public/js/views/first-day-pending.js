@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { el, clear, panel, panelNoPadding, table, loading, date, indicator, number, button } from '../ui.js';
-import { navigate } from '../app.js';
+import { navigate, state, hasRole } from '../app.js';
 
 /**
  * Confirmações do 1º dia pendentes (melhoria de 25/10/2026): os admitidos aguardando a confirmação do NACC, por pedido
@@ -17,6 +17,8 @@ export async function firstDayPendingScreen(target) {
   const d = await api.get('/api/positions/first-day-pending');
   const s = d.summary;
   const open = (i) => navigate(`/posicoes/${i.positionId}`);
+  // A confirmação em lote é do NACC: o ADMIN vê a relação, mas não tem o botão (revisão geral de 25/10/2026, F1).
+  const canConfirm = hasRole(state.user, 'NACC');
 
   const cards = el('div', { class: 'grade grade-4' },
     indicator({ label: 'Confirmações devidas', value: number(s.due), highlight: s.due ? 'alerta' : null,
@@ -40,7 +42,7 @@ export async function firstDayPendingScreen(target) {
         { title: 'Admissão', cls: 'nowrap', render: (i) => date(i.admissionAt) },
         { title: 'Situação', render: situationTag },
       ], g.items, { onClick: open, dense: true, rowClass: (i) => (i.situation === 'DUE' ? 'linha-alerta' : '') })),
-    [button(`Confirmar em lote (${g.items.length})`, () => navigate(`/pedidos/${g.orderId}?confirmar=1`), 'pequeno')],
+    canConfirm ? [button(`Confirmar em lote (${g.items.length})`, () => navigate(`/pedidos/${g.orderId}?confirmar=1`), 'pequeno')] : null,
   ));
 
   const withoutRegistration = d.withoutRegistration.length
