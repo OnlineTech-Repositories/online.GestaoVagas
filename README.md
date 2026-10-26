@@ -411,3 +411,10 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     unidade contratante continua com o local fixo nessa unidade, sem a ação (decisão do usuário); a unidade
     contratante dos contratos não muda, e o contrato criado no cliente principal continua editável depois que o
     cliente ganha unidades. O histórico guarda quem cadastrou, quando e o cliente; o pedido grava o local escolhido.
+39. **Pesquisa por digitação no campo Cargo do pedido (melhoria pedida pelo usuário em 26/10/2026):** na criação do
+    pedido e na janela "Ajustar e reenviar" (decisão do usuário), o Cargo virou uma lista com pesquisa: o texto
+    digitado filtra em qualquer parte do nome, sem diferenciar maiúsculas, minúsculas nem acentos, e a escolha é
+    feita com o mouse ou com as setas e Enter. A digitação só pesquisa: o valor é sempre um cargo da lista, e sair do
+    campo sem escolher volta ao cargo que estava selecionado. Sem correspondência, aparece "Nenhum cargo encontrado"
+    e "+ Cadastrar cargo" continua disponível conforme o perfil. Os cargos oferecidos seguem as regras de antes
+    (catálogo ativo para o Comercial; cargos com valor validado no contrato para o NACC na carga inicial).

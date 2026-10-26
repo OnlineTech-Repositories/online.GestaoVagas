@@ -491,6 +491,29 @@ table.tabela .acoes { text-align: right; white-space: nowrap; }
 
 .linha-campos { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
 
+/* Lista com pesquisa por digitação (campo Cargo do pedido). */
+.busca-caixa { position: relative; }
+.busca-lista {
+  position: absolute;
+  z-index: 30;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--painel);
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio);
+  box-shadow: var(--sombra-alta);
+}
+.busca-lista li { padding: 7px 12px; cursor: pointer; font-size: 14px; }
+.busca-lista li:hover, .busca-lista li.ativo { background: var(--azul-claro); color: var(--azul-escuro); }
+.busca-lista li[aria-selected="true"] { font-weight: 600; }
+.busca-lista li.vazio { cursor: default; color: var(--texto-fraco); background: none; }
+
 fieldset {
   border: 1px solid var(--borda);
   border-radius: var(--raio);

@@ -1348,7 +1348,10 @@ test('Pedido com valores comerciais: o valor aprovado vem preenchido, alterar av
     select.dispatchEvent(new Event('change'));
   };
   pick('contractId', contract.id);
-  pick('jobRoleId', role.id);
+  // Cargo com pesquisa: escolhe na lista (mousedown, como o clique do mouse).
+  const roleInput = root.querySelector('[data-campo="jobRoleId"]').querySelector('input[type="text"]');
+  roleInput.dispatchEvent(new Event('focus'));
+  root.querySelector(`[data-valor="${role.id}"]`).dispatchEvent(new Event('mousedown'));
   await wait(150);
   const rate = await apiModule.api.get('/api/contract-rates/current', { contractId: contract.id, jobRoleId: role.id, date: ui.today() });
   const form = root.querySelector('form');
@@ -1423,4 +1426,54 @@ test('Local de trabalho no pedido: o Comercial consulta as unidades, cadastra um
   [...root.querySelectorAll('button')].find((b) => b.textContent === '+ Cadastrar novo local de trabalho').click();
   assert.match(document.getElementById('modal-area').textContent, /LJ-77 — Loja Setenta e Sete/);
   document.getElementById('modal-area').querySelector('.modal-fechar').click();
+});
+
+test('Cargo do pedido com pesquisa: filtra em qualquer parte, sem acento nem maiúscula, e escolhe por teclado ou mouse', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const roles = (await apiModule.api.get('/api/catalogs/job-roles')).filter((j) => j.active);
+  const root = await open('/pedidos/novo', 'Novo pedido');
+  const block = root.querySelector('[data-campo="jobRoleId"]');
+  const input = block.querySelector('input[type="text"]');
+  const hidden = block.querySelector('input[name="jobRoleId"]');
+  const key = (k) => input.dispatchEvent(Object.assign(new Event('keydown'), { key: k }));
+  const options = () => [...block.querySelectorAll('li')].map((li) => li.textContent);
+  const type = (text) => {
+    input.value = text;
+    input.dispatchEvent(new Event('input'));
+  };
+
+  input.dispatchEvent(new Event('focus'));
+  assert.equal(options().length, roles.length, 'ao entrar, a lista mostra todos os cargos disponíveis');
+
+  // Parte do nome, em maiúsculas e sem acento: "Operador de empilhadeira" por "EMPILHA"; "Analista de RH" por "ANÁLIS".
+  type('EMPILHA');
+  assert.deepEqual(options(), roles.filter((j) => /empilha/i.test(j.name)).map((j) => j.name));
+  type('anális');
+  assert.ok(options().length && options().every((n) => /analis/i.test(n.normalize('NFD').replace(/[̀-ͯ]/g, ''))));
+
+  // Sem correspondência: a mensagem; a digitação não preenche o campo.
+  type('xyz cargo inexistente');
+  assert.deepEqual(options(), ['Nenhum cargo encontrado']);
+  key('Enter');
+  assert.equal(hidden.value, '');
+  input.dispatchEvent(new Event('blur'));
+  await wait(200); // o fechamento espera um instante (clique na opção chega antes)
+  assert.equal(input.value, '', 'sair sem escolher não deixa texto solto');
+
+  // Teclado: setas e Enter escolhem a opção em destaque.
+  input.dispatchEvent(new Event('focus'));
+  type('a');
+  const expected = roles.filter((j) => j.name.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().includes('a'));
+  key('ArrowDown');
+  key('Enter');
+  assert.equal(hidden.value, expected[1].id, 'a segunda da lista filtrada');
+  assert.equal(input.value, expected[1].name);
+
+  // Digitar de novo e sair sem escolher volta ao cargo escolhido.
+  input.dispatchEvent(new Event('focus'));
+  type('zzz');
+  input.dispatchEvent(new Event('blur'));
+  await wait(200); // o fechamento espera um instante (clique na opção chega antes)
+  assert.deepEqual([hidden.value, input.value], [expected[1].id, expected[1].name]);
 });

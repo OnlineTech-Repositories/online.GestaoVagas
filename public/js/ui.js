@@ -555,6 +555,132 @@ export function field({
   );
 }
 
+/** Texto para comparar na pesquisa: sem acento e em minúsculas. */
+export const searchKey = (text) => String(text ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+/**
+ * Lista com pesquisa por digitação (melhoria de 26/10/2026, campo Cargo do pedido). O texto digitado só filtra — em
+ * qualquer parte do nome, sem diferenciar maiúsculas nem acentos —; o valor enviado (campo oculto `name`) é sempre
+ * uma opção escolhida da lista, com o mouse ou com as setas e Enter. Sair do campo sem escolher volta à opção que
+ * estava selecionada. `onChange(value)` é chamado a cada escolha.
+ */
+export function searchSelect({
+  name, label: text, options: items = [], value = '', required = false, help, disabled = false,
+  placeholder = 'Digite para pesquisar', emptyText = 'Nenhum resultado encontrado', onChange = null,
+}) {
+  const listId = `lista-${name}`;
+  let selected = items.find((o) => String(o.value) === String(value ?? '')) ?? null;
+  let visible = [];
+  let active = -1;
+
+  const hidden = element('input', { type: 'hidden', name, value: selected?.value ?? '' });
+  const input = element('input', {
+    type: 'text', id: `campo-${name}`, value: selected?.label ?? '', placeholder, disabled, autocomplete: 'off',
+    role: 'combobox', 'aria-autocomplete': 'list', 'aria-expanded': 'false', 'aria-controls': listId,
+  });
+  const list = element('ul', { id: listId, class: 'busca-lista oculto', role: 'listbox' });
+
+  const close = () => {
+    list.classList.add('oculto');
+    input.setAttribute('aria-expanded', 'false');
+    active = -1;
+  };
+
+  function choose(option) {
+    selected = option;
+    hidden.value = option.value;
+    input.value = option.label;
+    close();
+    hidden.dispatchEvent(new Event('change'));
+    onChange?.(option.value);
+  }
+
+  function render() {
+    const term = searchKey(input.value.trim());
+    // Com a opção escolhida ainda no campo, a lista mostra todas (o texto é o nome escolhido, não uma pesquisa).
+    visible = !term || (selected && input.value === selected.label) ? items : items.filter((o) => searchKey(o.label).includes(term));
+    active = Math.min(Math.max(active, 0), visible.length - 1);
+    clear(list).append(...(visible.length
+      ? visible.map((o, i) => {
+        const item = element('li', {
+          role: 'option', class: i === active ? 'ativo' : '', 'aria-selected': String(selected?.value === o.value),
+          dataset: { valor: o.value },
+        }, o.label);
+        // mousedown (e não click): escolhe antes de o campo perder o foco.
+        item.addEventListener('mousedown', (event) => {
+          event.preventDefault();
+          choose(o);
+        });
+        item.addEventListener('click', () => {
+          if (hidden.value !== String(o.value)) choose(o);
+        });
+        return item;
+      })
+      : [element('li', { class: 'vazio', role: 'presentation' }, emptyText)]));
+    list.classList.remove('oculto');
+    input.setAttribute('aria-expanded', 'true');
+  }
+
+  const move = (step) => {
+    if (list.classList.contains('oculto')) {
+      render();
+      return;
+    }
+    if (!visible.length) return;
+    active = (active + step + visible.length) % visible.length;
+    render();
+    list.querySelector('li.ativo')?.scrollIntoView?.({ block: 'nearest' });
+  };
+
+  input.addEventListener('focus', () => {
+    active = Math.max(0, items.findIndex((o) => o === selected));
+    render();
+  });
+  input.addEventListener('input', () => {
+    active = 0;
+    render();
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      move(1);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      move(-1);
+    } else if (event.key === 'Enter') {
+      // Enter escolhe a opção em destaque; nunca envia o formulário com um texto que não é opção.
+      event.preventDefault();
+      if (!list.classList.contains('oculto') && visible[active]) choose(visible[active]);
+    } else if (event.key === 'Escape') {
+      input.value = selected?.label ?? '';
+      close();
+    }
+  });
+  // Ao sair, um instante de espera: o clique numa opção (ou a janela que perdeu e retomou o foco, ou o toque em tela
+  // de toque, que tira o foco antes do clique) chega antes de a lista fechar.
+  input.addEventListener('blur', () => setTimeout(() => {
+    if (document.activeElement === input || list.classList.contains('oculto')) return;
+    if (!input.value.trim()) {
+      selected = null;
+      hidden.value = '';
+      hidden.dispatchEvent(new Event('change'));
+      onChange?.('');
+    } else {
+      input.value = selected?.label ?? '';
+    }
+    close();
+  }, 150));
+
+  return element(
+    'div',
+    { class: 'campo campo-busca', dataset: { campo: name } },
+    element('label', { for: `campo-${name}` }, text, required ? element('span', { class: 'obrigatorio' }, '*') : null),
+    element('div', { class: 'busca-caixa' }, input, list),
+    hidden,
+    help ? element('div', { class: 'ajuda' }, help) : null,
+  );
+}
+
 /** Seleção múltipla em caixas de marcar. O valor lido é um array (ver `checkedValues`). */
 export function checkGroup({ name, label: text, options: items, values = [], required = false, help }) {
   return element(

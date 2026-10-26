@@ -3,7 +3,7 @@ import {
   el, clear, field, table, panel, panelNoPadding, loading, detail, date, label, LABELS, options, termFields, formData,
   applyErrors, requireFields, orNull, intOrNull, today, toast, button, formModal, positionColumns, positionRowClass,
   locationLabel, validationError, approvalTag, dateTime, rhTeam, rhFilterOptions, checkGroup, checkedValues,
-  statusTag, cycleLabel, modal, errorMessage, moneyField, money, rateTag, cnpjField, cnpj,
+  statusTag, cycleLabel, modal, errorMessage, moneyField, money, rateTag, cnpjField, cnpj, searchSelect,
 } from '../ui.js';
 import { navigate, state, canCreateOrder, hasRole } from '../app.js';
 
@@ -221,17 +221,17 @@ export async function newOrderScreen(target) {
   }
   /** Comercial: todos os cargos ativos do catálogo; o valor aprovado vigente, se houver, preenche os valores. */
   function renderCatalogRoles(selected = '') {
-    const roleField = field({
+    const roleField = searchSelect({
       name: 'jobRoleId',
       label: 'Cargo',
-      type: 'select',
       required: true,
       value: selected,
-      options: [{ value: '', label: 'Selecione' },
-        ...catalogRoles.filter((j) => j.active).map((j) => ({ value: j.id, label: j.name }))],
+      options: catalogRoles.filter((j) => j.active).map((j) => ({ value: j.id, label: j.name })),
+      placeholder: 'Digite o nome do cargo para pesquisar',
+      emptyText: 'Nenhum cargo encontrado',
       help: canCreateJobRole ? null : 'Cargo fora da lista: peça o cadastro ao administrador.',
+      onChange: () => loadRate(),
     });
-    roleField.querySelector('select').addEventListener('change', () => loadRate());
     clear(jobRoleArea).append(roleField,
       ...(canCreateJobRole ? [el('div', { class: 'barra-botoes mb-16' }, button('+ Cadastrar cargo', openNewJobRole, 'secundario pequeno'))] : []));
   }
@@ -268,7 +268,7 @@ export async function newOrderScreen(target) {
   async function loadRate() {
     if (!commercial) return;
     const contractId = contractField.querySelector('select').value;
-    const jobRoleId = jobRoleArea.querySelector('select')?.value;
+    const jobRoleId = jobRoleArea.querySelector('input[name="jobRoleId"]')?.value;
     const request = ++rateRequest;
     approvedRate = null;
     if (!contractId || !jobRoleId) {
@@ -303,13 +303,14 @@ export async function newOrderScreen(target) {
   /** Cargo: desabilitado até escolher o contrato; depois, só os cargos com valor validado nesse contrato. */
   function renderJobRoles(roles, placeholder) {
     const disabled = !roles?.length;
-    clear(jobRoleArea).append(field({
+    clear(jobRoleArea).append(searchSelect({
       name: 'jobRoleId',
       label: 'Cargo',
-      type: 'select',
       required: true,
       disabled,
-      options: [{ value: '', label: placeholder ?? 'Selecione' }, ...(roles ?? []).map((j) => ({ value: j.id, label: j.name }))],
+      options: (roles ?? []).map((j) => ({ value: j.id, label: j.name })),
+      placeholder: disabled ? placeholder ?? 'Escolha o contrato' : 'Digite o nome do cargo para pesquisar',
+      emptyText: 'Nenhum cargo encontrado',
       help: roles?.length ? 'Somente cargos com valor validado neste contrato (Valores por cargo).' : null,
     }));
   }
@@ -694,8 +695,9 @@ async function openResubmitReview(order, reload) {
       ? el('div', { class: 'mensagem erro' }, el('strong', {}, 'Motivo da devolução'), order.controllership.reason)
       : null,
     fields: [
-      field({ name: 'jobRoleId', label: 'Cargo', type: 'select', required: true, value: order.jobRoleId,
-        options: [{ value: '', label: 'Selecione' }, ...roles.map((j) => ({ value: j.id, label: j.name }))] }),
+      searchSelect({ name: 'jobRoleId', label: 'Cargo', required: true, value: order.jobRoleId,
+        options: roles.map((j) => ({ value: j.id, label: j.name })), placeholder: 'Digite o nome do cargo para pesquisar',
+        emptyText: 'Nenhum cargo encontrado' }),
       el('div', { class: 'linha-campos' },
         moneyField({ name: 'monthlyValue', label: 'Valor mensal de venda', value: v.monthlyValue ?? '',
           help: 'Base do valor diário (÷30). Dispensado em contrato só de R&S.' }),
