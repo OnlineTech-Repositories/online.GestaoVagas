@@ -35,7 +35,7 @@ export const ENTITIES = {
   }),
   ContractRate: define('contract_rates', {
     contractId: 'text', jobRoleId: 'text', monthlyValue: 'decimal', feeValue: 'decimal', validFrom: 'date',
-    status: 'text', validatedBy: 'text', validatedAt: 'datetime', rejectionReason: 'text',
+    status: 'text', validatedBy: 'text', validatedAt: 'datetime', rejectionReason: 'text', orderId: 'text',
   }),
   Order: define('orders', {
     number: 'int', contractId: 'text', modality: 'text', jobRoleId: 'text', quantity: 'int', workLocationId: 'text',
@@ -43,8 +43,13 @@ export const ENTITIES = {
     notes: 'text', jobDescription: 'text', isLegacy: 'bool', registeredAt: 'date', approvalStatus: 'text',
     clientDecisionDate: 'date', approvalRecordedAt: 'datetime', approvalRecordedBy: 'text', notApprovedReason: 'text',
     jobconvoPublished: 'bool', jobconvoCode: 'text', jobconvoPublishedAt: 'date', jobconvoNotes: 'text',
-    jobconvoRecordedAt: 'datetime', jobconvoRecordedBy: 'text',
+    jobconvoRecordedAt: 'datetime', jobconvoRecordedBy: 'text', rateId: 'text', controllershipStatus: 'text',
+    controllershipDecidedAt: 'datetime', controllershipDecidedBy: 'text', controllershipReason: 'text',
   }),
+  OrderReview: define('order_reviews', {
+    orderId: 'text', action: 'text', userId: 'text', occurredAt: 'datetime', reason: 'text', jobRoleId: 'text',
+    monthlyValue: 'decimal', feeValue: 'decimal', validFrom: 'date', rateId: 'text',
+  }, { audited: false }),
   Position: define('positions', {
     orderId: 'text', sequence: 'int', slotNumber: 'int', cycle: 'int', demandType: 'text', originPositionId: 'text',
     terminationId: 'text', status: 'text', previousStatus: 'text', desiredStartDate: 'date', openedAt: 'date',
@@ -96,7 +101,7 @@ export const ENTITIES = {
  * de inserção: pais antes dos filhos, por causa das chaves estrangeiras.
  */
 export const RELATIONS = {
-  Order: ['positions', 'rhAnalysts'],
+  Order: ['positions', 'rhAnalysts', 'reviews'],
   Position: ['exitTermination', 'pauses', 'candidates', 'evidences'],
   Termination: ['replacementPosition'],
   PositionEvidence: ['file'],
@@ -105,7 +110,7 @@ export const RELATIONS = {
 /** Ordem de inserção entre tipos (pais primeiro). */
 export const INSERT_ORDER = [
   'User', 'GroupEntity', 'Client', 'JobRole', 'WorkLocation', 'PauseReason', 'SlaTarget', 'SystemParameter', 'Contract',
-  'ContractRate', 'Order', 'Position', 'Termination', 'Pause', 'OrderRhAnalyst', 'Candidate', 'EvidenceFile',
+  'ContractRate', 'Order', 'OrderReview', 'Position', 'Termination', 'Pause', 'OrderRhAnalyst', 'Candidate', 'EvidenceFile',
   'PositionEvidence', 'PositionAlert', 'Notification', 'EmailMessage', 'JobRun',
 ];
 

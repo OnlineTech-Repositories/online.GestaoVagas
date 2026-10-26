@@ -24,6 +24,14 @@ export const ADDED_COLUMNS = [
   ['clients', 'is_brand', 'INTEGER NOT NULL DEFAULT 0'],
   // Telefone do candidato (25/10/2026): vazio nos já cadastrados, pedido na admissão.
   ['candidates', 'phone', 'TEXT'],
+  // Fluxo integrado de cargo e valores no pedido (26/10/2026): pedidos e valores antigos ficam sem vínculo e sem
+  // validação de pedido (seguiram o fluxo antigo, com o valor validado antes).
+  ['contract_rates', 'order_id', 'TEXT'],
+  ['orders', 'rate_id', 'TEXT'],
+  ['orders', 'controllership_status', 'TEXT'],
+  ['orders', 'controllership_decided_at', 'TEXT'],
+  ['orders', 'controllership_decided_by', 'TEXT'],
+  ['orders', 'controllership_reason', 'TEXT'],
 ];
 
 /**
@@ -50,7 +58,7 @@ export const DOTNET_DATABASE_ERROR =
 export const NO_DELETE_TABLES = [
   'clients', 'contracts', 'contract_rates', 'orders', 'positions', 'terminations', 'pauses', 'group_entities',
   'job_roles', 'work_locations', 'pause_reasons', 'sla_targets', 'system_parameters', 'users', 'order_rh_analysts',
-  'candidates', 'position_evidences', 'evidence_files', 'position_alerts',
+  'candidates', 'position_evidences', 'evidence_files', 'position_alerts', 'order_reviews',
 ];
 
 export async function migrate() {

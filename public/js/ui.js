@@ -190,6 +190,7 @@ export const LABELS = {
   },
   orderStatus: { IN_PROGRESS: 'Em andamento', FULFILLED: 'Atendido', CANCELLED: 'Cancelado' },
   approvalStatus: {
+    AWAITING_CONTROLLERSHIP: 'Aguardando aprovação da Controladoria',
     AWAITING_CLIENT_APPROVAL: 'Aguardando aprovação do cliente',
     APPROVED: 'Aprovado',
     NOT_APPROVED: 'Não aprovado',
@@ -282,16 +283,21 @@ const SLA_COLORS = { ON_TIME: 'verde', AT_RISK: 'amarela', OVERDUE: 'vermelha', 
 export function slaTag(situation, stageStatus, approvalStatus) {
   // Antes da aprovação do cliente não há SLA: ele começa na data da aprovação.
   if (approvalStatus === 'AWAITING_CLIENT_APPROVAL') return element('span', { class: 'etiqueta amarela' }, 'Aguardando aprovação');
+  if (approvalStatus === 'AWAITING_CONTROLLERSHIP') return element('span', { class: 'etiqueta amarela' }, 'Aguardando Controladoria');
   if (situation) return element('span', { class: `etiqueta ${SLA_COLORS[situation]}` }, LABELS.slaSituation[situation]);
   if (stageStatus === 'AWAITING_CONFIRMATION') return element('span', { class: 'etiqueta amarela' }, 'Aguardando cliente');
   return '—';
 }
 
-/** Aprovação do cliente no pedido: amarelo (aguardando), verde (aprovado), cinza (não aprovado). */
-const APPROVAL_COLORS = { AWAITING_CLIENT_APPROVAL: 'amarela', APPROVED: 'verde', NOT_APPROVED: 'cinza' };
+/**
+ * Aprovação do pedido: amarelo (aguardando a Controladoria ou o cliente), vermelho (devolvido pela Controladoria),
+ * verde (aprovado), cinza (não aprovado).
+ */
+const APPROVAL_COLORS = { AWAITING_CONTROLLERSHIP: 'amarela', AWAITING_CLIENT_APPROVAL: 'amarela', APPROVED: 'verde', NOT_APPROVED: 'cinza' };
 
-export const approvalTag = (status) =>
-  element('span', { class: `etiqueta ${APPROVAL_COLORS[status] ?? 'cinza'}` }, label(LABELS.approvalStatus, status));
+export const approvalTag = (status, controllershipStatus = null) => (status === 'AWAITING_CONTROLLERSHIP' && controllershipStatus === 'RETURNED'
+  ? element('span', { class: 'etiqueta vermelha' }, 'Devolvido pela Controladoria')
+  : element('span', { class: `etiqueta ${APPROVAL_COLORS[status] ?? 'cinza'}` }, label(LABELS.approvalStatus, status)));
 
 const RATE_COLORS = { PENDING: 'amarela', VALIDATED: 'verde', REJECTED: 'vermelha' };
 

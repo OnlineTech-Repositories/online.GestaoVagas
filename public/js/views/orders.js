@@ -3,9 +3,9 @@ import {
   el, clear, field, table, panel, panelNoPadding, loading, detail, date, label, LABELS, options, termFields, formData,
   applyErrors, requireFields, orNull, intOrNull, today, toast, button, formModal, positionColumns, positionRowClass,
   locationLabel, validationError, approvalTag, dateTime, rhTeam, rhFilterOptions, checkGroup, checkedValues,
-  statusTag, cycleLabel, modal, errorMessage,
+  statusTag, cycleLabel, modal, errorMessage, moneyField, money, rateTag,
 } from '../ui.js';
-import { navigate, state, canCreateOrder } from '../app.js';
+import { navigate, state, canCreateOrder, hasRole } from '../app.js';
 
 // ---------------------------------------------------------------------
 // Lista de pedidos
@@ -43,7 +43,7 @@ export async function ordersScreen(target, _params, query) {
           { title: 'Analistas de RH', render: (o) => rhTeam(o.rhAnalystNames, o.awaitingRhAssignment) },
           { title: 'JobConvo', render: (o) => (o.jobconvoPublished === true ? o.jobconvoCode
             : o.jobconvoPublished === false ? el('span', { class: 'texto-fraco' }, 'Sem publicação') : '—') },
-          { title: 'Aprovação', render: (o) => el('div', {}, approvalTag(o.approvalStatus),
+          { title: 'Aprovação', render: (o) => el('div', {}, approvalTag(o.approvalStatus, o.controllershipStatus),
             o.clientDecisionDate ? el('div', { class: 'texto-fraco texto-pequeno' }, date(o.clientDecisionDate)) : null) },
           { title: 'Status', render: (o) => label(LABELS.orderStatus, o.status) },
         ],
@@ -95,10 +95,19 @@ export async function ordersScreen(target, _params, query) {
 // ---------------------------------------------------------------------
 
 export async function newOrderScreen(target) {
-  const [contracts, locations] = await Promise.all([
+  // Comercial: cargo do catálogo e valores comerciais no próprio pedido (fluxo integrado de 26/10/2026). O NACC, na
+  // carga inicial, segue escolhendo entre os cargos com valor já validado no contrato.
+  const commercial = hasRole(state.user, 'COMMERCIAL');
+  const canCreateJobRole = commercial && hasRole(state.user, 'ADMIN');
+  const [contracts, locations, catalogRoles] = await Promise.all([
     api.get('/api/contracts', { onlyActive: true }),
     api.get('/api/catalogs/work-locations'),
+    commercial ? api.get('/api/catalogs/job-roles') : [],
   ]);
+  const valuesArea = el('div', {});
+  const valuesNotice = el('div', {});
+  let approvedRate = null; // valor validado vigente para contrato + cargo na data de registro
+  let rateRequest = 0;
 
   const modalityArea = el('div', {});
   const jobRoleArea = el('div', {});
@@ -148,6 +157,87 @@ export async function newOrderScreen(target) {
       help: fixed ? 'Unidade contratante do contrato (fixa).' : contract?.clientId ? 'Unidades do cliente e locais gerais.' : null,
     }));
   }
+  /** Comercial: todos os cargos ativos do catálogo; o valor aprovado vigente, se houver, preenche os valores. */
+  function renderCatalogRoles(selected = '') {
+    const roleField = field({
+      name: 'jobRoleId',
+      label: 'Cargo',
+      type: 'select',
+      required: true,
+      value: selected,
+      options: [{ value: '', label: 'Selecione' },
+        ...catalogRoles.filter((j) => j.active).map((j) => ({ value: j.id, label: j.name }))],
+      help: canCreateJobRole ? null : 'Cargo fora da lista: peça o cadastro ao administrador.',
+    });
+    roleField.querySelector('select').addEventListener('change', () => loadRate());
+    clear(jobRoleArea).append(roleField,
+      ...(canCreateJobRole ? [el('div', { class: 'barra-botoes mb-16' }, button('+ Cadastrar cargo', openNewJobRole, 'secundario pequeno'))] : []));
+  }
+
+  function openNewJobRole() {
+    formModal({
+      title: 'Cadastrar cargo',
+      fields: [field({ name: 'name', label: 'Nome do cargo', required: true })],
+      submit: async (d) => {
+        requireFields(d, { name: 'O nome do cargo' });
+        const created = await api.post('/api/catalogs/job-roles', { name: d.name, active: true });
+        catalogRoles.push(created);
+        catalogRoles.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+        renderCatalogRoles(created.id);
+        toast(`Cargo ${created.name} cadastrado.`, 'sucesso');
+        await loadRate();
+      },
+    });
+  }
+
+  /** Valor mensal, fee e início da vigência; o valor aprovado vigente vem preenchido para conferência. */
+  function renderValues(rate) {
+    const registered = form ? formData(form).registeredAt : today();
+    clear(valuesArea).append(
+      el('div', { class: 'linha-campos' },
+        moneyField({ name: 'monthlyValue', label: 'Valor mensal de venda', value: rate?.monthlyValue ?? '',
+          help: 'Base do valor diário (÷30). Dispensado em contrato só de R&S.' }),
+        moneyField({ name: 'feeValue', label: 'Fee R&S (informativo)', value: rate?.feeValue ?? '' })),
+      field({ name: 'rateValidFrom', label: 'Início da vigência do valor', type: 'date', required: true,
+        value: rate?.validFrom ?? registered ?? today() }),
+    );
+  }
+
+  async function loadRate() {
+    if (!commercial) return;
+    const contractId = contractField.querySelector('select').value;
+    const jobRoleId = jobRoleArea.querySelector('select')?.value;
+    const request = ++rateRequest;
+    approvedRate = null;
+    if (!contractId || !jobRoleId) {
+      renderValues(null);
+      updatePreview();
+      return;
+    }
+    try {
+      const rate = await api.get('/api/contract-rates/current', {
+        contractId, jobRoleId, date: (form ? formData(form).registeredAt : null) || today() });
+      if (request !== rateRequest) return; // contrato, cargo ou data mudaram enquanto carregava
+      approvedRate = rate;
+      renderValues(rate);
+    } catch (error) {
+      if (request !== rateRequest) return;
+      renderValues(null);
+      clear(valuesNotice).append(el('div', { class: 'mensagem erro' }, error.message));
+      return;
+    }
+    updatePreview();
+  }
+
+  /** Sem valor aprovado, ou com qualquer valor diferente dele: o pedido vai para a Controladoria. */
+  function needsReview(d) {
+    if (!commercial || !d.contractId || !d.jobRoleId) return false;
+    if (!approvedRate) return true;
+    const n = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
+    return n(d.monthlyValue) !== n(approvedRate.monthlyValue) || n(d.feeValue) !== n(approvedRate.feeValue)
+      || d.rateValidFrom !== approvedRate.validFrom;
+  }
+
   /** Cargo: desabilitado até escolher o contrato; depois, só os cargos com valor validado nesse contrato. */
   function renderJobRoles(roles, placeholder) {
     const disabled = !roles?.length;
@@ -175,6 +265,10 @@ export async function newOrderScreen(target) {
   }
 
   async function loadJobRoles() {
+    if (commercial) {
+      await loadRate();
+      return;
+    }
     const contractId = contractField.querySelector('select').value;
     const request = ++jobRolesRequest;
     setNoJobRoles(false);
@@ -213,6 +307,9 @@ export async function newOrderScreen(target) {
       ? 'Carga inicial aberta: informe a data original do pedido, se for o caso.'
       : 'Padrão: hoje. Data anterior exige justificativa (RN-24).',
   });
+  // O valor aprovado considerado é o vigente na data de registro.
+  registeredField.querySelector('input').addEventListener('change', () => loadRate());
+  if (commercial) renderCatalogRoles();
 
   form = el(
     'form',
@@ -221,8 +318,9 @@ export async function newOrderScreen(target) {
     contractField,
     el('div', { class: 'linha-campos' }, modalityArea,
       field({ name: 'quantity', label: 'Quantidade', type: 'number', value: '1', required: true, attributes: { min: '1', max: '1000' } })),
-    jobRoleArea,
-    jobRoleNotice,
+    commercial
+      ? el('fieldset', {}, el('legend', {}, 'Cargo e valores comerciais'), jobRoleArea, valuesArea, valuesNotice)
+      : el('div', {}, jobRoleArea, jobRoleNotice),
     field({ name: 'jobDescription', label: 'Descrição da vaga', type: 'textarea',
       attributes: { maxlength: '4000', rows: '6' },
       help: 'Atividades, responsabilidades, requisitos e qualificações desejadas. Vale para todas as posições do pedido.' }),
@@ -246,15 +344,41 @@ export async function newOrderScreen(target) {
     justificationArea.classList.remove('oculto');
     if (!retroactive) justificationArea.classList.add('oculto');
 
+    const review = needsReview(data);
+    clear(valuesNotice);
+    if (commercial && data.contractId && data.jobRoleId) {
+      valuesNotice.append(!approvedRate
+        ? el('div', { class: 'mensagem alerta' },
+          el('strong', {}, 'Não há valor aprovado para este cargo no contrato.'),
+          'O pedido vai para a validação da Controladoria antes da aprovação do cliente.')
+        : review
+          ? el('div', { class: 'mensagem alerta' },
+            el('strong', {}, 'Valor diferente do aprovado vigente.'),
+            `Aprovado: ${money(approvedRate.monthlyValue)} desde ${date(approvedRate.validFrom)}. Alterado, o pedido vai para a `
+            + 'validação da Controladoria e o novo valor vira uma nova versão em Valores por cargo.',
+            data.rateValidFrom === approvedRate.validFrom
+              ? el('div', { style: { marginTop: '6px' } }, el('strong', {}, 'Informe o início da vigência do novo valor'),
+                `(a versão aprovada já vale desde ${date(approvedRate.validFrom)}).`)
+              : '')
+          : el('div', { class: 'mensagem info' },
+            el('strong', {}, `Valor aprovado vigente desde ${date(approvedRate.validFrom)}.`),
+            'Mantido sem alteração, o pedido segue direto para a aprovação do cliente.'));
+    }
+
     const items = [];
     for (let i = 1; i <= Math.min(quantity, 50); i++) {
       items.push(el('li', {}, `Posição ${i} · Vaga nova · início desejado ${date(data.desiredStartDate)} · ${label(LABELS.termType, data.termType)}`));
     }
     if (quantity > 50) items.push(el('li', { class: 'texto-fraco' }, `… e mais ${quantity - 50} posição(ões)`));
     clear(preview).append(
-      el('div', { class: 'mensagem info' },
-        el('strong', {}, 'O pedido nasce "Aguardando aprovação do cliente".'),
-        'O Comercial ou a Controladoria registra a aprovação; o SLA das posições começa nessa data. Todos os usuários são notificados.'),
+      review
+        ? el('div', { class: 'mensagem alerta' },
+          el('strong', {}, 'O pedido nasce "Aguardando aprovação da Controladoria".'),
+          'A Controladoria valida o cargo e os valores ou devolve para ajustes. Validado, o pedido segue para a aprovação do '
+          + 'cliente e todos os usuários são notificados; o SLA das posições começa na aprovação do cliente.')
+        : el('div', { class: 'mensagem info' },
+          el('strong', {}, 'O pedido nasce "Aguardando aprovação do cliente".'),
+          'O Comercial ou a Controladoria registra a aprovação; o SLA das posições começa nessa data. Todos os usuários são notificados.'),
       el('p', { class: 'texto-suave' }, `${quantity} posição(ões) serão criadas com status "Aberta".`),
       el('ul', { class: 'lista-previa' }, items),
     );
@@ -275,8 +399,9 @@ export async function newOrderScreen(target) {
       requireFields(d, {
         contractId: 'O contrato', modality: 'A modalidade', quantity: 'A quantidade', jobRoleId: 'O cargo',
         workLocationId: 'O local', clientRequestDate: 'A data da solicitação', desiredStartDate: 'O início desejado',
-        registeredAt: 'A data de registro',
+        registeredAt: 'A data de registro', ...(commercial ? { rateValidFrom: 'O início da vigência do valor' } : {}),
       });
+      const num = (v) => (orNull(v) === null ? null : Number(v));
       const order = await api.post('/api/orders', {
         contractId: d.contractId,
         modality: d.modality,
@@ -292,8 +417,11 @@ export async function newOrderScreen(target) {
         jobDescription: orNull(d.jobDescription),
         registeredAt: d.registeredAt,
         justification: orNull(d.justification),
+        ...(commercial ? { monthlyValue: num(d.monthlyValue), feeValue: num(d.feeValue), rateValidFrom: d.rateValidFrom } : {}),
       });
-      toast(`Pedido ${order.summary.number} criado com ${order.positions.length} posição(ões), aguardando a aprovação do cliente.`, 'sucesso');
+      toast(order.summary.approvalStatus === 'AWAITING_CONTROLLERSHIP'
+        ? `Pedido ${order.summary.number} criado com ${order.positions.length} posição(ões) e enviado para a validação da Controladoria.`
+        : `Pedido ${order.summary.number} criado com ${order.positions.length} posição(ões), aguardando a aprovação do cliente.`, 'sucesso');
       navigate(`/pedidos/${order.summary.id}`);
     } catch (error) {
       messageArea.append(applyErrors(form, error));
@@ -332,15 +460,25 @@ export async function orderDetailScreen(target, id, query) {
       o.canCorrectDates ? button('Corrigir datas', () => openCorrectDates(o, reload), 'secundario') : null,
     ];
 
-    clear(target).append(
+    // Painéis que não se aplicam ao perfil ou ao pedido ficam de fora (antes, o append nativo escrevia "null").
+    clear(target).append(...[
       panel(
         `Pedido ${s.number} · ${label(LABELS.orderStatus, s.status)}`,
         el(
           'div',
           {},
-          el('div', { class: 'barra-botoes mb-16' }, approvalTag(s.approvalStatus),
+          el('div', { class: 'barra-botoes mb-16' }, approvalTag(s.approvalStatus, s.controllershipStatus),
             s.awaitingRhAssignment ? el('span', { class: 'etiqueta amarela' }, 'Aguardando atribuição do RH') : null),
           s.isLegacy ? el('div', { class: 'mensagem info' }, 'Pedido criado automaticamente por desligamento avulso (D1).') : null,
+          s.approvalStatus === 'AWAITING_CONTROLLERSHIP'
+            ? el('div', { class: 'mensagem alerta' },
+              el('strong', {}, s.controllershipStatus === 'RETURNED'
+                ? 'Devolvido pela Controladoria para ajustes.'
+                : 'Aguardando aprovação da Controladoria.'),
+              s.controllershipStatus === 'RETURNED'
+                ? 'O Comercial ajusta o cargo ou os valores e reenvia. A aprovação do cliente e o atendimento do RH começam depois da validação.'
+                : 'A Controladoria valida o cargo e os valores comerciais ou devolve para ajustes. A aprovação do cliente e o atendimento do RH começam depois da validação.')
+            : null,
           awaiting
             ? el('div', { class: 'mensagem alerta' },
               el('strong', {}, 'Aguardando a aprovação do cliente.'),
@@ -378,6 +516,7 @@ export async function orderDetailScreen(target, id, query) {
         ),
         actions.filter(Boolean).length ? actions : null,
       ),
+      o.values || o.controllership ? reviewPanel(o, reload) : null,
       rhPanel(o, reload),
       jobconvoPanel(o, reload),
       o.candidateImport ? sheetImportPanel(o, reload, 'candidates') : null,
@@ -387,13 +526,131 @@ export async function orderDetailScreen(target, id, query) {
         ? el('div', { class: 'texto-livre' }, o.jobDescription)
         : el('p', { class: 'texto-fraco mb-0' }, 'Nenhuma descrição informada.')),
       panelNoPadding('Posições', slotsTable(o, highlightStale)),
-    );
+    ].filter(Boolean));
   }
 
   clear(target).append(loading());
   await reload();
   if (openBatch && current.firstDayBatch?.items.length) openFirstDayBatch(current, reload);
   if (openAdmissions && current.admissionImport?.pending) openSheetImport(current, reload, SHEET_IMPORTS.admissions);
+}
+
+// ---------------------------------------------------------------------
+// Cargo e valores comerciais; validação da Controladoria
+// ---------------------------------------------------------------------
+
+const REVIEW_ACTIONS = {
+  SUBMITTED: ['Enviado à Controladoria', ''],
+  RETURNED: ['Devolvido para ajustes', 'devolver'],
+  RESUBMITTED: ['Ajustado e reenviado', ''],
+  VALIDATED: ['Validado pela Controladoria', 'aprovar'],
+};
+
+function reviewPanel(o, reload) {
+  const v = o.values;
+  const c = o.controllership;
+  const valueText = (x) => [x.monthlyValue !== null && x.monthlyValue !== undefined ? `${money(x.monthlyValue)} mensais` : null,
+    x.feeValue !== null && x.feeValue !== undefined ? `fee ${money(x.feeValue)}` : null,
+    x.validFrom ? `vigência a partir de ${date(x.validFrom)}` : null].filter(Boolean).join(' · ');
+  const actions = [
+    c?.canDecide ? button('Validar', () => openValidateReview(o, reload), 'sucesso') : null,
+    c?.canDecide ? button('Devolver para ajustes', () => openReturnReview(o, reload), 'perigo') : null,
+    c?.canResubmit ? button('Ajustar e reenviar', () => openResubmitReview(o, reload)) : null,
+  ].filter(Boolean);
+  return panel(
+    'Cargo e valores comerciais',
+    el('div', {},
+      c?.authorBlocked
+        ? el('div', { class: 'mensagem info' }, 'Você criou ou ajustou este pedido: a validação cabe a outra pessoa da Controladoria.')
+        : null,
+      c?.status === 'RETURNED' && c.reason
+        ? el('div', { class: 'mensagem erro' }, el('strong', {}, 'Motivo da devolução'), c.reason)
+        : null,
+      v ? el('div', { class: 'detalhe-grade' },
+        detail('Cargo', v.jobRoleName),
+        detail('Valor mensal', money(v.monthlyValue)),
+        detail('Valor diário (÷30)', money(v.dailyValue)),
+        detail('Fee R&S (informativo)', money(v.feeValue)),
+        detail('Início da vigência', date(v.validFrom)),
+        detail('Situação do valor', rateTag(v.status))) : null,
+      c ? el('div', {},
+        el('h3', { class: 'grafico-titulo', style: { marginTop: '18px' } }, 'Validação da Controladoria'),
+        el('ul', { class: 'linha-tempo' }, ...[...c.history].reverse().map((h) => el('li', { class: REVIEW_ACTIONS[h.action]?.[1] ?? '' },
+          el('div', {}, el('span', { class: 'quem' }, REVIEW_ACTIONS[h.action]?.[0] ?? h.action), h.userName ? ` · ${h.userName}` : ''),
+          el('div', { class: 'quando' }, dateTime(h.occurredAt)),
+          h.jobRoleName || h.validFrom
+            ? el('div', { class: 'texto-pequeno' }, [h.jobRoleName, valueText(h)].filter(Boolean).join(' · '))
+            : null,
+          h.reason ? el('div', { class: 'motivo' }, h.reason) : null))))
+        : el('p', { class: 'texto-fraco texto-pequeno mb-0' },
+          'Pedido criado com o valor já validado em Valores por cargo: não precisou da validação da Controladoria.'),
+    ),
+    actions.length ? actions : null,
+  );
+}
+
+function openValidateReview(order, reload) {
+  const s = order.summary;
+  formModal({
+    title: `Validar pedido ${s.number}`,
+    submitText: 'Validar',
+    intro: el('p', {}, `Validar o cargo ${order.values?.jobRoleName ?? s.jobRoleName} e os valores comerciais? `
+      + 'O valor entra em Valores por cargo e o pedido segue para a aprovação do cliente; todos os usuários são notificados.'),
+    fields: [],
+    submit: async () => {
+      const updated = await api.post(`/api/orders/${s.id}/controllership-validation`);
+      toast('Pedido validado: segue para a aprovação do cliente.', 'sucesso');
+      reload(updated);
+    },
+  });
+}
+
+function openReturnReview(order, reload) {
+  const s = order.summary;
+  formModal({
+    title: `Devolver pedido ${s.number} para ajustes`,
+    danger: true,
+    submitText: 'Devolver',
+    intro: el('p', {}, 'O Comercial é notificado com o motivo, ajusta o cargo ou os valores e reenvia a mesma solicitação.'),
+    fields: [field({ name: 'reason', label: 'Motivo da devolução', type: 'textarea', required: true })],
+    submit: async (d) => {
+      requireFields(d, { reason: 'O motivo' });
+      const updated = await api.post(`/api/orders/${s.id}/controllership-return`, { reason: d.reason });
+      toast('Pedido devolvido ao Comercial.', 'sucesso');
+      reload(updated);
+    },
+  });
+}
+
+async function openResubmitReview(order, reload) {
+  const s = order.summary;
+  const roles = (await api.get('/api/catalogs/job-roles')).filter((j) => j.active || j.id === order.jobRoleId);
+  const v = order.values ?? {};
+  formModal({
+    title: `Ajustar e reenviar o pedido ${s.number}`,
+    intro: order.controllership?.reason
+      ? el('div', { class: 'mensagem erro' }, el('strong', {}, 'Motivo da devolução'), order.controllership.reason)
+      : null,
+    fields: [
+      field({ name: 'jobRoleId', label: 'Cargo', type: 'select', required: true, value: order.jobRoleId,
+        options: [{ value: '', label: 'Selecione' }, ...roles.map((j) => ({ value: j.id, label: j.name }))] }),
+      el('div', { class: 'linha-campos' },
+        moneyField({ name: 'monthlyValue', label: 'Valor mensal de venda', value: v.monthlyValue ?? '',
+          help: 'Base do valor diário (÷30). Dispensado em contrato só de R&S.' }),
+        moneyField({ name: 'feeValue', label: 'Fee R&S (informativo)', value: v.feeValue ?? '' })),
+      field({ name: 'rateValidFrom', label: 'Início da vigência do valor', type: 'date', required: true, value: v.validFrom ?? today() }),
+    ],
+    submitText: 'Reenviar à Controladoria',
+    submit: async (d) => {
+      requireFields(d, { jobRoleId: 'O cargo', rateValidFrom: 'O início da vigência do valor' });
+      const num = (x) => (orNull(x) === null ? null : Number(x));
+      const updated = await api.post(`/api/orders/${s.id}/controllership-resubmission`, {
+        jobRoleId: d.jobRoleId, monthlyValue: num(d.monthlyValue), feeValue: num(d.feeValue), rateValidFrom: d.rateValidFrom,
+      });
+      toast('Pedido reenviado para a validação da Controladoria.', 'sucesso');
+      reload(updated);
+    },
+  });
 }
 
 /** Quantidade vigente e a composição: solicitada no registro, acréscimos e reduções do quadro. */

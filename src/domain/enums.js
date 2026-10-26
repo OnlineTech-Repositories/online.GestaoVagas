@@ -20,8 +20,15 @@ export const PositionStatus = values(
 
 /** Calculado, não persistido. */
 export const OrderStatus = values('IN_PROGRESS', 'FULFILLED', 'CANCELLED');
-/** Aprovação formal do pedido pelo cliente: todo pedido nasce aguardando. */
-export const OrderApprovalStatus = values('AWAITING_CLIENT_APPROVAL', 'APPROVED', 'NOT_APPROVED');
+/**
+ * Aprovação formal do pedido pelo cliente: todo pedido nasce aguardando. Com valor por cargo novo ou alterado, antes
+ * passa pela validação da Controladoria (AWAITING_CONTROLLERSHIP; fluxo integrado de 26/10/2026).
+ */
+export const OrderApprovalStatus = values('AWAITING_CONTROLLERSHIP', 'AWAITING_CLIENT_APPROVAL', 'APPROVED', 'NOT_APPROVED');
+/** Solicitação de validação do pedido pela Controladoria (vazia quando o pedido usou o valor já validado). */
+export const ControllershipStatus = values('PENDING', 'RETURNED', 'VALIDATED');
+/** Histórico da solicitação: envio, devolução para ajustes, reenvio e validação. */
+export const OrderReviewAction = values('SUBMITTED', 'RETURNED', 'RESUBMITTED', 'VALIDATED');
 export const CandidateSex = values('FEMALE', 'MALE', 'NOT_INFORMED');
 /** FIRST_DAY: comparecimento no 1º dia. HEADCOUNT_REDUCTION: solicitação do cliente para reduzir o quadro. */
 export const EvidenceKind = values('FIRST_DAY', 'HEADCOUNT_REDUCTION');
@@ -137,6 +144,7 @@ export const Labels = Object.freeze({
   },
   demandType: { NEW: 'Vaga nova', REPLACEMENT: 'Reposição' },
   approvalStatus: {
+    AWAITING_CONTROLLERSHIP: 'Aguardando aprovação da Controladoria',
     AWAITING_CLIENT_APPROVAL: 'Aguardando aprovação do cliente',
     APPROVED: 'Aprovado',
     NOT_APPROVED: 'Não aprovado',
@@ -165,6 +173,8 @@ export const NotificationTypes = Object.freeze({
   OrderPositionsStale: 'ORDER_POSITIONS_STALE',
   FirstDayPending: 'FIRST_DAY_PENDING',
   AdmissionPending: 'ADMISSION_PENDING',
+  OrderReviewPending: 'ORDER_REVIEW_PENDING',
+  OrderReviewReturned: 'ORDER_REVIEW_RETURNED',
 });
 
 /** Alertas da rotina diária registrados em position_alerts (um por posição; vaga parada, um por período parado). */

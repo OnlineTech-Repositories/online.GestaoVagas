@@ -1329,3 +1329,59 @@ test('Revisão geral (S1, F1): trocar de tela fecha a janela aberta; o lote do 1
   const pending = await apiModule.api.get('/api/positions/first-day-pending');
   if (pending.groups.length) assert.ok([...asNacc.querySelectorAll('button')].some((b) => /Confirmar em lote/.test(b.textContent)), 'NACC confirma');
 });
+
+test('Pedido com valores comerciais: o valor aprovado vem preenchido, alterar avisa a validação e a Controladoria decide no pedido', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const contracts = await apiModule.api.get('/api/contracts', { onlyActive: true });
+  let contract;
+  let role;
+  for (const c of contracts.filter((x) => x.contractingUnitId)) {
+    [role] = await apiModule.api.get('/api/orders/job-roles', { contractId: c.id });
+    if (role) { contract = c; break; }
+  }
+  const root = await open('/pedidos/novo', 'Novo pedido');
+  assert.match(root.textContent, /Cargo e valores comerciais/);
+  const pick = (name, value) => {
+    const select = root.querySelector(`[data-campo="${name}"]`).querySelector('select');
+    select.value = value;
+    select.dispatchEvent(new Event('change'));
+  };
+  pick('contractId', contract.id);
+  pick('jobRoleId', role.id);
+  await wait(150);
+  const rate = await apiModule.api.get('/api/contract-rates/current', { contractId: contract.id, jobRoleId: role.id, date: ui.today() });
+  const form = root.querySelector('form');
+  assert.equal(Number(form.querySelector('input[name="monthlyValue"]').value), Number(rate.monthlyValue), 'valor aprovado preenchido');
+  assert.match(root.textContent, /Valor aprovado vigente desde/);
+  assert.match(root.textContent, /nasce "Aguardando aprovação do cliente"/);
+  form.querySelector('input[name="monthlyValue"]').value = String(Number(rate.monthlyValue) + 1);
+  form.dispatchEvent(new Event('input'));
+  assert.match(root.textContent, /Valor diferente do aprovado vigente/);
+  assert.match(root.textContent, /nasce "Aguardando aprovação da Controladoria"/);
+
+  // Pedido enviado à Controladoria: o bloco mostra os valores e o histórico; a Controladoria valida no próprio pedido.
+  const created = await apiModule.api.post('/api/orders', {
+    contractId: contract.id, modality: contract.modalities[0], jobRoleId: role.id, quantity: 1, workLocationId: contract.contractingUnitId,
+    clientRequestDate: ui.today(), desiredStartDate: ui.today(), termType: 'INDEFINITE', registeredAt: ui.today(),
+    monthlyValue: Number(rate.monthlyValue) + 1, feeValue: rate.feeValue, rateValidFrom: ui.today(),
+  });
+  assert.equal(created.summary.approvalStatus, 'AWAITING_CONTROLLERSHIP');
+  const rates = await open('/valores', 'Valores por cargo');
+  assert.match(rates.textContent, new RegExp(`Pedido ${created.summary.number} · em validação no pedido`));
+
+  await signIn('controladoria@demo.local');
+  const detail = await open(`/pedidos/${created.summary.id}`, 'Pedido');
+  assert.match(detail.textContent, /Aguardando aprovação da Controladoria/);
+  assert.match(detail.textContent, /Validação da Controladoria/);
+  assert.match(detail.textContent, /Enviado à Controladoria · Carla Comercial/);
+  assert.ok(![...detail.querySelectorAll('button')].some((b) => b.textContent === 'Registrar aprovação do cliente'));
+  [...detail.querySelectorAll('button')].find((b) => b.textContent === 'Validar').click();
+  const area = document.getElementById('modal-area');
+  assert.match(area.textContent, /segue para a aprovação do cliente/);
+  [...area.querySelectorAll('button')].find((b) => b.textContent === 'Validar').click();
+  await wait(200);
+  const validated = document.getElementById('app');
+  assert.match(validated.textContent, /Validado pela Controladoria · Clara Controladoria/);
+  assert.ok([...validated.querySelectorAll('button')].some((b) => b.textContent === 'Registrar aprovação do cliente'));
+});

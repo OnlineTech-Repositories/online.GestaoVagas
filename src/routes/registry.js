@@ -4,7 +4,7 @@ import * as catalogs from '../services/catalogs.js';
 import { getContractDto, listClients, listContracts, saveClient, saveContract } from '../services/clients.js';
 import { routeId } from '../services/input.js';
 import { listParameters, updateParameter } from '../services/parameters.js';
-import { createRate, listRates, rejectRate, updateRate, validateRate } from '../services/rates.js';
+import { createRate, currentRate, listRates, rejectRate, updateRate, validateRate } from '../services/rates.js';
 import { createUser, listByRole, listUsers, resetPassword, updateUser } from '../services/users.js';
 import { RateStatus } from '../domain/enums.js';
 import { ID, idParam } from './helpers.js';
@@ -32,6 +32,8 @@ rateRoutes.get('/', json((req) => listRates(req.ctx, {
   contractId: routeId(req.query.contractId),
   status: Object.values(RateStatus).find((s) => s === String(req.query.status ?? '').toUpperCase()) ?? null,
 })));
+// Valor validado vigente (contrato + cargo + data), para preencher o pedido.
+rateRoutes.get('/current', json((req) => currentRate(req.ctx, req.query)));
 rateRoutes.post('/', json((req) => createRate(req.ctx, req.body)));
 rateRoutes.put(`/:id${ID}`, json((req) => updateRate(req.ctx, idParam(req), req.body)));
 rateRoutes.post(`/:id${ID}/validate`, json((req) => validateRate(req.ctx, idParam(req))));

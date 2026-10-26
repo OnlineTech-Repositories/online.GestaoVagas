@@ -12,6 +12,7 @@ import {
   recordJobconvo, reducePositions, rejectOrder, setRhAnalysts,
 } from '../services/orders.js';
 import { routeId } from '../services/input.js';
+import { resubmitOrderReview, returnOrderReview, validateOrderReview } from '../services/order-review.js';
 import { ID, idParam, queryOf } from './helpers.js';
 
 export const orderRoutes = Router();
@@ -32,6 +33,10 @@ orderRoutes.post('/', route(async (req, res) => {
 }));
 
 orderRoutes.put(`/:id${ID}/rh-analysts`, route(async (req, res) => res.json(await setRhAnalysts(req.ctx, idParam(req), req.body))));
+// Validação da Controladoria (cargo e valores comerciais do pedido).
+orderRoutes.post(`/:id${ID}/controllership-validation`, route(async (req, res) => res.json(await validateOrderReview(req.ctx, idParam(req)))));
+orderRoutes.post(`/:id${ID}/controllership-return`, route(async (req, res) => res.json(await returnOrderReview(req.ctx, idParam(req), req.body))));
+orderRoutes.post(`/:id${ID}/controllership-resubmission`, route(async (req, res) => res.json(await resubmitOrderReview(req.ctx, idParam(req), req.body))));
 orderRoutes.post(`/:id${ID}/approval`, route(async (req, res) => res.json(await approveOrder(req.ctx, idParam(req), req.body))));
 orderRoutes.post(`/:id${ID}/rejection`, route(async (req, res) => res.json(await rejectOrder(req.ctx, idParam(req), req.body))));
 orderRoutes.post(`/:id${ID}/jobconvo`, route(async (req, res) => res.json(await recordJobconvo(req.ctx, idParam(req), req.body))));

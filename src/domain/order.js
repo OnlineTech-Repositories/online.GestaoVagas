@@ -15,9 +15,19 @@ export const isApproved = (o) => o.approvalStatus === A.APPROVED;
 export const activeRhAnalysts = (o) =>
   (o.rhAnalysts ?? []).filter((a) => !a.removedAt).sort((a, b) => a.userName.localeCompare(b.userName, 'pt-BR'));
 
-/** "Aguardando atribuição do RH": pedido em andamento, com posição aberta e sem analista responsável. */
-export const awaitingRhAssignment = (o) =>
-  o.approvalStatus !== A.NOT_APPROVED && (o.positions ?? []).some(isOpen) && activeRhAnalysts(o).length === 0;
+/**
+ * "Aguardando atribuição do RH": pedido em andamento, com posição aberta e sem analista responsável. O pedido ainda
+ * em validação pela Controladoria não conta: o RH só é avisado depois da validação.
+ */
+export const awaitingRhAssignment = (o) => o.approvalStatus !== A.NOT_APPROVED && o.approvalStatus !== A.AWAITING_CONTROLLERSHIP
+  && (o.positions ?? []).some(isOpen) && activeRhAnalysts(o).length === 0;
+
+/** Antes da validação da Controladoria o pedido não chega ao RH (nem ao cliente). */
+function ensureNotInControllership(o) {
+  if (o.approvalStatus === A.AWAITING_CONTROLLERSHIP) {
+    throw new BusinessRuleError('O pedido aguarda a validação da Controladoria: o atendimento do RH começa depois dela.');
+  }
+}
 
 /** Uma posição por vaga: o ciclo atual de cada uma (reposições substituem o ciclo anterior). */
 export const currentPositions = (o) => (o.positions ?? []).filter(isCurrentCycle);
@@ -67,6 +77,7 @@ export function recordJobconvo(o, published, code, publishedAt, notes, recordedB
   if (o.approvalStatus === A.NOT_APPROVED) {
     throw new BusinessRuleError('O cliente não aprovou este pedido: não há recrutamento a registrar.');
   }
+  ensureNotInControllership(o);
   const cleanNotes = notes?.trim() ? notes.trim() : null;
   if (published) {
     if (!code?.trim()) throw new BusinessRuleError('Informe o código da vaga no JobConvo.', 'code');
@@ -93,6 +104,7 @@ export function setRhAnalysts(o, analysts, changedBy, changedAt) {
   if (o.approvalStatus === A.NOT_APPROVED) {
     throw new BusinessRuleError('O cliente não aprovou este pedido: não há atendimento a distribuir.');
   }
+  ensureNotInControllership(o);
   const wanted = [...new Map(analysts.map((a) => [a.id, a])).values()];
   const removed = o.rhAnalysts.filter((a) => !a.removedAt && !wanted.some((w) => w.id === a.userId));
   for (const a of removed) {
@@ -109,6 +121,9 @@ export function setRhAnalysts(o, analysts, changedBy, changedAt) {
 }
 
 function ensureAwaitingApproval(o) {
+  if (o.approvalStatus === A.AWAITING_CONTROLLERSHIP) {
+    throw new BusinessRuleError('O pedido aguarda a validação da Controladoria: a decisão do cliente é registrada depois dela.');
+  }
   if (o.approvalStatus !== A.AWAITING_CLIENT_APPROVAL) {
     throw new BusinessRuleError(`O pedido já está "${Labels.approvalStatus[o.approvalStatus]}".`);
   }
@@ -136,6 +151,12 @@ export function newOrder(props) {
     termDurationDays: null,
     positions: [],
     rhAnalysts: [],
+    reviews: [],
+    rateId: null,
+    controllershipStatus: null,
+    controllershipDecidedAt: null,
+    controllershipDecidedBy: null,
+    controllershipReason: null,
     ...props,
   });
 }

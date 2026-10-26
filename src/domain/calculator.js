@@ -90,7 +90,9 @@ export const registrationTime = (p) => (p.demandType === DemandType.NEW && p.ord
 export function approvalWaitTime(p, today) {
   if (p.demandType !== DemandType.NEW || !p.order || p.order.isLegacy) return null;
   const order = p.order;
-  const end = order.clientDecisionDate ?? (order.approvalStatus === OrderApprovalStatus.AWAITING_CLIENT_APPROVAL ? today : null);
+  const awaiting = order.approvalStatus === OrderApprovalStatus.AWAITING_CLIENT_APPROVAL
+    || order.approvalStatus === OrderApprovalStatus.AWAITING_CONTROLLERSHIP;
+  const end = order.clientDecisionDate ?? (awaiting ? today : null);
   return end ? Math.max(0, diffDays(order.registeredAt, end)) : null;
 }
 

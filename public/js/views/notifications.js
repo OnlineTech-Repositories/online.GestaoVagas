@@ -2,7 +2,8 @@ import { api } from '../api.js';
 import { el, clear, panelNoPadding, loading, dateTime, toast, button } from '../ui.js';
 import { navigate, updateCounters } from '../app.js';
 
-const ORDER_TYPES = ['ORDER_CREATED', 'ORDER_APPROVED', 'ORDER_NOT_APPROVED', 'RH_ASSIGNED', 'RH_UNASSIGNED'];
+const ORDER_TYPES = ['ORDER_CREATED', 'ORDER_APPROVED', 'ORDER_NOT_APPROVED', 'RH_ASSIGNED', 'RH_UNASSIGNED',
+  'ORDER_REVIEW_PENDING', 'ORDER_REVIEW_RETURNED'];
 /** Aviso consolidado de posições paradas: abre o pedido com elas em destaque. */
 const ORDER_STALE = 'ORDER_POSITIONS_STALE';
 const RATE_TYPES = ['RATE_PENDING', 'RATE_REJECTED', 'RATE_VALIDATED'];
@@ -11,6 +12,8 @@ const TITLES = {
   ORDER_CREATED: 'Novo pedido aguardando aprovação',
   ORDER_APPROVED: 'Pedido aprovado pelo cliente',
   ORDER_NOT_APPROVED: 'Pedido não aprovado pelo cliente',
+  ORDER_REVIEW_PENDING: 'Pedido aguardando validação da Controladoria',
+  ORDER_REVIEW_RETURNED: 'Pedido devolvido pela Controladoria',
   RH_ASSIGNED: 'Você é responsável por um pedido',
   RH_UNASSIGNED: 'Você não é mais responsável por um pedido',
   TERMINATION_REGISTERED: 'Desligamento registrado',

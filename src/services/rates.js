@@ -3,15 +3,33 @@ import { entity } from '../db/model.js';
 import { attachRateRefs, getById, getContract, listWithoutRate, userNames } from '../db/repository.js';
 import { formatBr, utcNow } from '../domain/dates.js';
 import { BusinessRuleError, ForbiddenError, NotFoundError } from '../domain/errors.js';
-import { Modality, NotificationTypes, RateStatus, Roles } from '../domain/enums.js';
+import { Modality, NotificationTypes, OrderApprovalStatus, RateStatus, Roles } from '../domain/enums.js';
 import { DateGuard, Permissions } from '../domain/guards.js';
 import { Input } from './input.js';
 import { rateFields } from './notice-fields.js';
 import { links, notify } from './notifications.js';
+import { validatedRateAt } from './snapshots.js';
 
 /** Valores por cargo, versionados. Segregação obrigatória: COMMERCIAL cadastra, só CONTROLLERSHIP valida. */
 
-const round2 = (v) => (v === null ? null : Math.round(v * 100) / 100);
+export const round2 = (v) => (v === null || v === undefined ? null : Math.round(v * 100) / 100);
+
+/** Valor mensal obrigatório, exceto em contrato só de R&S; valores positivos (o fee pode ser zero). */
+export function checkRateValues(contract, monthlyValue, feeValue) {
+  const onlyRs = contract.modalities.every((m) => m === Modality.RS);
+  if (!onlyRs && monthlyValue === null) throw new BusinessRuleError('Informe o valor mensal.', 'monthlyValue');
+  if ((monthlyValue !== null && monthlyValue <= 0) || (feeValue !== null && feeValue < 0)) {
+    throw new BusinessRuleError('Os valores devem ser positivos.', 'monthlyValue');
+  }
+}
+
+/** Valor proposto por um pedido ainda em validação: decide-se no próprio pedido (fluxo integrado de 26/10/2026). */
+function ensureNotInOrderReview(rate) {
+  if (rate.originOrder?.approvalStatus === OrderApprovalStatus.AWAITING_CONTROLLERSHIP) {
+    throw new BusinessRuleError(`Este valor faz parte do pedido ${rate.originOrder.number}, em validação pela Controladoria: `
+      + 'valide, devolva ou ajuste pelo próprio pedido.');
+  }
+}
 
 export async function listRates(ctx, { contractId = null, status = null } = {}) {
   if (!Permissions.canSeeDetailedValues(ctx.user)) throw new ForbiddenError();
@@ -55,6 +73,7 @@ export async function updateRate(ctx, id, body) {
   if (rate.status === RateStatus.VALIDATED) {
     throw new BusinessRuleError('Valor já validado não pode ser alterado. Cadastre uma nova versão com outra data de vigência.');
   }
+  ensureNotInOrderReview(rate);
   const input = new Input(body);
   const contractId = input.id('contractId');
   const jobRoleId = input.id('jobRoleId');
@@ -142,6 +161,7 @@ async function loadPending(ctx, id) {
   if (rate.status !== RateStatus.PENDING) {
     throw new BusinessRuleError('Somente valores pendentes podem ser validados ou rejeitados.');
   }
+  ensureNotInOrderReview(rate);
   // Segregação (seção 4): quem cadastra valores não os valida — vale também para quem corrigiu a versão em análise.
   if (authorsOf(rate).includes(ctx.user.id)) {
     throw new ForbiddenError('Quem cadastrou ou corrigiu o valor não pode validá-lo nem rejeitá-lo.');
@@ -156,7 +176,7 @@ async function loadPending(ctx, id) {
  */
 const authorsOf = (rate) => [...new Set([rate.createdBy, rate.updatedBy].filter(Boolean))];
 
-const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+export const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 
 /** "Estoquista no contrato CT-2026-X-001 (R$ 3.000,00 mensais, vigência a partir de 01/11/2026)". */
 function describeRate(rate) {
@@ -179,11 +199,7 @@ async function apply(ctx, rate, body, exceptId) {
   if (!contract) throw new BusinessRuleError('Contrato não encontrado.', 'contractId');
   const jobRole = await getById(ctx.uow, 'JobRole', 'job_roles', jobRoleId);
   if (!jobRole) throw new BusinessRuleError('Cargo não encontrado.', 'jobRoleId');
-  const onlyRs = contract.modalities.every((m) => m === Modality.RS);
-  if (!onlyRs && monthlyValue === null) throw new BusinessRuleError('Informe o valor mensal.', 'monthlyValue');
-  if ((monthlyValue !== null && monthlyValue <= 0) || (feeValue !== null && feeValue < 0)) {
-    throw new BusinessRuleError('Os valores devem ser positivos.', 'monthlyValue');
-  }
+  checkRateValues(contract, monthlyValue, feeValue);
   const clash = await queryOne(
     'SELECT id FROM contract_rates WHERE contract_id = ? AND job_role_id = ? AND valid_from = ? AND id <> ?',
     contractId, jobRoleId, validFrom, exceptId ?? '');
@@ -235,11 +251,29 @@ async function toDtos(rates) {
     validatedByName: r.validatedBy ? names.get(r.validatedBy) ?? null : null,
     validatedAt: r.validatedAt,
     rejectionReason: r.rejectionReason,
+    // Valor proposto num pedido: em validação, as ações ficam no pedido.
+    order: r.originOrder ? {
+      id: r.originOrder.id,
+      number: r.originOrder.number,
+      inReview: r.originOrder.approvalStatus === OrderApprovalStatus.AWAITING_CONTROLLERSHIP,
+    } : null,
   }));
 }
 
+/** Valor validado vigente para contrato + cargo na data, para preencher o pedido (null se não houver). */
+export async function currentRate(ctx, q) {
+  if (!Permissions.canSeeDetailedValues(ctx.user)) throw new ForbiddenError();
+  const input = new Input(q);
+  const contractId = input.id('contractId', { message: 'Selecione o contrato.' });
+  const jobRoleId = input.id('jobRoleId', { message: 'Selecione o cargo.' });
+  const date = input.date('date');
+  input.done();
+  const rate = await validatedRateAt(ctx.uow, contractId, jobRoleId, date);
+  return rate ? (await toDtos(await attachRateRefs(ctx.uow, [rate])))[0] : null;
+}
+
 /** RN-20: valor diário = mensal / 30, arredondado a centavos (meio para o par, como o decimal do .NET). */
-function dailyOf(monthly) {
+export function dailyOf(monthly) {
   const cents = Math.round(monthly * 100);
   const q = Math.floor(cents / 30);
   const r = cents - q * 30;

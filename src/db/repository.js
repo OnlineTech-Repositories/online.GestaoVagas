@@ -58,9 +58,13 @@ export async function attachRateRefs(uow, rates) {
   const contracts = uow.loadAll('Contract', await rowsIn('contracts', 'id', rates.map((r) => r.contractId)));
   await attachContractRefs(uow, contracts);
   const roles = uow.loadAll('JobRole', await rowsIn('job_roles', 'id', rates.map((r) => r.jobRoleId)));
+  // Pedido que propôs o valor (fluxo integrado): só número e situação, sem carregar o pedido inteiro.
+  const orders = await rowsIn('orders', 'id', rates.map((r) => r.orderId).filter(Boolean));
   for (const r of rates) {
     r.contract = contracts.find((c) => c.id === r.contractId) ?? null;
     r.jobRole = roles.find((j) => j.id === r.jobRoleId) ?? null;
+    const order = orders.find((o) => o.id === r.orderId);
+    r.originOrder = order ? { id: order.id, number: Number(order.number), approvalStatus: order.approval_status } : null;
   }
   return rates;
 }
@@ -84,11 +88,20 @@ async function attachOrderRefs(uow, orders) {
   const locations = uow.loadAll('WorkLocation', await rowsIn('work_locations', 'id', orders.map((o) => o.workLocationId)));
   const analysts = uow.loadAll('OrderRhAnalyst', await rowsIn('order_rh_analysts', 'order_id', orders.map((o) => o.id),
     'ORDER BY assigned_at, id'));
+  const reviews = uow.loadAll('OrderReview', await rowsIn('order_reviews', 'order_id', orders.map((o) => o.id),
+    'ORDER BY occurred_at, id'));
+  const rates = uow.loadAll('ContractRate', await rowsIn('contract_rates', 'id', orders.map((o) => o.rateId).filter(Boolean)));
   for (const o of orders) {
     o.contract = contracts.find((c) => c.id === o.contractId) ?? null;
     o.jobRole = roles.find((j) => j.id === o.jobRoleId) ?? null;
     o.workLocation = locations.find((l) => l.id === o.workLocationId) ?? null;
     o.rhAnalysts = analysts.filter((a) => a.orderId === o.id);
+    o.reviews = reviews.filter((r) => r.orderId === o.id);
+    o.rate = rates.find((r) => r.id === o.rateId) ?? null;
+    if (o.rate) {
+      o.rate.contract ??= o.contract;
+      o.rate.jobRole ??= roles.find((j) => j.id === o.rate.jobRoleId) ?? null;
+    }
   }
   return orders;
 }

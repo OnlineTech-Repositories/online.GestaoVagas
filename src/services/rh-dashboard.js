@@ -121,7 +121,9 @@ export async function getRhDashboard(ctx, query) {
   }
 
   // Escopo: pedidos em andamento (alguma vaga pendente) ou também os concluídos; período pela solicitação do cliente.
+  // Pedido em validação pela Controladoria ainda não chegou ao RH.
   const scoped = [...byOrder.values()].filter(({ order, rows }) => order.approvalStatus !== OrderApprovalStatus.NOT_APPROVED
+    && order.approvalStatus !== OrderApprovalStatus.AWAITING_CONTROLLERSHIP
     && (filters.includeConcluded || rows.some((r) => r.stage !== RhStage.FILLED))
     && (!filters.from || order.clientRequestDate >= filters.from)
     && (!filters.to || order.clientRequestDate <= filters.to));

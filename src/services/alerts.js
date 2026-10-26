@@ -35,6 +35,11 @@ export function nextAction(p) {
   if (p.status === S.AWAITING_CONFIRMATION) return { label: 'NACC: registrar a decisão do cliente (repor ou não)', roles: [Roles.Nacc] };
   if (p.status === S.AWAITING_FIRST_DAY) return { label: 'NACC: confirmar o 1º dia', roles: [Roles.Nacc] };
   if (p.status === S.PAUSED || !order) return null;
+  if (order.approvalStatus === OrderApprovalStatus.AWAITING_CONTROLLERSHIP) {
+    return order.controllershipStatus === 'RETURNED'
+      ? { label: 'Comercial: ajustar o pedido e reenviar à Controladoria', roles: [], userIds: [order.createdBy].filter(Boolean) }
+      : { label: 'Controladoria: validar o cargo e os valores do pedido', roles: [Roles.Controllership] };
+  }
   if (order.approvalStatus === OrderApprovalStatus.AWAITING_CLIENT_APPROVAL) {
     return { label: 'Comercial: registrar a aprovação do cliente', roles: [], userIds: [order.contract?.commercialOwnerId].filter(Boolean) };
   }

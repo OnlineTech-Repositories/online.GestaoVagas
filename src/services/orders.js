@@ -26,6 +26,7 @@ import { toSummary } from './position-views.js';
 import { DateReview } from './date-review.js';
 import { orderFields } from './notice-fields.js';
 import { slaFor, validatedRateAt } from './snapshots.js';
+import { inReview, notifyReviewPending, readCommercialValues, resolveOrderRate, reviewDto, startReview } from './order-review.js';
 
 /** Pedidos: criação (RN-01 a RN-05), aprovação do cliente, JobConvo, analistas de RH e correção de datas. */
 
@@ -53,6 +54,8 @@ export async function createOrder(ctx, body) {
     justification: input.text('justification'),
     jobDescription: input.text('jobDescription'),
   };
+  // Cargo e valores comerciais (fluxo integrado de 26/10/2026): só o Comercial informa; sem eles, vale o validado.
+  const values = readCommercialValues(input);
   input.done();
 
   const today = todayDate();
@@ -89,12 +92,9 @@ export async function createOrder(ctx, body) {
   const review = new DateReview(ctx);
   const retroactive = await review.retroactive(registeredAt, 'A data de registro', r.justification);
 
-  // Valores por cargo são do contrato: o pedido só aceita cargo com valor validado vigente na data de registro.
-  if (!(await validatedRateAt(ctx.uow, contract.id, jobRole.id, registeredAt))) {
-    throw new BusinessRuleError(
-      `O cargo ${jobRole.name} não tem valor validado neste contrato vigente em ${formatBr(registeredAt)}. `
-      + 'Cadastre e valide o valor em Valores por cargo antes de concluir o pedido.', 'jobRoleId');
-  }
+  // Valor do pedido: o validado vigente no registro ou, com valor novo ou alterado, uma versão para a Controladoria.
+  const { rate, review: needsReview } = await resolveOrderRate(
+    ctx, contract, jobRole, hasRole(ctx.user, Roles.Commercial) ? values : null, registeredAt);
 
   const term = P.normalizeTerm(r.termType, r.termEndDate, r.termDurationDays);
   const order = O.newOrder({
@@ -115,14 +115,24 @@ export async function createOrder(ctx, body) {
   order.contract = contract;
   order.jobRole = jobRole;
   order.workLocation = location;
+  order.rateId = rate.id;
+  order.rate = rate;
+  if (needsReview) startReview(ctx, order, rate);
 
-  // Todo pedido nasce aguardando a aprovação do cliente: as posições abrem (e o SLA começa) na aprovação.
-  await addNewPositions(ctx, order, r.quantity, r.desiredStartDate, null, registeredAt, retroactive, 1);
+  // Todo pedido nasce aguardando a aprovação do cliente (antes, a da Controladoria, se o valor é novo): as posições
+  // abrem (e o SLA começa) na aprovação do cliente.
+  await addNewPositions(ctx, order, r.quantity, r.desiredStartDate, null, rate, retroactive, 1);
   review.watchOrder(order, { fresh: true }).settle();
   ctx.uow.add(order);
   await ctx.uow.save({ action: 'CREATE_ORDER', justification: r.justification });
 
-  // Depois de gravar: o número do pedido (atribuído na gravação) entra na notificação.
+  // Depois de gravar: o número do pedido (atribuído na gravação) entra na notificação. Em validação, só a
+  // Controladoria é avisada agora; os demais, quando ela validar.
+  if (needsReview) {
+    await notifyReviewPending(ctx, order);
+    await ctx.uow.save({ action: 'CREATE_ORDER' });
+    return getOrderDetail(ctx, order.id);
+  }
   await notifyEveryone(ctx, order, NotificationTypes.OrderCreated, 'Novo pedido aguardando aprovação do cliente',
     'Nova demanda registrada, aguardando a aprovação formal do cliente. O RH já pode preparar o recrutamento.', {
       status: { label: 'Aguardando aprovação do cliente', tone: 'warning' },
@@ -154,8 +164,10 @@ export async function addPositions(ctx, id, body) {
   const sequence = await nextSequence(ctx.uow, order.id, order.positions);
   const today = todayDate();
   const review = new DateReview(ctx).watchOrder(order);
-  // Pedido aprovado: as novas posições abrem hoje; aguardando aprovação: abrem quando o cliente aprovar.
-  await addNewPositions(ctx, order, quantity, desiredStartDate, O.isApproved(order) ? today : null, today, false, sequence);
+  // Pedido aprovado: as novas posições abrem hoje; aguardando aprovação: abrem quando o cliente aprovar. Em validação
+  // pela Controladoria, levam o valor proposto no pedido.
+  const rate = inReview(order) ? order.rate : await validatedRateAt(ctx.uow, order.contractId, order.jobRoleId, today);
+  await addNewPositions(ctx, order, quantity, desiredStartDate, O.isApproved(order) ? today : null, rate, false, sequence);
   order.quantity += quantity;
   review.settle();
 
@@ -384,7 +396,8 @@ export async function getOrderDetail(ctx, id) {
       recordedAt: order.jobconvoRecordedAt,
       recordedByName: order.jobconvoRecordedBy ? names.get(order.jobconvoRecordedBy) ?? null : null,
     },
-    canRecordJobconvo: RhAccess.canAct(ctx.user, order) && order.approvalStatus !== OrderApprovalStatus.NOT_APPROVED,
+    canRecordJobconvo: RhAccess.canAct(ctx.user, order) && order.approvalStatus !== OrderApprovalStatus.NOT_APPROVED
+      && !inReview(order),
     rhAnalysts: O.activeRhAnalysts(order).map((a) => ({ id: a.userId, name: a.userName })),
     rhAssignmentHistory: [...order.rhAnalysts]
       .sort((a, b) => (b.removedAt ?? b.assignedAt).localeCompare(a.removedAt ?? a.assignedAt)
@@ -397,7 +410,10 @@ export async function getOrderDetail(ctx, id) {
         removedAt: a.removedAt,
         removedByName: a.removedBy ? names.get(a.removedBy) ?? null : null,
       })),
-    canAssignRh: hasRole(ctx.user, Roles.RhManager) && order.approvalStatus !== OrderApprovalStatus.NOT_APPROVED,
+    canAssignRh: hasRole(ctx.user, Roles.RhManager) && order.approvalStatus !== OrderApprovalStatus.NOT_APPROVED
+      && !inReview(order),
+    // Cargo e valores comerciais (só para quem vê valores) e a validação da Controladoria.
+    ...(await reviewDto(ctx, order, showMoney)),
     candidateImport: canImportCandidates(ctx.user, order) ? { pending: eligiblePositions(order).length } : null,
     admissionImport: canImportAdmissions(ctx.user, order) ? { pending: eligibleForAdmission(order).length } : null,
     firstDayBatch: firstDayBatchInfo(ctx.user, order),
@@ -602,7 +618,7 @@ export async function rejectOrder(ctx, id, body) {
 
 // ---------------------------------------------------------------- auxiliares
 
-async function requireOrder(ctx, id) {
+export async function requireOrder(ctx, id) {
   const order = await getOrder(ctx.uow, id);
   if (!order) throw new NotFoundError('Pedido não encontrado.');
   return order;
@@ -616,7 +632,7 @@ const contractingUnitLabel = (order) => {
 
 /** Notificação a todos os usuários ativos, identificando pedido, cliente, unidade, cargo, vagas e status. */
 /** `email`: situação, campos do evento (depois dos do pedido), providência e, se preciso, outro resumo. */
-function notifyEveryone(ctx, order, type, subject, intro, email = {}) {
+export function notifyEveryone(ctx, order, type, subject, intro, email = {}) {
   const quantity = order.positions.filter((p) => p.demandType === DemandType.NEW).length;
   return notify(ctx.uow, {
     type,
@@ -634,11 +650,10 @@ function notifyEveryone(ctx, order, type, subject, intro, email = {}) {
 }
 
 /**
- * Cria as vagas novas. `openedAt` nulo = aguardando a aprovação (sem abertura nem meta, gravadas na aprovação); o
- * valor é a versão validada vigente em `rateDate`.
+ * Cria as vagas novas. `openedAt` nulo = aguardando a aprovação (sem abertura nem meta, gravadas na aprovação);
+ * `rate` = valor por cargo gravado nas posições (o do pedido na criação; nos acréscimos, o validado vigente).
  */
-async function addNewPositions(ctx, order, quantity, desiredStartDate, openedAt, rateDate, retroactive, firstSequence) {
-  const rate = await validatedRateAt(ctx.uow, order.contractId, order.jobRoleId, rateDate);
+async function addNewPositions(ctx, order, quantity, desiredStartDate, openedAt, rate, retroactive, firstSequence) {
   // Vagas novas continuam a numeração das vagas do pedido (as reposições não consomem números de vaga).
   const firstSlot = Math.max(0, ...order.positions.map((p) => p.slotNumber)) + 1;
   const sla = openedAt
@@ -688,6 +703,7 @@ export function orderSummary(o) {
     filledPositions: current.filter((p) => p.status === PositionStatus.FILLED).length,
     isLegacy: o.isLegacy,
     approvalStatus: o.approvalStatus,
+    controllershipStatus: o.controllershipStatus ?? null,
     clientDecisionDate: o.clientDecisionDate,
     jobconvoPublished: o.jobconvoPublished,
     jobconvoCode: o.jobconvoCode,

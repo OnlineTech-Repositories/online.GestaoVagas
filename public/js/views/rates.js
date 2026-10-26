@@ -3,7 +3,7 @@ import {
   el, clear, field, moneyField, table, loading, date, money, LABELS, options, rateTag, requireFields, orNull,
   toast, button, formModal, confirm, today,
 } from '../ui.js';
-import { state, hasRole } from '../app.js';
+import { state, hasRole, navigate } from '../app.js';
 
 /**
  * Valores por cargo, versionados por data de vigência. Segregação obrigatória:
@@ -33,15 +33,19 @@ export async function ratesScreen(target) {
           title: 'Status',
           render: (r) => el('div', {}, rateTag(r.status),
             el('div', { class: 'texto-fraco texto-pequeno' }, `por ${r.createdByName ?? '—'}${r.validatedByName ? ` · ${r.validatedByName}` : ''}`),
-            r.rejectionReason ? el('div', { class: 'texto-pequeno', style: { color: 'var(--erro)' } }, r.rejectionReason) : null),
+            r.rejectionReason ? el('div', { class: 'texto-pequeno', style: { color: 'var(--erro)' } }, r.rejectionReason) : null,
+            r.order ? el('div', { class: 'texto-pequeno' }, el('a', { href: `#/pedidos/${r.order.id}` },
+              r.order.inReview ? `Pedido ${r.order.number} · em validação no pedido` : `Proposto no pedido ${r.order.number}`)) : null),
         },
         {
           title: '',
           cls: 'acoes',
           render: (r) => el('div', { class: 'barra-botoes direita' },
-            canValidate && r.status === 'PENDING' ? button('Validar', () => validate(r), 'sucesso pequeno') : null,
-            canValidate && r.status === 'PENDING' ? button('Rejeitar', () => reject(r), 'perigo pequeno') : null,
-            canRegister && r.status !== 'VALIDATED' ? button('Corrigir', () => openRate(r), 'secundario pequeno') : null),
+            // Valor proposto num pedido em validação: valida-se, devolve-se e ajusta-se no próprio pedido.
+            r.order?.inReview ? button('Abrir pedido', () => navigate(`/pedidos/${r.order.id}`), 'secundario pequeno') : null,
+            canValidate && r.status === 'PENDING' && !r.order?.inReview ? button('Validar', () => validate(r), 'sucesso pequeno') : null,
+            canValidate && r.status === 'PENDING' && !r.order?.inReview ? button('Rejeitar', () => reject(r), 'perigo pequeno') : null,
+            canRegister && r.status !== 'VALIDATED' && !r.order?.inReview ? button('Corrigir', () => openRate(r), 'secundario pequeno') : null),
         },
       ],
       rates,
@@ -127,7 +131,8 @@ export async function ratesScreen(target) {
       el('div', { class: 'painel-cabecalho' }, el('h2', {}, 'Valores por cargo'),
         canRegister ? el('div', { class: 'barra-botoes' }, button('+ Cadastrar valor', () => openRate(null))) : null),
       el('div', { class: 'aviso-painel' },
-        'Valor mensal de venda, versionado por vigência. Só entra nos totais oficiais depois de validado pela Controladoria.'),
+        'Valor mensal de venda, versionado por vigência. Só entra nos totais oficiais depois de validado pela Controladoria. '
+        + 'Valores informados na criação do pedido também aparecem aqui e são validados no próprio pedido.'),
       el('div', { class: 'filtros' },
         select('contractId', 'Contrato', [{ value: '', label: 'Todos' }, ...contracts.map((c) => ({ value: c.id, label: `${c.clientName} — ${c.name}` }))]),
         select('status', 'Status', options(LABELS.rateStatus, 'Todos'))),

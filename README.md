@@ -383,3 +383,21 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     admissão duplicada é recusada e o histórico guarda usuário, data e hora. "Candidato selecionado" deixa de gerar
     o alerta de "sem atualização" (o resumo das admissões o substitui). Usuário de demonstração:
     admissoes@demo.local.
+37. **Cargo e valores comerciais no pedido, com a validação da Controladoria (melhoria pedida pelo usuário em
+    26/10/2026):** o Comercial informa no próprio pedido o cargo (catálogo; o Administrador também cadastra cargo novo
+    ali), o valor mensal, o fee de R&S (informativo) e o início da vigência; o contrato vem do pedido. O valor
+    aprovado vigente para contrato + cargo vem preenchido para conferência: mantido, o pedido segue direto para a
+    aprovação do cliente, como antes. Sem valor aprovado, ou com qualquer valor alterado (decisão do usuário: só
+    nesses casos), o pedido nasce "Aguardando aprovação da Controladoria" e o valor vira uma versão pendente em
+    Valores por cargo, vinculada ao pedido — uma única solicitação, validada ou devolvida no próprio pedido (por lá,
+    validar, rejeitar ou corrigir esse valor é recusado). A Controladoria valida ou devolve com motivo; devolvido, o
+    Comercial ajusta cargo e valores (decisão do usuário: só eles) e reenvia a mesma solicitação, que volta sempre à
+    Controladoria. Quem criou ou ajustou o pedido não o valida. A validação vem antes da aprovação do cliente
+    (decisão do usuário): até lá não se registra a decisão do cliente, o RH não distribui o pedido nem registra o
+    JobConvo, e o aviso de pedido novo a todos sai na validação. Validado, o valor entra em Valores por cargo (a versão
+    anterior fica no histórico) e o pedido segue o fluxo normal; validação e aprovação do cliente ficam registradas
+    separadamente, cada uma com responsável e data. O detalhe do pedido mostra o bloco "Cargo e valores comerciais"
+    (só para quem vê valores) com o histórico da validação: envio, devolução com motivo, reenvio e validação, com quem,
+    quando e os valores de cada momento. Avisos (sino e e-mail): à Controladoria no envio e no reenvio; ao Comercial na
+    devolução. Mesma vigência de um valor já validado com outro valor é recusada (alteração = nova versão). Pedidos
+    criados sem os valores (API e carga inicial pelo NACC) seguem a regra antiga: exigem o valor validado vigente.

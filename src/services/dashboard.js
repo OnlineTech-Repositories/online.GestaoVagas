@@ -34,7 +34,8 @@ export async function getDashboard(ctx) {
 
   // Pedido "aguardando atribuição do RH": não recusado, sem analista ativo e com posição aberta (a própria linha).
   const awaitingRh = new Set(open
-    .filter((r) => r.p.order.approvalStatus !== OrderApprovalStatus.NOT_APPROVED && activeRhAnalysts(r.p.order).length === 0)
+    .filter((r) => r.p.order.approvalStatus !== OrderApprovalStatus.NOT_APPROVED
+      && r.p.order.approvalStatus !== OrderApprovalStatus.AWAITING_CONTROLLERSHIP && activeRhAnalysts(r.p.order).length === 0)
     .map((r) => r.p.orderId));
 
   return {

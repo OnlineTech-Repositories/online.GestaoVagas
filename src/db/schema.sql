@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS contracts (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_contracts_name ON contracts (name);
 
 -- Valor mensal de venda por cargo no contrato, versionado por valid_from (RN-20 a RN-22).
+-- order_id: pedido que propôs o valor no fluxo integrado (26/10/2026); validado ou devolvido pelo próprio pedido.
 CREATE TABLE IF NOT EXISTS contract_rates (
   id TEXT PRIMARY KEY,
   contract_id TEXT NOT NULL REFERENCES contracts (id),
@@ -145,10 +146,13 @@ CREATE TABLE IF NOT EXISTS contract_rates (
   validated_by TEXT,
   validated_at TEXT,
   rejection_reason TEXT,
+  order_id TEXT,
   created_at TEXT NOT NULL, created_by TEXT, updated_at TEXT, updated_by TEXT, version INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_contract_rates ON contract_rates (contract_id, job_role_id, valid_from);
 
+-- rate_id: valor por cargo usado no pedido. controllership_*: validação da Controladoria quando o Comercial informa
+-- valor novo ou alterado (vazia quando o pedido usou o valor já validado); controllership_reason = última devolução.
 CREATE TABLE IF NOT EXISTS orders (
   id TEXT PRIMARY KEY,
   number INTEGER NOT NULL,
@@ -177,10 +181,33 @@ CREATE TABLE IF NOT EXISTS orders (
   jobconvo_notes TEXT,
   jobconvo_recorded_at TEXT,
   jobconvo_recorded_by TEXT,
+  rate_id TEXT,
+  controllership_status TEXT,
+  controllership_decided_at TEXT,
+  controllership_decided_by TEXT,
+  controllership_reason TEXT,
   created_at TEXT NOT NULL, created_by TEXT, updated_at TEXT, updated_by TEXT, version INTEGER NOT NULL DEFAULT 0,
   CHECK (desired_start_date >= client_request_date)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_orders_number ON orders (number);
+
+-- Histórico da validação do pedido pela Controladoria: cada envio, devolução (com motivo), reenvio e validação, com
+-- quem, quando e o cargo e os valores daquele momento.
+CREATE TABLE IF NOT EXISTS order_reviews (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES orders (id),
+  action TEXT NOT NULL,
+  user_id TEXT,
+  occurred_at TEXT NOT NULL,
+  reason TEXT,
+  job_role_id TEXT,
+  monthly_value NUMERIC(12,2),
+  fee_value NUMERIC(12,2),
+  valid_from TEXT,
+  rate_id TEXT,
+  created_at TEXT NOT NULL, created_by TEXT, updated_at TEXT, updated_by TEXT, version INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ix_order_reviews_order ON order_reviews (order_id, occurred_at);
 
 -- Posição: cada vaga individual do pedido. slot_number = número da vaga; cycle = 1 (vaga nova) ou 2+ (reposições).
 -- termination_id não tem chave estrangeira: positions e terminations se referenciam mutuamente.

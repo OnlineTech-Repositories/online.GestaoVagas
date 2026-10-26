@@ -331,6 +331,11 @@ function renderDetail(p, reasons, reload) {
             ? el('a', { href: `#/posicoes/${p.exitTermination.replacementPositionId}` }, 'Ver o ciclo atual')
             : null)
         : null,
+      s.orderApprovalStatus === 'AWAITING_CONTROLLERSHIP'
+        ? el('div', { class: 'mensagem alerta' },
+          el('strong', {}, 'O pedido aguarda a validação da Controladoria.'),
+          'A Controladoria valida o cargo e os valores comerciais do pedido; depois vêm a aprovação do cliente e o atendimento do RH.')
+        : null,
       s.orderApprovalStatus === 'AWAITING_CLIENT_APPROVAL'
         ? el('div', { class: 'mensagem alerta' },
           el('strong', {}, 'O pedido aguarda a aprovação do cliente.'),
