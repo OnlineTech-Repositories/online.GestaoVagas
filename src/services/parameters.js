@@ -73,6 +73,7 @@ function validate(key, raw) {
       if (!/^\d+$/.test(value)) throw new BusinessRuleError('Informe um número inteiro maior ou igual a zero.', 'value');
       return String(Number(value));
     case ParameterKeys.DailyDigestTime:
+    case ParameterKeys.AdmissionsDigestTime:
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) throw new BusinessRuleError('Informe o horário no formato HH:mm.', 'value');
       return value;
     default:

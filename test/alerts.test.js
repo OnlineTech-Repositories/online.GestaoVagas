@@ -95,7 +95,8 @@ test('resumo diário: um e-mail por pessoa dos perfis operacionais e de gestão,
 });
 
 const daysAgo = (n) => new Date(Date.now() - n * 86_400_000).toISOString();
-const RH_STAGES = ['OPEN', 'RECRUITING', 'CANDIDATE_APPROVED'];
+// "Candidato selecionado" vai no resumo diário das admissões, não no alerta de parada.
+const RH_STAGES = ['OPEN', 'RECRUITING'];
 let agedPositions = 0;
 
 /** Avisos consolidados de posições paradas do pedido: [{ to_address, subject, html_body }] por destinatário. */
@@ -160,7 +161,7 @@ test('posições paradas: um aviso por pedido e destinatário, com todas as posi
   assert.equal(next.length, expected.length);
   assert.equal(next[0].subject, `[Controle de Vagas] Pedido ${order.number} — 3 posições sem atualização`);
   assert.equal(next[0].html_body.match(/novo aviso/gi).length, 2, 'a linha nova e a legenda');
-  assert.ok(next[0].html_body.includes(`${order.number}-${c.slotNumber} · novo aviso`));
+  assert.match(next[0].html_body, new RegExp(`>${order.number}-${c.slotNumber}( \\(reposição nº \\d+\\))? · novo aviso<`));
   assert.equal((await staleMessages(d.order.number)).length, other.length, 'o outro pedido não teve posição nova');
 
   // Na tela do pedido, as paradas vêm marcadas para o destaque do link.

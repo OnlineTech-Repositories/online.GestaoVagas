@@ -118,7 +118,7 @@ test('etapas fora de ordem: avisam, gravam com confirmação e ficam "fora de se
   await grh.post(`/api/positions/${pid}/candidate-approval`, {
     date: d(-11), fullName: 'Pessoa Fora de Ordem', phone: '(11) 91111-2222', sex: 'FEMALE',
   });
-  await grh.post(`/api/positions/${pid}/admission`, {
+  await (await as('admissoes')).post(`/api/positions/${pid}/admission`, {
     date: d(-5), registration: 'M-SEQ', birthDate: '1991-02-03', cpf: '111.444.777-35',
   });
   const form = new FormData();
@@ -164,7 +164,7 @@ test('1º dia agendado: a vaga fica "Aguardando 1º dia" no Painel de RH e os di
   await grh.post(`/api/positions/${pid}/candidate-approval`, {
     date: d(-2), fullName: 'Pessoa Agendada', phone: '(21) 3123-4567', sex: 'MALE',
   });
-  await grh.post(`/api/positions/${pid}/admission`, {
+  await (await as('admissoes')).post(`/api/positions/${pid}/admission`, {
     date: d(-1), registration: 'M-FUT', birthDate: '1990-06-07', cpf: '390.533.447-05',
   });
   const form = new FormData();
@@ -200,7 +200,7 @@ test('o impossível continua bloqueando: fim de pausa antes do início, nascimen
   await com.post(`/api/orders/${order.summary.id}/approval`, { date: d(-1) });
   // Nascimento é informado na admissão: lá, data futura continua bloqueando.
   await grh.post(`/api/positions/${p2}/candidate-approval`, { date: T, fullName: 'Nascida Amanhã', phone: '(11) 92222-3333', sex: 'FEMALE' });
-  const born = await grh.post(`/api/positions/${p2}/admission`, { date: T, birthDate: d(1), cpf: '529.982.247-25' });
+  const born = await (await as('admissoes')).post(`/api/positions/${p2}/admission`, { date: T, birthDate: d(1), cpf: '529.982.247-25' });
   assert.equal(born.status, 422);
   assert.equal(born.data.campos.birthDate, 'A data de nascimento não pode ser uma data futura.');
 

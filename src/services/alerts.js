@@ -42,8 +42,10 @@ export function nextAction(p) {
   switch (p.status) {
     case S.OPEN: return { label: 'RH: publicar a vaga no JobConvo', ...team };
     case S.RECRUITING: return { label: 'RH: selecionar o candidato', ...team };
-    case S.CANDIDATE_APPROVED: return { label: 'RH: registrar a admissão', ...team };
-    case S.IN_ADMISSION: return { label: 'RH ou DP: informar a matrícula da admissão', roles: [...team.roles, Roles.Dp], userIds: team.userIds };
+    case S.CANDIDATE_APPROVED: return { label: 'Admissões: registrar a admissão', roles: [Roles.Admissions] };
+    case S.IN_ADMISSION: return {
+      label: 'Admissões, RH ou DP: informar a matrícula da admissão', roles: [...team.roles, Roles.Dp, Roles.Admissions], userIds: team.userIds,
+    };
     default: return null;
   }
 }
@@ -133,8 +135,9 @@ export async function runAlerts(uow, rows, today, staleDays) {
       }, rhTeam(p.order));
     }
 
-    // "Aguardando 1º dia" vai no lembrete consolidado ao NACC (first-day-pending.js), não no alerta de parada.
-    if (p.status !== S.AWAITING_FIRST_DAY && isStale(p, today, staleDays)) {
+    // "Aguardando 1º dia" vai no lembrete consolidado ao NACC (first-day-pending.js) e "Candidato selecionado" no
+    // resumo diário das admissões (admissions-pending.js), não no alerta de parada.
+    if (p.status !== S.AWAITING_FIRST_DAY && p.status !== S.CANDIDATE_APPROVED && isStale(p, today, staleDays)) {
       const reference = lastActivity(p);
       const isNew = !sent.has(key(p.id, AlertKind.STALE, reference));
       if (isNew) {

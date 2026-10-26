@@ -14,6 +14,7 @@ import { Cpf, DateGuard, EvidenceFiles, hasRole, Permissions, RhAccess } from '.
 import { activeRhAnalysts } from '../domain/order.js';
 import * as P from '../domain/position.js';
 import { Input, isId } from './input.js';
+import { notifyNewAdmissions } from './admissions-pending.js';
 import { links, notify } from './notifications.js';
 import { calcSettings } from './parameters.js';
 import {
@@ -266,6 +267,8 @@ export function approveCandidate(ctx, id, body) {
   return execute(ctx, id, Actions.ApproveCandidate, justification, async (p, review) => {
     await checkDate(review, p, date, 'A data de aprovação', justification);
     P.approveCandidate(p, date, data, todayDate());
+    // Aviso de nova pendência aos Responsáveis por Admissões.
+    await notifyNewAdmissions(ctx.uow, p.order, [p]);
     return 'APPROVE_CANDIDATE';
   });
 }

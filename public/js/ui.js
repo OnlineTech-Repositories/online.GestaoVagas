@@ -234,6 +234,7 @@ export const LABELS = {
     DP: 'DP',
     RH: 'Analista de RH (RH / R&S)',
     RH_MANAGER: 'Gestor de RH',
+    ADMISSIONS: 'Responsável por Admissões',
     MANAGER: 'Gestor',
     CONTROLLERSHIP: 'Controladoria',
     ADMIN: 'Administrador',

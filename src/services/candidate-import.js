@@ -8,6 +8,7 @@ import { CandidateSex, PositionStatus as S } from '../domain/enums.js';
 import { DateGuard, Phone, RhAccess } from '../domain/guards.js';
 import { isApproved } from '../domain/order.js';
 import * as P from '../domain/position.js';
+import { notifyNewAdmissions } from './admissions-pending.js';
 import { getOrderDetail } from './orders.js';
 import { isInitialLoadOpen } from './parameters.js';
 import { fileChecks, isBlankLine, plain, readTemplateSheet, summarize } from './import-sheet.js';
@@ -252,6 +253,8 @@ export async function confirmCandidateImport(ctx, orderId, file) {
       entity: 'Order', entityId: order.id, action: 'IMPORT_CANDIDATES', field: 'Summary',
       newValue: JSON.stringify({ file: file.fileName, imported: ready.length, positions: ready.map((r) => r.position) }),
     });
+    // Seleção em lote: um aviso só por pedido aos Responsáveis por Admissões.
+    await notifyNewAdmissions(ctx.uow, order, ready.map((r) => byId.get(r.positionId)), today);
     await ctx.uow.save({ action: 'IMPORT_CANDIDATES' });
   });
   return { imported: ready.length, order: await getOrderDetail(ctx, orderId) };

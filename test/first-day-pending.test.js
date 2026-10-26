@@ -57,7 +57,7 @@ async function admit(count) {
       date: addDays(today, -3), fullName: `Admitida ${i + 1}`, phone: `(11) 9600${i}-1111`, sex: 'FEMALE',
     });
     assert.equal(approved.status, 200, JSON.stringify(approved.data));
-    const admitted = await grh.post(`/api/positions/${id}/admission`, {
+    const admitted = await (await as('admissoes')).post(`/api/positions/${id}/admission`, {
       date: addDays(today, -2), registration: `PEND-${i + 1}`, birthDate: '1994-03-0' + (i + 1), cpf: ['52998224725', '11144477735', '39053344705'][i],
     });
     assert.equal(admitted.status, 200, JSON.stringify(admitted.data));

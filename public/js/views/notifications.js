@@ -27,6 +27,7 @@ const TITLES = {
   POSITION_STALE: 'Posição sem atualização',
   ORDER_POSITIONS_STALE: 'Posições sem atualização no pedido',
   FIRST_DAY_PENDING: 'Confirmações do 1º dia pendentes',
+  ADMISSION_PENDING: 'Candidato aguardando admissão',
 };
 
 /** Notificações internas do usuário (seção 10.1); clicar abre o registro e marca como lida. */
@@ -51,6 +52,10 @@ export async function notificationsScreen(target) {
     if (!n.readAt) api.post(`/api/notifications/${n.id}/read`).then(updateCounters).catch(() => {});
     if (n.type === 'FIRST_DAY_PENDING') {
       navigate('/confirmacoes-1o-dia');
+      return;
+    }
+    if (n.type === 'ADMISSION_PENDING') {
+      navigate('/admissoes-pendentes');
       return;
     }
     if (!n.entityId) return;

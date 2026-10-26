@@ -96,10 +96,10 @@ test('modelo: uma linha por posição com candidato selecionado, com pedido, vag
     });
     assert.equal(r.status, 200, JSON.stringify(r.data));
   }
-  order = (await grh.get(base())).data;
+  order = (await (await as('admissoes')).get(base())).data;
   assert.ok(order.admissionImport.pending >= 3);
 
-  const res = await download('gestor.rh', `${base()}/admissions-template`);
+  const res = await download('admissoes', `${base()}/admissions-template`);
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-disposition'), new RegExp(`admissoes-pedido-${order.summary.number}\\.xlsx`));
   rows = templateRows(res.buffer);
@@ -117,10 +117,12 @@ test('modelo: uma linha por posição com candidato selecionado, com pedido, vag
   assert.ok(demo.birthDate, 'o nascimento já gravado vem preenchido');
 });
 
-test('só o RH do pedido baixa o modelo e importa; a tela do Comercial não mostra a importação', async () => {
-  assert.equal((await download('comercial', `${base()}/admissions-template`)).status, 403);
-  assert.equal((await upload('comercial', `${base()}/admissions-import/preview`, Buffer.from('x'))).status, 403);
-  assert.equal((await (await as('comercial')).get(base())).data.admissionImport, null);
+test('só o Responsável por Admissões baixa o modelo e importa; o RH e o Comercial não veem a importação', async () => {
+  for (const user of ['comercial', 'gestor.rh']) {
+    assert.equal((await download(user, `${base()}/admissions-template`)).status, 403, user);
+    assert.equal((await upload(user, `${base()}/admissions-import/preview`, Buffer.from('x'))).status, 403, user);
+    assert.equal((await (await as(user)).get(base())).data.admissionImport, null, user);
+  }
 });
 
 const mine = () => rows.filter((r) => /^Admitido [123]$/.test(r.candidate)).sort((a, b) => a.candidate.localeCompare(b.candidate));
@@ -133,7 +135,7 @@ test('conferência: erro por linha e campo, linha em branco ignorada e nada grav
     { ...b },
     { ...c, admissionAt: '31/02/2026', registration: 'X'.repeat(60), phone: '1234', cpf: '529.982.247-24' },
   ]);
-  const r = await upload('gestor.rh', `${base()}/admissions-import/preview`, sheet);
+  const r = await upload('admissoes', `${base()}/admissions-import/preview`, sheet);
   assert.equal(r.status, 200, JSON.stringify(r.data));
   const byName = Object.fromEntries(r.data.rows.map((row) => [row.candidate, row]));
   assert.equal(byName['Admitido 1'].status, 'ready');
@@ -151,13 +153,13 @@ test('conferência: erro por linha e campo, linha em branco ignorada e nada grav
   assert.equal(r.data.summary.canConfirm, false);
 
   // CPF repetido na planilha ou já selecionado em outra posição aberta.
-  const repeated = await upload('gestor.rh', `${base()}/admissions-import/preview`, filled([
+  const repeated = await upload('admissoes', `${base()}/admissions-import/preview`, filled([
     { ...a, ...docs(0), admissionAt: today }, { ...b, ...docs(0), admissionAt: today },
   ]));
   const second = repeated.data.rows.find((row) => row.candidate === 'Admitido 2');
   assert.match(second.errors.find((e) => e.field === 'cpf').message, /CPF repetido na planilha/);
 
-  const blocked = await upload('gestor.rh', `${base()}/admissions-import`, sheet);
+  const blocked = await upload('admissoes', `${base()}/admissions-import`, sheet);
   assert.equal(blocked.status, 422);
   assert.match(blocked.data.detail, /nada foi gravado/);
   assert.equal((await queryOne('SELECT status FROM positions WHERE id = ?', a.positionId)).status, 'CANDIDATE_APPROVED');
@@ -170,14 +172,14 @@ test('confirmação: grava com a regra individual, avisa datas fora do esperado,
     { ...b, ...docs(1), admissionAt: addDays(today, 5) },
     { ...c },
   ]);
-  const preview = await upload('gestor.rh', `${base()}/admissions-import/preview`, sheet);
+  const preview = await upload('admissoes', `${base()}/admissions-import/preview`, sheet);
   const future = preview.data.rows.find((row) => row.candidate === 'Admitido 2');
   assert.equal(future.status, 'ready', 'data futura não impede');
   assert.ok(future.warnings.some((w) => /é uma data futura/.test(w)), future.warnings.join(' | '));
   assert.equal(preview.data.summary.warnings, 1);
 
   const before = Number((await queryOne("SELECT COUNT(*) AS n FROM notifications WHERE type = 'ADMISSION_REGISTERED'")).n);
-  const done = await upload('gestor.rh', `${base()}/admissions-import`, sheet);
+  const done = await upload('admissoes', `${base()}/admissions-import`, sheet);
   assert.equal(done.status, 200, JSON.stringify(done.data));
   assert.deepEqual([done.data.imported, done.data.awaitingFirstDay, done.data.withoutRegistration], [2, 1, 1]);
 
@@ -207,10 +209,10 @@ test('confirmação: grava com a regra individual, avisa datas fora do esperado,
   for (const part of ['Admitido 1', '000123', 'Admitido 2', 'Não informada', 'Consultar pedido']) assert.ok(email.html_body.includes(part), part);
 
   // Reenviar o mesmo arquivo não duplica: as posições já admitidas viram erro.
-  const again = await upload('gestor.rh', `${base()}/admissions-import/preview`, sheet);
+  const again = await upload('admissoes', `${base()}/admissions-import/preview`, sheet);
   assert.equal(again.data.summary.errors, 2);
   assert.ok(again.data.rows.filter((row) => row.status === 'error').every((row) => /já foi registrada/.test(row.errors[0].message)));
-  assert.equal((await upload('gestor.rh', `${base()}/admissions-import`, sheet)).status, 422);
+  assert.equal((await upload('admissoes', `${base()}/admissions-import`, sheet)).status, 422);
 });
 
 test('carga inicial encerrada: data passada sem justificativa é erro da linha; com ela, grava e sinaliza a posição', async () => {
@@ -218,12 +220,12 @@ test('carga inicial encerrada: data passada sem justificativa é erro da linha; 
   assert.equal((await admin.put('/api/parameters/INITIAL_LOAD_OPEN', { value: 'false' })).status, 200);
   try {
     const [, , c] = mine();
-    const missing = await upload('gestor.rh', `${base()}/admissions-import/preview`, filled([{ ...c, ...docs(2), admissionAt: addDays(today, -1) }]));
+    const missing = await upload('admissoes', `${base()}/admissions-import/preview`, filled([{ ...c, ...docs(2), admissionAt: addDays(today, -1) }]));
     const row = missing.data.rows[0];
     assert.equal(row.status, 'error');
     assert.match(row.errors.find((e) => e.field === 'justification').message, /anterior a hoje: informe a justificativa/);
 
-    const ok = await upload('gestor.rh', `${base()}/admissions-import`,
+    const ok = await upload('admissoes', `${base()}/admissions-import`,
       filled([{ ...c, ...docs(2), admissionAt: addDays(today, -1), registration: '42', justification: 'Admitido ontem; lançado hoje.' }]));
     assert.equal(ok.status, 200, JSON.stringify(ok.data));
     const p = await queryOne('SELECT status, has_retroactive_dates FROM positions WHERE id = ?', c.positionId);

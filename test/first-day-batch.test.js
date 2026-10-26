@@ -74,7 +74,7 @@ test('o NACC vê no pedido os admitidos aguardando o 1º dia; os sem matrícula 
     await grh.post(`/api/positions/${p.id}/candidate-approval`, {
       date: addDays(today, -6), fullName: `Colaborador ${i + 1}`, phone: `(11) 9700${i}-5555`, sex: 'MALE',
     });
-    const r = await grh.post(`/api/positions/${p.id}/admission`, {
+    const r = await (await as('admissoes')).post(`/api/positions/${p.id}/admission`, {
       date: addDays(today, -3), registration: i < 3 ? `00${i + 1}` : null, birthDate: '1991-05-05', cpf: cpf(`90033344${i}`),
     });
     assert.equal(r.status, 200, JSON.stringify(r.data));

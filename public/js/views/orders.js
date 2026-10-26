@@ -315,6 +315,8 @@ export async function orderDetailScreen(target, id, query) {
   const highlightStale = query?.get('paradas') === '1';
   // Vindo de "Confirmações do 1º dia": a confirmação em lote já abre.
   const openBatch = query?.get('confirmar') === '1';
+  // Vindo de "Admissões pendentes": a importação da planilha de admissões já abre.
+  const openAdmissions = query?.get('admitir') === '1';
   let current = null;
   async function reload(data) {
     const o = data ?? (await api.get(`/api/orders/${id}`));
@@ -391,6 +393,7 @@ export async function orderDetailScreen(target, id, query) {
   clear(target).append(loading());
   await reload();
   if (openBatch && current.firstDayBatch?.items.length) openFirstDayBatch(current, reload);
+  if (openAdmissions && current.admissionImport?.pending) openSheetImport(current, reload, SHEET_IMPORTS.admissions);
 }
 
 /** Quantidade vigente e a composição: solicitada no registro, acréscimos e reduções do quadro. */

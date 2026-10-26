@@ -5,7 +5,7 @@ import { positionDateIssues, retroactiveMessage } from '../domain/date-checks.js
 import { today as todayDate, formatBr } from '../domain/dates.js';
 import { BusinessRuleError, ForbiddenError, NotFoundError } from '../domain/errors.js';
 import { Labels, NotificationTypes, PositionStatus as S, Roles } from '../domain/enums.js';
-import { Cpf, DateGuard, Phone, RhAccess } from '../domain/guards.js';
+import { Cpf, DateGuard, hasRole, Phone } from '../domain/guards.js';
 import { activeRhAnalysts, isApproved } from '../domain/order.js';
 import * as P from '../domain/position.js';
 import { dataTable } from './email-layout.js';
@@ -67,14 +67,14 @@ export const eligibleForAdmission = (order) => (isApproved(order)
     .sort((a, b) => a.slotNumber - b.slotNumber)
   : []);
 
-/** Quem pode importar: o mesmo do registro individual (analista responsável pelo pedido ou Gestor de RH). */
-export const canImportAdmissions = (user, order) => RhAccess.canAct(user, order) && isApproved(order);
+/** Quem pode importar: o mesmo do registro individual (Responsável por Admissões, em qualquer pedido aprovado). */
+export const canImportAdmissions = (user, order) => hasRole(user, Roles.Admissions) && isApproved(order);
 
 async function loadOrder(ctx, orderId, uow = ctx.uow) {
   const order = await getOrder(uow, orderId);
   if (!order) throw new NotFoundError('Pedido não encontrado.');
-  if (!RhAccess.canAct(ctx.user, order)) {
-    throw new ForbiddenError('Somente o analista de RH responsável pelo pedido ou o Gestor de RH podem registrar admissões.');
+  if (!hasRole(ctx.user, Roles.Admissions)) {
+    throw new ForbiddenError('O registro das admissões é do Responsável por Admissões.');
   }
   if (!isApproved(order)) {
     throw new BusinessRuleError('O pedido aguarda a aprovação do cliente: as admissões só podem ser registradas depois dela.');

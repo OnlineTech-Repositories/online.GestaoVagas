@@ -116,6 +116,7 @@ test('fluxo completo: pedido, aprovação, RH, candidato, admissão, 1º dia com
   const comercial = await as('comercial@demo.local');
   const gestorRh = await as('gestor.rh@demo.local');
   const rh = await as('rh@demo.local');
+  const admissoes = await as('admissoes@demo.local');
   const nacc = await as('nacc@demo.local');
   const dp = await as('dp@demo.local');
 
@@ -165,12 +166,14 @@ test('fluxo completo: pedido, aprovação, RH, candidato, admissão, 1º dia com
   assert.equal(withCandidate.data.summary.status, 'CANDIDATE_APPROVED');
   assert.deepEqual([withCandidate.data.candidate.phone, withCandidate.data.candidate.cpf, withCandidate.data.candidate.birthDate],
     ['(11) 98765-4321', null, null]);
-  const badCpf = await rh.post(`/api/positions/${positionId}/admission`, {
+  // O RH seleciona; a admissão é do Responsável por Admissões.
+  assert.equal((await rh.post(`/api/positions/${positionId}/admission`, { date: today, birthDate: '1990-05-05', cpf: '529.982.247-25' })).status, 403);
+  const badCpf = await admissoes.post(`/api/positions/${positionId}/admission`, {
     date: today, registration: 'MAT-900', birthDate: '1990-05-05', cpf: '529.982.247-24',
   });
   assert.equal(badCpf.status, 422);
   assert.equal(badCpf.data.campos.cpf, 'CPF inválido: confira os dígitos.');
-  const admitted = await rh.post(`/api/positions/${positionId}/admission`, {
+  const admitted = await admissoes.post(`/api/positions/${positionId}/admission`, {
     date: today, registration: 'MAT-900', birthDate: '1990-05-05', cpf: '529.982.247-25',
   });
   assert.equal(admitted.data.summary.status, 'AWAITING_FIRST_DAY');

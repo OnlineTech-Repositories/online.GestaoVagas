@@ -10,6 +10,7 @@ import { closeByContractEnd, isOpen } from '../domain/position.js';
 import { runAlerts } from './alerts.js';
 import { buildDigest, queueDigest } from './digest.js';
 import { EmailError, sendEmail } from './email.js';
+import { admissionsDigestTick } from './admissions-pending.js';
 import { queueFirstDayReminder } from './first-day-pending.js';
 import { links, notify } from './notifications.js';
 import { calcSettings, getInt, getText } from './parameters.js';
@@ -40,10 +41,13 @@ export function startJobs() {
     }
   };
   const daily = guard('rotina diária', dailyTick);
+  // Resumo das admissões pendentes: horário próprio (ADMISSIONS_DIGEST_TIME), conferido a cada minuto.
+  const admissions = guard('resumo das admissões', admissionsDigestTick);
   const outbox = guard('caixa de saída de e-mails', processOutbox);
-  timers = [setInterval(daily, 60_000), setInterval(outbox, 30_000)];
+  timers = [setInterval(daily, 60_000), setInterval(admissions, 60_000), setInterval(outbox, 30_000)];
   for (const t of timers) t.unref();
   daily();
+  admissions();
   outbox();
 }
 

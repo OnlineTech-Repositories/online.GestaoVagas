@@ -36,13 +36,14 @@ const A = Actions;
 const ALLOWED_ROLES = {
   [A.Decide]: [Roles.Nacc],
   [A.ApproveCandidate]: [Roles.Rh, Roles.RhManager],
-  [A.RegisterAdmission]: [Roles.Rh, Roles.RhManager],
+  // Admissão: exclusiva do Responsável por Admissões, em qualquer pedido (decisão do usuário em 26/10/2026).
+  [A.RegisterAdmission]: [Roles.Admissions],
   [A.ConfirmFirstDay]: [Roles.Nacc],
   [A.CandidateWithdrew]: [Roles.Rh, Roles.RhManager],
   [A.CorrectCandidate]: [Roles.Rh, Roles.RhManager],
   // A matrícula vem da admissão (RH do pedido) e costuma ser gerada pelo DP.
-  [A.CorrectRegistration]: [Roles.Rh, Roles.RhManager, Roles.Dp],
-  [A.AdmissionNoShow]: [Roles.Rh, Roles.RhManager, Roles.Nacc],
+  [A.CorrectRegistration]: [Roles.Rh, Roles.RhManager, Roles.Dp, Roles.Admissions],
+  [A.AdmissionNoShow]: [Roles.Rh, Roles.RhManager, Roles.Nacc, Roles.Admissions],
   [A.StartPause]: [Roles.Nacc],
   [A.EndPause]: [Roles.Nacc],
   [A.Cancel]: [Roles.Commercial, Roles.Nacc],
@@ -54,7 +55,7 @@ const ALLOWED_ROLES = {
 
 /** Execução do recrutamento: o Analista de RH age só nos pedidos atribuídos a ele. */
 const RH_EXECUTION = new Set([
-  A.ApproveCandidate, A.RegisterAdmission, A.CandidateWithdrew, A.AdmissionNoShow, A.CorrectCandidate, A.CorrectRegistration,
+  A.ApproveCandidate, A.CandidateWithdrew, A.AdmissionNoShow, A.CorrectCandidate, A.CorrectRegistration,
 ]);
 
 export const actionsFor = (p, user) => Object.keys(ALLOWED_ROLES).filter((a) => roleAllows(p, user, a) && statusAllows(p, a));
@@ -181,8 +182,12 @@ export const terminationDto = (t) => ({
 
 // ---------------------------------------------------------------- LGPD e evidências
 
-/** Quem vê os dados completos do candidato: RH do pedido (analistas responsáveis e Gestor de RH), NACC e DP. */
-export const canSeeFullCandidate = (user, order) => RhAccess.canAct(user, order) || hasAnyRole(user, [Roles.Nacc, Roles.Dp]);
+/**
+ * Quem vê os dados completos do candidato: RH do pedido (analistas responsáveis e Gestor de RH), NACC, DP e o
+ * Responsável por Admissões (precisa de telefone, nascimento e CPF para admitir).
+ */
+export const canSeeFullCandidate = (user, order) => RhAccess.canAct(user, order)
+  || hasAnyRole(user, [Roles.Nacc, Roles.Dp, Roles.Admissions]);
 
 /** Quem baixa as evidências da posição: RH do pedido, NACC, DP e Gestor. */
 export const canDownloadEvidence = (user, order) => canSeeFullCandidate(user, order) || hasRole(user, Roles.Manager);

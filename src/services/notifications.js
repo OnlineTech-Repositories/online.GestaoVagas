@@ -20,6 +20,7 @@ export const links = {
   orderStale: (id) => `${config.baseUrl}/#/pedidos/${id}?paradas=1`,
   contractRates: () => `${config.baseUrl}/#/valores`,
   firstDayPending: () => `${config.baseUrl}/#/confirmacoes-1o-dia`,
+  admissionsPending: () => `${config.baseUrl}/#/admissoes-pendentes`,
   dashboard: () => `${config.baseUrl}/#/`,
 };
 

@@ -315,9 +315,9 @@ test('Candidatos em lote: o RH vê o painel no pedido e a janela de importação
   assert.doesNotMatch(commercial.textContent, /Candidatos em lote/);
 });
 
-test('Admissões em lote: o RH vê o painel no pedido e a janela de importação abre; o Comercial não vê', async (t) => {
+test('Admissões em lote: o Responsável por Admissões vê o painel no pedido e a janela abre; RH e Comercial não veem', async (t) => {
   if (skip(t)) return;
-  await signIn('gestor.rh@demo.local');
+  await signIn('admissoes@demo.local');
   const orders = await apiModule.api.get('/api/orders');
   let target = null;
   for (const o of orders.items ?? orders) {
@@ -327,7 +327,7 @@ test('Admissões em lote: o RH vê o painel no pedido e a janela de importação
       break;
     }
   }
-  assert.ok(target, 'há pedido aprovado em que o RH registra admissões');
+  assert.ok(target, 'há pedido aprovado em que o Responsável por Admissões registra admissões');
   const root = await open(`/pedidos/${target.summary.id}`, 'Pedido');
   assert.match(root.textContent, /Admissões em lote/);
   if (target.admissionImport.pending) {
@@ -339,9 +339,11 @@ test('Admissões em lote: o RH vê o painel no pedido e a janela de importação
     assert.match(root.textContent, /Nenhuma posição aguardando admissão/);
   }
 
-  await signIn('comercial@demo.local');
-  const commercial = await open(`/pedidos/${target.summary.id}`, 'Pedido');
-  assert.doesNotMatch(commercial.textContent, /Admissões em lote/);
+  for (const email of ['comercial@demo.local', 'gestor.rh@demo.local']) {
+    await signIn(email);
+    const other = await open(`/pedidos/${target.summary.id}`, 'Pedido');
+    assert.doesNotMatch(other.textContent, /Admissões em lote/, email);
+  }
 });
 
 test('1º dia em lote: o NACC marca os que compareceram, aplica data e justificativa e revisa antes de gravar', async (t) => {
@@ -1027,7 +1029,11 @@ test('Candidato selecionado: nome, telefone e sexo no cadastro; nascimento e CPF
   const pendingScreen = await open(`/posicoes/${first}`, 'Posição');
   assert.match(pendingScreen.textContent, /Informado na admissão/);
 
+  // O RH não registra mais a admissão (perfil próprio desde 26/10/2026).
+  assert.ok(![...pendingScreen.querySelectorAll('button')].some((b) => b.textContent === 'Registrar admissão'));
+
   // "Registrar admissão": nome e sexo para conferência, telefone do cadastro, nascimento e CPF obrigatórios.
+  await signIn('admissoes@demo.local');
   const admissionScreen = await open(`/posicoes/${first}`, 'Posição');
   [...admissionScreen.querySelectorAll('button')].find((b) => b.textContent === 'Registrar admissão').click();
   const admissionModal = document.getElementById('modal-area').querySelector('.modal');
@@ -1048,6 +1054,7 @@ test('Candidato selecionado: nome, telefone e sexo no cadastro; nascimento e CPF
     (e) => e.status === 422 && 'cpf' in e.fields && /já é o candidato selecionado da posição/.test(e.message));
 
   // Correção: quem alterou e quando; os valores anteriores ficam no histórico. Depois da admissão, com nascimento e CPF.
+  await signIn('rh@demo.local');
   await assert.rejects(apiModule.api.put(`/api/positions/${first}/candidate`, { ...candidate, justification: null }),
     (e) => e.status === 422 && 'birthDate' in e.fields);
   const corrected = await apiModule.api.put(`/api/positions/${first}/candidate`, {
@@ -1121,6 +1128,7 @@ test('1º dia efetivo: dados do candidato e da admissão preenchidos, justificat
   await apiModule.api.post(`/api/positions/${positionId}/candidate-approval`, { date: todayIso, justification: null,
     fullName: 'Francisco Teste', phone: '(11) 94444-5555', sex: 'MALE' });
   // Admissão sem matrícula (opcional): o NACC ainda não consegue confirmar.
+  await signIn('admissoes@demo.local');
   const admitted = await apiModule.api.post(`/api/positions/${positionId}/admission`,
     { date: todayIso, registration: null, justification: null, birthDate: '1992-07-20', cpf: '935.411.347-80' });
   assert.equal(admitted.admissionRegistration, null);
@@ -1230,6 +1238,7 @@ test('Reposição como novo ciclo da vaga: uma linha por vaga, histórico de ocu
   await apiModule.api.post(`/api/orders/${orderId}/jobconvo`, { published: true, code: 'JC-CICLO', publishedAt: todayIso, justification: null });
   await apiModule.api.post(`/api/positions/${originId}/candidate-approval`, { date: todayIso, justification: null,
     fullName: 'Primeiro Ocupante', phone: '(11) 95555-6666', sex: 'MALE' });
+  await signIn('admissoes@demo.local');
   await apiModule.api.post(`/api/positions/${originId}/admission`, {
     date: todayIso, registration: 'M-CICLO-1', justification: null, birthDate: '1990-05-05', cpf: '274.628.610-62',
   });

@@ -47,6 +47,7 @@ export async function seedDemoData(password) {
     [Roles.Dp, 'Davi DP (demo)', 'dp@demo.local'],
     [Roles.Rh, 'Rita RH (demo)', 'rh@demo.local'],
     [Roles.RhManager, 'Helena Gestora de RH (demo)', 'gestor.rh@demo.local'],
+    [Roles.Admissions, 'Amanda Admissões (demo)', 'admissoes@demo.local'],
     [Roles.Manager, 'Gustavo Gestor (demo)', 'gestor@demo.local'],
     [Roles.Controllership, 'Clara Controladoria (demo)', 'controladoria@demo.local'],
     [Roles.Admin, 'Alice Administradora (demo)', 'admin@demo.local'],

@@ -370,3 +370,16 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     fecha qualquer janela de ação aberta (antes, confirmada depois, ela valia para a tela anterior). A busca de
     posições encontra o candidato ativo pelo nome antes do 1º dia. "Confirmar em lote" na tela "Confirmações do 1º
     dia" aparece só ao NACC.
+36. **Perfil "Responsável por Admissões" e admissões pendentes (melhoria pedida pelo usuário em 26/10/2026):** perfil
+    novo (`ADMISSIONS`), o único que registra admissões — individuais e por planilha —, em qualquer pedido aprovado
+    (decisões do usuário: todos os pedidos; o RH deixa de admitir). Também informa/corrige a matrícula e registra o
+    "não compareceu" antes do 1º dia; não seleciona candidatos, não aprova pedidos e não confirma o 1º dia. Vê os
+    dados completos do candidato. Tela "Admissões pendentes" (perfil, Gestor de RH e Administrador acompanham) com
+    os candidatos selecionados por pedido — candidato, telefone, posição, cliente/unidade, cargo, vaga nova ou
+    reposição, data da seleção e tempo de espera —; a linha abre a posição e "Admitir em lote" abre a importação da
+    planilha no pedido. Aviso a cada seleção (sino e e-mail; a importação de candidatos gera um aviso só por pedido)
+    e resumo diário por e-mail no horário `ADMISSIONS_DIGEST_TIME` (padrão 07:00, dias úteis), enquanto houver
+    pendência, uma vez por dia. Admitida, com desistência ou cancelada, a posição sai da relação e dos avisos;
+    admissão duplicada é recusada e o histórico guarda usuário, data e hora. "Candidato selecionado" deixa de gerar
+    o alerta de "sem atualização" (o resumo das admissões o substitui). Usuário de demonstração:
+    admissoes@demo.local.

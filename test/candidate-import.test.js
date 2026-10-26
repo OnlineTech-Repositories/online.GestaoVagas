@@ -225,6 +225,12 @@ test('confirmação: grava com as regras do cadastro individual, registra a impo
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.equal(r.data.imported, 2);
 
+  // Seleção em lote: um aviso só, por pedido, a cada Responsável por Admissões (nenhum por posição).
+  const admissionUsers = await query("SELECT DISTINCT u.id FROM users u JOIN user_roles r ON r.user_id = u.id WHERE u.active = 1 AND r.role = 'ADMISSIONS'");
+  const notices = await query("SELECT user_id, entity_id, message FROM notifications WHERE type = 'ADMISSION_PENDING'");
+  assert.equal(notices.length, admissionUsers.length);
+  assert.ok(notices.every((x) => x.entity_id === order.summary.id && /2 candidatos selecionados aguardam/.test(x.message)));
+
   const positions = await query('SELECT id, status FROM positions WHERE id IN (?, ?)', rows[0].positionId, rows[1].positionId);
   assert.ok(positions.every((p) => p.status === 'CANDIDATE_APPROVED'));
   const ana = await queryOne('SELECT * FROM candidates WHERE position_id = ?', rows[0].positionId);

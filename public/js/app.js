@@ -13,6 +13,7 @@ import { catalogsScreen } from './views/catalogs.js';
 import { reportsScreen } from './views/reports.js';
 import { rhDashboardScreen } from './views/rh-dashboard.js';
 import { firstDayPendingScreen } from './views/first-day-pending.js';
+import { admissionsPendingScreen } from './views/admissions-pending.js';
 import { notificationsScreen } from './views/notifications.js';
 
 /**
@@ -42,6 +43,8 @@ const isAdmin = (u) => hasRole(u, 'ADMIN');
 const canSeeRhDashboard = (u) => hasRole(u, 'RH_MANAGER', 'MANAGER', 'ADMIN', 'RH');
 /** Confirmações do 1º dia pendentes: quem confirma (NACC) e o Administrador. */
 const canSeeFirstDayPending = (u) => hasRole(u, 'NACC', 'ADMIN');
+/** Admissões pendentes: quem admite (Responsável por Admissões); Gestor de RH e Administrador acompanham. */
+const canSeeAdmissionsPending = (u) => hasRole(u, 'ADMISSIONS', 'RH_MANAGER', 'ADMIN');
 
 // ---------------------------------------------------------------------
 // Rotas
@@ -73,6 +76,13 @@ const ROUTES = [
     section: 'Operação',
     render: terminationScreen,
     requires: (u) => hasRole(u, 'DP', 'NACC'),
+  },
+  {
+    pattern: /^\/admissoes-pendentes$/,
+    title: 'Admissões pendentes',
+    section: 'Operação',
+    render: admissionsPendingScreen,
+    requires: canSeeAdmissionsPending,
   },
   {
     pattern: /^\/confirmacoes-1o-dia$/,
@@ -148,6 +158,7 @@ const MENU_ITEMS = [
   { href: '/posicoes', icon: '▤', label: 'Posições' },
   { href: '/pedidos', icon: '▣', label: 'Pedidos' },
   { href: '/pedidos/novo', icon: '◇', label: 'Novo pedido', visible: canCreateOrder },
+  { href: '/admissoes-pendentes', icon: '✎', label: 'Admissões pendentes', visible: canSeeAdmissionsPending },
   { href: '/confirmacoes-1o-dia', icon: '✓', label: 'Confirmações do 1º dia', visible: canSeeFirstDayPending },
   { href: '/desligamentos/novo', icon: '⊘', label: 'Registrar desligamento', visible: hasAny('DP', 'NACC') },
   { group: 'Gestão' },
