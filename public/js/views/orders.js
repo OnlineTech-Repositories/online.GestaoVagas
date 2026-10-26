@@ -3,7 +3,7 @@ import {
   el, clear, field, table, panel, panelNoPadding, loading, detail, date, label, LABELS, options, termFields, formData,
   applyErrors, requireFields, orNull, intOrNull, today, toast, button, formModal, positionColumns, positionRowClass,
   locationLabel, validationError, approvalTag, dateTime, rhTeam, rhFilterOptions, checkGroup, checkedValues,
-  statusTag, cycleLabel, modal, errorMessage, moneyField, money, rateTag,
+  statusTag, cycleLabel, modal, errorMessage, moneyField, money, rateTag, cnpjField, cnpj,
 } from '../ui.js';
 import { navigate, state, canCreateOrder, hasRole } from '../app.js';
 
@@ -142,7 +142,14 @@ export async function newOrderScreen(target) {
       options: [{ value: '', label: contract ? 'Selecione' : 'Escolha o contrato' },
         ...modalities.map((m) => ({ value: m, label: LABELS.modality[m] }))],
     }));
-    // Contrato com unidade contratante: o pedido usa essa unidade, sem escolha.
+    renderLocation(contract);
+  }
+
+  /**
+   * Local de trabalho. Contrato com unidade contratante: o pedido usa essa unidade, sem escolha. Nos demais, o
+   * Comercial pode cadastrar uma unidade nova do cliente sem sair do pedido (melhoria de 26/10/2026).
+   */
+  function renderLocation(contract, selected = '') {
     const fixed = contract?.contractingUnitId ? locations.find((l) => l.id === contract.contractingUnitId) : null;
     const available = fixed
       ? [fixed]
@@ -152,10 +159,65 @@ export async function newOrderScreen(target) {
       label: 'Local de trabalho / unidade',
       type: 'select',
       required: true,
-      value: fixed?.id ?? '',
+      value: fixed?.id ?? selected,
       options: [...(fixed ? [] : [{ value: '', label: 'Selecione' }]), ...available.map((l) => ({ value: l.id, label: locationLabel(l) }))],
       help: fixed ? 'Unidade contratante do contrato (fixa).' : contract?.clientId ? 'Unidades do cliente e locais gerais.' : null,
-    }));
+    }), ...(commercial && contract && !fixed
+      ? [el('div', { class: 'barra-botoes mb-16' }, button('+ Cadastrar novo local de trabalho', () => openNewUnit(contract), 'secundario pequeno'))]
+      : []));
+  }
+
+  /** Unidade nova do cliente: consulta às já cadastradas (evita duplicar) e o cadastro com código, nome e CNPJ. */
+  function openNewUnit(contract) {
+    const existing = locations.filter((l) => l.clientId === contract.clientId && l.active);
+    const listArea = el('div', { class: 'mb-16' });
+    const search = field({ name: 'busca', label: `Locais já cadastrados de ${contract.clientName}`,
+      placeholder: 'Buscar por código, nome ou CNPJ' });
+    const searchInput = search.querySelector('input');
+    function renderList() {
+      const term = searchInput.value.trim().toLowerCase();
+      const digits = term.replace(/\D/g, '');
+      const items = existing.filter((l) => !term || `${l.code ?? ''} ${l.name}`.toLowerCase().includes(term)
+        || (digits.length >= 3 && String(l.cnpj ?? '').includes(digits)));
+      clear(listArea).append(items.length
+        ? table([
+          { title: 'Unidade', render: (l) => locationLabel(l) },
+          { title: 'CNPJ', cls: 'nowrap', render: (l) => (l.cnpj ? cnpj(l.cnpj) : '—') },
+          { title: '', cls: 'acoes', render: (l) => button('Usar no pedido', () => {
+            renderLocation(contract, l.id);
+            reference.close();
+          }, 'secundario pequeno') },
+        ], items.slice(0, 30))
+        : el('p', { class: 'texto-fraco texto-pequeno mb-0' },
+          existing.length ? 'Nenhuma unidade encontrada com esse termo.' : 'O cliente ainda não tem unidades cadastradas.'));
+    }
+    searchInput.addEventListener('input', renderList);
+    // Enter na busca não envia o cadastro.
+    searchInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') event.preventDefault(); });
+    renderList();
+    const reference = formModal({
+      title: 'Cadastrar novo local de trabalho',
+      wide: true,
+      intro: el('div', {},
+        el('p', { class: 'texto-suave' }, 'Confira se a unidade já existe antes de cadastrar. A unidade nova fica no cadastro do '
+          + 'cliente, disponível nos próximos pedidos; a unidade contratante dos contratos não muda.'),
+        search, listArea,
+        el('h3', { class: 'grafico-titulo' }, 'Nova unidade do cliente')),
+      fields: [
+        el('div', { class: 'linha-campos' },
+          field({ name: 'code', label: 'Código da unidade', required: true, attributes: { maxlength: '30' }, help: 'Ex.: Loja 45, CD-02.' }),
+          field({ name: 'name', label: 'Nome da unidade', required: true, attributes: { maxlength: '120' } })),
+        cnpjField({ name: 'cnpj', label: 'CNPJ da unidade' }),
+      ],
+      submitText: 'Cadastrar e usar no pedido',
+      submit: async (d) => {
+        requireFields(d, { code: 'O código', name: 'O nome', cnpj: 'O CNPJ' });
+        const created = await api.post(`/api/clients/${contract.clientId}/units`, { code: d.code, name: d.name, cnpj: d.cnpj });
+        locations.push(created);
+        renderLocation(contract, created.id);
+        toast(`Unidade ${locationLabel(created)} cadastrada e selecionada no pedido.`, 'sucesso');
+      },
+    });
   }
   /** Comercial: todos os cargos ativos do catálogo; o valor aprovado vigente, se houver, preenche os valores. */
   function renderCatalogRoles(selected = '') {

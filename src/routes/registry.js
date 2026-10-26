@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { route } from '../middleware.js';
 import * as catalogs from '../services/catalogs.js';
-import { getContractDto, listClients, listContracts, saveClient, saveContract } from '../services/clients.js';
+import { addClientUnit, getContractDto, listClients, listContracts, saveClient, saveContract } from '../services/clients.js';
 import { routeId } from '../services/input.js';
 import { listParameters, updateParameter } from '../services/parameters.js';
 import { createRate, currentRate, listRates, rejectRate, updateRate, validateRate } from '../services/rates.js';
@@ -17,6 +17,8 @@ export const clientRoutes = Router();
 clientRoutes.get('/', json((req) => listClients(req.ctx)));
 clientRoutes.post('/', json((req) => saveClient(req.ctx, null, req.body)));
 clientRoutes.put(`/:id${ID}`, json((req) => saveClient(req.ctx, idParam(req), req.body)));
+// Unidade nova cadastrada na criação do pedido (Comercial).
+clientRoutes.post(`/:id${ID}/units`, json((req) => addClientUnit(req.ctx, idParam(req), req.body)));
 
 export const contractRoutes = Router();
 contractRoutes.get('/', json((req) => listContracts(req.ctx, {

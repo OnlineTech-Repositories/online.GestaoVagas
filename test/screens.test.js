@@ -1385,3 +1385,42 @@ test('Pedido com valores comerciais: o valor aprovado vem preenchido, alterar av
   assert.match(validated.textContent, /Validado pela Controladoria · Clara Controladoria/);
   assert.ok([...validated.querySelectorAll('button')].some((b) => b.textContent === 'Registrar aprovação do cliente'));
 });
+
+test('Local de trabalho no pedido: o Comercial consulta as unidades, cadastra uma nova e ela já fica selecionada', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const base = String(Date.now()).slice(-8).padStart(8, '0');
+  const client = await apiModule.api.post('/api/clients', {
+    legalName: `Cliente Local ${base}`, cnpj: validCnpj(`${base}0101`), active: true, hasMultipleUnits: false, units: [] });
+  const groups = await apiModule.api.get('/api/catalogs/group-entities');
+  const contract = await apiModule.api.post('/api/contracts', {
+    clientId: client.id, contractingUnitId: null, groupEntityId: groups[0].id, modalities: ['MOT'], startDate: ui.today(),
+    endDate: null, commercialOwnerId: app.state.user.id, slaNewDays: null, slaReplacementDays: null });
+
+  const root = await open('/pedidos/novo', 'Novo pedido');
+  const select = root.querySelector('[data-campo="contractId"]').querySelector('select');
+  select.value = contract.id;
+  select.dispatchEvent(new Event('change'));
+  await wait(100);
+  const register = [...root.querySelectorAll('button')].find((b) => b.textContent === '+ Cadastrar novo local de trabalho');
+  assert.ok(register, 'ação ao lado do local');
+  register.click();
+  const area = document.getElementById('modal-area');
+  assert.match(area.textContent, /O cliente ainda não tem unidades cadastradas/);
+  const set = (name, value) => { area.querySelector(`[data-campo="${name}"]`).querySelector('input').value = value; };
+  set('code', 'LJ-77');
+  set('name', 'Loja Setenta e Sete');
+  set('cnpj', validCnpj(`${base}0102`));
+  [...area.querySelectorAll('button')].find((b) => b.textContent === 'Cadastrar e usar no pedido').click();
+  await wait(200);
+  const location = root.querySelector('[data-campo="workLocationId"]').querySelector('select');
+  const created = (await apiModule.api.get('/api/catalogs/work-locations')).find((l) => l.code === 'LJ-77' && l.clientId === client.id);
+  assert.ok(created, 'unidade gravada no cliente');
+  // O DOM mínimo não deriva o valor do select da opção marcada: confere a opção.
+  assert.equal([...location.querySelectorAll('option')].find((o) => o.value === created.id)?.getAttribute('selected'), '', 'selecionada no pedido');
+
+  // Na próxima vez, a consulta mostra a unidade e permite usá-la direto.
+  [...root.querySelectorAll('button')].find((b) => b.textContent === '+ Cadastrar novo local de trabalho').click();
+  assert.match(document.getElementById('modal-area').textContent, /LJ-77 — Loja Setenta e Sete/);
+  document.getElementById('modal-area').querySelector('.modal-fechar').click();
+});

@@ -2,7 +2,7 @@ import { query, queryOne } from '../db/index.js';
 import { entity } from '../db/model.js';
 import { getById, getContract, listContracts as listContractRows, userHasRole, userNames } from '../db/repository.js';
 import { today as todayDate, utcNow, yearOf } from '../domain/dates.js';
-import { BusinessRuleError, NotFoundError } from '../domain/errors.js';
+import { BusinessRuleError, NotFoundError, WarningsPendingError } from '../domain/errors.js';
 import { ContractStatus, Modality, Roles } from '../domain/enums.js';
 import { Cnpj, ContractCode, DateGuard, Permissions } from '../domain/guards.js';
 import { Input, isId } from './input.js';
@@ -68,6 +68,51 @@ export async function saveClient(ctx, id, body) {
   client.hasMultipleUnits = hasMultipleUnits;
   await ctx.uow.save({ action: id ? 'UPDATE' : 'CREATE' });
   return clientDto(client, units);
+}
+
+/**
+ * Unidade nova cadastrada pelo Comercial durante a criação do pedido (melhoria de 26/10/2026): as mesmas exigências
+ * do cadastro do cliente (código, nome e CNPJ obrigatórios; código sem repetição no cliente; CNPJ válido e único no
+ * sistema). Nome igual ao de outra unidade do cliente pede confirmação (aviso, não recusa). O cliente passa a ter
+ * "múltiplas unidades"; contratos existentes continuam com a unidade contratante que tinham (ou o cliente principal).
+ * Quem cadastrou, quando e o vínculo com o cliente ficam no histórico; o pedido grava o local escolhido.
+ */
+export async function addClientUnit(ctx, clientId, body) {
+  Permissions.require(ctx.user, Roles.Commercial, Roles.Admin);
+  const input = new Input(body);
+  const code = DateGuard.requireText(input.text('code'), 'Informe o código da unidade.', 'code');
+  const name = DateGuard.requireText(input.text('name'), 'Informe o nome da unidade.', 'name');
+  const rawCnpj = input.text('cnpj');
+  input.done();
+  const cnpj = Cnpj.require(DateGuard.requireText(rawCnpj, 'Informe o CNPJ da unidade.', 'cnpj'), 'cnpj');
+
+  const client = await getById(ctx.uow, 'Client', 'clients', clientId);
+  if (!client) throw new NotFoundError('Cliente não encontrado.');
+  if (!client.active) throw new BusinessRuleError('O cliente está inativo: não é possível cadastrar unidades.');
+  const current = ctx.uow.loadAll('WorkLocation',
+    await query('SELECT * FROM work_locations WHERE client_id = ? AND removed_at IS NULL', client.id));
+  const sameCode = current.find((u) => String(u.code ?? '').toLowerCase() === code.toLowerCase());
+  if (sameCode) throw new BusinessRuleError(`O cliente já tem a unidade de código "${sameCode.code}" (${sameCode.name}).`, 'code');
+  const sameCnpj = current.find((u) => u.cnpj === cnpj);
+  if (sameCnpj) throw new BusinessRuleError(`Este CNPJ já é o da unidade "${sameCnpj.code} — ${sameCnpj.name}" deste cliente.`, 'cnpj');
+  const sameName = current.find((u) => u.name.trim().toLowerCase() === name.toLowerCase());
+  if (sameName && !ctx.confirmWarnings) {
+    throw new WarningsPendingError([{ kind: 'DUPLICATE', message: `O cliente já tem a unidade "${sameName.code} — ${sameName.name}". `
+      + 'Confira se não é a mesma antes de cadastrar outra.' }]);
+  }
+
+  let units;
+  try {
+    units = await saveUnits(ctx, client, false, true, [...current.map(unitDto), { id: null, code, name, cnpj }]);
+  } catch (error) {
+    // O que sobra das validações do cadastro do cliente é a unicidade do CNPJ no sistema.
+    if (error instanceof BusinessRuleError && error.field === 'units') throw new BusinessRuleError(error.message, 'cnpj');
+    throw error;
+  }
+  client.hasMultipleUnits = true;
+  await ctx.uow.save({ action: 'CREATE_UNIT' });
+  const unit = units.find((u) => u.code === code);
+  return { id: unit.id, name: unit.name, code: unit.code, cnpj: unit.cnpj, clientId: client.id, clientName: client.legalName, active: true };
 }
 
 /**
@@ -215,7 +260,10 @@ export async function saveContract(ctx, id, body) {
   }
   const client = await getById(ctx.uow, 'Client', 'clients', clientId);
   if (!client) throw new BusinessRuleError('Cliente não encontrado.', 'clientId');
-  const unit = await validateContractingUnit(ctx, client, contractingUnitId);
+  const existing = id ? await getById(ctx.uow, 'Contract', 'contracts', id) : null;
+  if (id && !existing) throw new NotFoundError('Contrato não encontrado.');
+  // Contrato criado no cliente principal continua assim quando o cliente ganha unidades depois.
+  const unit = await validateContractingUnit(ctx, client, contractingUnitId, Boolean(existing && !existing.contractingUnitId));
   if (!(await getById(ctx.uow, 'GroupEntity', 'group_entities', groupEntityId))) {
     throw new BusinessRuleError('CNPJ do Grupo não encontrado.', 'groupEntityId');
   }
@@ -231,8 +279,7 @@ export async function saveContract(ctx, id, body) {
       name: await nextContractCode(unit?.code ?? client.legalName),
     }));
   } else {
-    contract = await getById(ctx.uow, 'Contract', 'contracts', id);
-    if (!contract) throw new NotFoundError('Contrato não encontrado.');
+    contract = existing;
     // O código foi gerado a partir do cliente e da unidade: os dois ficam fixos depois de criado o contrato.
     if (contract.clientId !== clientId || (contract.contractingUnitId ?? null) !== (contractingUnitId ?? null)) {
       throw new BusinessRuleError(
@@ -256,9 +303,10 @@ export async function saveContract(ctx, id, body) {
 
 /**
  * Cliente com unidades exige a unidade contratante, que precisa ser dele e estar ativa; cliente sem unidades fica
- * vinculado ao cliente principal (sem unidade).
+ * vinculado ao cliente principal (sem unidade). `keepMain`: contrato já existente no cliente principal (o cliente
+ * ganhou unidades depois), que segue sem unidade contratante.
  */
-async function validateContractingUnit(ctx, client, unitId) {
+async function validateContractingUnit(ctx, client, unitId, keepMain = false) {
   const units = ctx.uow.loadAll('WorkLocation',
     await query('SELECT * FROM work_locations WHERE client_id = ? AND removed_at IS NULL', client.id));
   if (units.length === 0) {
@@ -267,6 +315,7 @@ async function validateContractingUnit(ctx, client, unitId) {
     }
     return null;
   }
+  if (!unitId && keepMain) return null;
   if (!unitId) throw new BusinessRuleError('Selecione a unidade contratante.', 'contractingUnitId');
   const unit = units.find((u) => u.id === unitId);
   if (!unit) throw new BusinessRuleError('A unidade contratante não pertence a este cliente.', 'contractingUnitId');

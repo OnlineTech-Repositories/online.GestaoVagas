@@ -121,7 +121,9 @@ async function request(method, path, body, confirmed = false, background = false
     if (response.status === 422 && data?.avisos?.length && !confirmed && warningHandler) {
       const answer = await warningHandler(data);
       if (!answer) {
-        throw new ApiError('Nada foi salvo: confira as datas e salve novamente.', { status: 422, code: 'cancelled' });
+        const dates = data.avisos.every((a) => ['RETROACTIVE', 'FUTURE', 'SEQUENCE'].includes(a.tipo));
+        throw new ApiError(dates ? 'Nada foi salvo: confira as datas e salve novamente.' : 'Nada foi salvo.',
+          { status: 422, code: 'cancelled' });
       }
       return request(method, path, withJustification(body, data.justificativa, answer.justification), true);
     }

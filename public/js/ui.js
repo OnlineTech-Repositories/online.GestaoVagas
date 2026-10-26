@@ -408,7 +408,10 @@ export function confirm({ title, message, confirmText = 'Confirmar', danger = fa
   });
 }
 
-const WARNING_TITLE = { RETROACTIVE: 'Registro retroativo', FUTURE: 'Registro futuro', SEQUENCE: 'Sequência divergente' };
+const WARNING_TITLE = {
+  RETROACTIVE: 'Registro retroativo', FUTURE: 'Registro futuro', SEQUENCE: 'Sequência divergente', DUPLICATE: 'Possível duplicidade',
+};
+const DATE_WARNINGS = new Set(['RETROACTIVE', 'FUTURE', 'SEQUENCE']);
 
 /**
  * Avisos de data antes de salvar (resposta 422 com `avisos`): lista cada um com a data e o motivo e deixa concluir.
@@ -441,7 +444,7 @@ export function confirmWarnings(problem) {
     } }, 'Salvar mesmo assim');
 
     const reference = modal({
-      title: 'Confira as datas antes de salvar',
+      title: problem.avisos.every((a) => DATE_WARNINGS.has(a.tipo)) ? 'Confira as datas antes de salvar' : 'Confira antes de salvar',
       body: [
         element('ul', { class: 'lista-avisos' }, ...problem.avisos.map((a) => element('li', { class: `aviso-${a.tipo.toLowerCase()}` },
           element('strong', {}, WARNING_TITLE[a.tipo] ?? 'Aviso'), element('span', {}, a.mensagem)))),

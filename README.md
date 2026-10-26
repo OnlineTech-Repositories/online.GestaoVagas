@@ -401,3 +401,13 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     quando e os valores de cada momento. Avisos (sino e e-mail): à Controladoria no envio e no reenvio; ao Comercial na
     devolução. Mesma vigência de um valor já validado com outro valor é recusada (alteração = nova versão). Pedidos
     criados sem os valores (API e carga inicial pelo NACC) seguem a regra antiga: exigem o valor validado vigente.
+38. **Local de trabalho cadastrado pelo Comercial no pedido (melhoria pedida pelo usuário em 26/10/2026):** ao lado de
+    "Local de trabalho / unidade", "+ Cadastrar novo local de trabalho" abre uma janela sem perder o que já foi
+    preenchido. Ela lista as unidades já cadastradas do cliente, com busca por código, nome ou CNPJ e "Usar no
+    pedido", e cadastra uma unidade nova do cliente (decisão do usuário) com código, nome e CNPJ obrigatórios — as
+    regras do cadastro do cliente: CNPJ válido e único no sistema, código sem repetição no cliente. Nome igual ao de
+    outra unidade do cliente pede confirmação ("Possível duplicidade"). Salva, a unidade fica no cadastro do cliente,
+    já selecionada no pedido e disponível nos próximos; o cliente passa a ter "múltiplas unidades". Contrato com
+    unidade contratante continua com o local fixo nessa unidade, sem a ação (decisão do usuário); a unidade
+    contratante dos contratos não muda, e o contrato criado no cliente principal continua editável depois que o
+    cliente ganha unidades. O histórico guarda quem cadastrou, quando e o cliente; o pedido grava o local escolhido.
