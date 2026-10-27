@@ -27,8 +27,11 @@ export const OrderStatus = values('IN_PROGRESS', 'FULFILLED', 'CANCELLED');
 export const OrderApprovalStatus = values('AWAITING_CONTROLLERSHIP', 'AWAITING_CLIENT_APPROVAL', 'APPROVED', 'NOT_APPROVED');
 /** Solicitação de validação do pedido pela Controladoria (vazia quando o pedido usou o valor já validado). */
 export const ControllershipStatus = values('PENDING', 'RETURNED', 'VALIDATED');
-/** Histórico da solicitação: envio, devolução para ajustes, reenvio e validação. */
-export const OrderReviewAction = values('SUBMITTED', 'RETURNED', 'RESUBMITTED', 'VALIDATED');
+/**
+ * Histórico da solicitação: envio, devolução para ajustes, reenvio e validação. REVALIDATION_REQUESTED: a edição
+ * administrativa alterou cargo ou valores de um pedido já validado (o pedido segue; a alteração aguarda a decisão).
+ */
+export const OrderReviewAction = values('SUBMITTED', 'RETURNED', 'RESUBMITTED', 'VALIDATED', 'REVALIDATION_REQUESTED');
 export const CandidateSex = values('FEMALE', 'MALE', 'NOT_INFORMED');
 /** FIRST_DAY: comparecimento no 1º dia. HEADCOUNT_REDUCTION: solicitação do cliente para reduzir o quadro. */
 export const EvidenceKind = values('FIRST_DAY', 'HEADCOUNT_REDUCTION');
@@ -175,6 +178,7 @@ export const NotificationTypes = Object.freeze({
   AdmissionPending: 'ADMISSION_PENDING',
   OrderReviewPending: 'ORDER_REVIEW_PENDING',
   OrderReviewReturned: 'ORDER_REVIEW_RETURNED',
+  OrderReviewValidated: 'ORDER_REVIEW_VALIDATED',
 });
 
 /** Alertas da rotina diária registrados em position_alerts (um por posição; vaga parada, um por período parado). */

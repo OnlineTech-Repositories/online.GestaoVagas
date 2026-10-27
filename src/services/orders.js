@@ -27,6 +27,7 @@ import { DateReview } from './date-review.js';
 import { orderFields } from './notice-fields.js';
 import { slaFor, validatedRateAt } from './snapshots.js';
 import { inReview, notifyReviewPending, readCommercialValues, resolveOrderRate, reviewDto, startReview } from './order-review.js';
+import { adminEditsDto } from './order-edit.js';
 
 /** Pedidos: criação (RN-01 a RN-05), aprovação do cliente, JobConvo, analistas de RH e correção de datas. */
 
@@ -414,6 +415,15 @@ export async function getOrderDetail(ctx, id) {
       && !inReview(order),
     // Cargo e valores comerciais (só para quem vê valores) e a validação da Controladoria.
     ...(await reviewDto(ctx, order, showMoney)),
+    // Edição administrativa (ADMIN): dados para o formulário e o histórico, que todos os perfis do pedido consultam.
+    adminEdit: hasRole(ctx.user, Roles.Admin) && !order.isLegacy ? {
+      contractModalities: order.contract?.modalities ?? [],
+      clientId: order.contract?.clientId ?? null,
+      contractingUnitId: order.contract?.contractingUnitId ?? null,
+      clientDecided: order.approvalStatus === OrderApprovalStatus.APPROVED || order.approvalStatus === OrderApprovalStatus.NOT_APPROVED,
+      values: await currentValues(ctx, order),
+    } : null,
+    adminEdits: await adminEditsDto(order, showMoney),
     candidateImport: canImportCandidates(ctx.user, order) ? { pending: eligiblePositions(order).length } : null,
     admissionImport: canImportAdmissions(ctx.user, order) ? { pending: eligibleForAdmission(order).length } : null,
     firstDayBatch: firstDayBatchInfo(ctx.user, order),
@@ -617,6 +627,12 @@ export async function rejectOrder(ctx, id, body) {
 }
 
 // ---------------------------------------------------------------- auxiliares
+
+/** Valor atual do pedido para preencher a edição: o gravado no pedido ou, nos antigos, o validado vigente no registro. */
+async function currentValues(ctx, order) {
+  const rate = order.rate ?? await validatedRateAt(ctx.uow, order.contractId, order.jobRoleId, order.registeredAt);
+  return rate ? { monthlyValue: rate.monthlyValue, feeValue: rate.feeValue, validFrom: rate.validFrom } : null;
+}
 
 export async function requireOrder(ctx, id) {
   const order = await getOrder(ctx.uow, id);

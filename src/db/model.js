@@ -45,10 +45,15 @@ export const ENTITIES = {
     jobconvoPublished: 'bool', jobconvoCode: 'text', jobconvoPublishedAt: 'date', jobconvoNotes: 'text',
     jobconvoRecordedAt: 'datetime', jobconvoRecordedBy: 'text', rateId: 'text', controllershipStatus: 'text',
     controllershipDecidedAt: 'datetime', controllershipDecidedBy: 'text', controllershipReason: 'text',
+    pendingRateId: 'text',
   }),
   OrderReview: define('order_reviews', {
     orderId: 'text', action: 'text', userId: 'text', occurredAt: 'datetime', reason: 'text', jobRoleId: 'text',
     monthlyValue: 'decimal', feeValue: 'decimal', validFrom: 'date', rateId: 'text',
+  }, { audited: false }),
+  /** Edição administrativa do pedido: quem, quando, justificativa e os campos (JSON: rótulo, antes, depois). */
+  OrderAdminEdit: define('order_admin_edits', {
+    orderId: 'text', userId: 'text', occurredAt: 'datetime', justification: 'text', changes: 'text', revalidation: 'bool',
   }, { audited: false }),
   Position: define('positions', {
     orderId: 'text', sequence: 'int', slotNumber: 'int', cycle: 'int', demandType: 'text', originPositionId: 'text',
@@ -101,7 +106,7 @@ export const ENTITIES = {
  * de inserção: pais antes dos filhos, por causa das chaves estrangeiras.
  */
 export const RELATIONS = {
-  Order: ['positions', 'rhAnalysts', 'reviews'],
+  Order: ['positions', 'rhAnalysts', 'reviews', 'adminEdits'],
   Position: ['exitTermination', 'pauses', 'candidates', 'evidences'],
   Termination: ['replacementPosition'],
   PositionEvidence: ['file'],
@@ -110,7 +115,7 @@ export const RELATIONS = {
 /** Ordem de inserção entre tipos (pais primeiro). */
 export const INSERT_ORDER = [
   'User', 'GroupEntity', 'Client', 'JobRole', 'WorkLocation', 'PauseReason', 'SlaTarget', 'SystemParameter', 'Contract',
-  'ContractRate', 'Order', 'OrderReview', 'Position', 'Termination', 'Pause', 'OrderRhAnalyst', 'Candidate', 'EvidenceFile',
+  'ContractRate', 'Order', 'OrderReview', 'OrderAdminEdit', 'Position', 'Termination', 'Pause', 'OrderRhAnalyst', 'Candidate', 'EvidenceFile',
   'PositionEvidence', 'PositionAlert', 'Notification', 'EmailMessage', 'JobRun',
 ];
 

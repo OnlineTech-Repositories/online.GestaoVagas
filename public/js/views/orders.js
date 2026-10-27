@@ -521,6 +521,7 @@ export async function orderDetailScreen(target, id, query) {
       o.canAddPositions ? button('Acrescentar posições', () => openAddPositions(o, reload)) : null,
       o.headcountReduction ? button('Reduzir posições', () => openReducePositions(o, reload), 'secundario') : null,
       o.canCorrectDates ? button('Corrigir datas', () => openCorrectDates(o, reload), 'secundario') : null,
+      o.adminEdit ? button('Editar pedido', () => openAdminEdit(o, reload), 'secundario') : null,
     ];
 
     // Painéis que não se aplicam ao perfil ou ao pedido ficam de fora (antes, o append nativo escrevia "null").
@@ -585,6 +586,7 @@ export async function orderDetailScreen(target, id, query) {
       o.candidateImport ? sheetImportPanel(o, reload, 'candidates') : null,
       o.admissionImport ? sheetImportPanel(o, reload, 'admissions') : null,
       o.firstDayBatch ? firstDayBatchPanel(o, reload) : null,
+      o.adminEdits?.length ? adminEditsPanel(o) : null,
       panel('Descrição da vaga', o.jobDescription
         ? el('div', { class: 'texto-livre' }, o.jobDescription)
         : el('p', { class: 'texto-fraco mb-0' }, 'Nenhuma descrição informada.')),
@@ -604,6 +606,7 @@ export async function orderDetailScreen(target, id, query) {
 
 const REVIEW_ACTIONS = {
   SUBMITTED: ['Enviado à Controladoria', ''],
+  REVALIDATION_REQUESTED: ['Alteração enviada à Controladoria (edição administrativa)', ''],
   RETURNED: ['Devolvido para ajustes', 'devolver'],
   RESUBMITTED: ['Ajustado e reenviado', ''],
   VALIDATED: ['Validado pela Controladoria', 'aprovar'],
@@ -628,6 +631,12 @@ function reviewPanel(o, reload) {
         : null,
       c?.status === 'RETURNED' && c.reason
         ? el('div', { class: 'mensagem erro' }, el('strong', {}, 'Motivo da devolução'), c.reason)
+        : null,
+      c?.revalidation
+        ? el('div', { class: 'mensagem alerta' },
+          el('strong', {}, 'Alteração de cargo e valores aguardando a Controladoria.'),
+          `Proposta da edição administrativa: ${[c.revalidation.jobRoleName, valueText(c.revalidation)].filter(Boolean).join(' · ')}. `
+          + 'O pedido segue com o cargo e o valor abaixo até a validação.')
         : null,
       v ? el('div', { class: 'detalhe-grade' },
         detail('Cargo', v.jobRoleName),
@@ -715,6 +724,176 @@ async function openResubmitReview(order, reload) {
       reload(updated);
     },
   });
+}
+
+// ---------------------------------------------------------------------
+// Edição administrativa (ADMIN)
+// ---------------------------------------------------------------------
+
+/** Histórico das edições administrativas: quem, quando, justificativa e os campos antes e depois. */
+function adminEditsPanel(o) {
+  return panel('Edições administrativas', el('ul', { class: 'linha-tempo' }, ...o.adminEdits.map((e) => el('li', {},
+    el('div', {}, el('span', { class: 'quem' }, 'Pedido editado'), e.userName ? ` · ${e.userName}` : ''),
+    el('div', { class: 'quando' }, dateTime(e.occurredAt)),
+    el('div', { class: 'motivo' }, e.justification),
+    table([
+      { title: 'Campo', field: 'label' },
+      { title: 'Antes', render: (c) => el('span', { class: 'texto-livre' }, c.before) },
+      { title: 'Depois', render: (c) => el('span', { class: 'texto-livre' }, c.after) },
+    ], e.changes, { dense: true }),
+    e.revalidation
+      ? el('div', { class: 'texto-pequeno texto-fraco' }, 'Cargo e valores enviados à revalidação da Controladoria (ver "Cargo e valores comerciais").')
+      : null))));
+}
+
+/**
+ * "Editar pedido": formulário com os dados atuais; "Revisar alterações" mostra os campos que mudam (antes e depois) e
+ * os efeitos, pede a justificativa e só grava na confirmação. Cargo e valores alterados num pedido já validado vão para
+ * a Controladoria sem parar o pedido.
+ */
+async function openAdminEdit(order, reload) {
+  const s = order.summary;
+  const cfg = order.adminEdit;
+  const [roles, locations] = await Promise.all([api.get('/api/catalogs/job-roles'), api.get('/api/catalogs/work-locations')]);
+  const fixed = cfg.contractingUnitId ? locations.find((l) => l.id === cfg.contractingUnitId) : null;
+  const available = fixed ? [fixed]
+    : locations.filter((l) => (l.active && (!l.clientId || l.clientId === cfg.clientId)) || l.id === order.workLocationId);
+  const v = cfg.values ?? {};
+  const form = el('form', { novalidate: true },
+    el('div', { class: 'linha-campos' },
+      field({ name: 'modality', label: 'Modalidade', type: 'select', required: true, value: s.modality,
+        options: cfg.contractModalities.map((m) => ({ value: m, label: LABELS.modality[m] })) }),
+      field({ name: 'workLocationId', label: 'Local de trabalho / unidade', type: 'select', required: true, value: order.workLocationId,
+        options: available.map((l) => ({ value: l.id, label: locationLabel(l) })),
+        help: fixed ? 'Unidade contratante do contrato (fixa).' : null })),
+    el('fieldset', {}, el('legend', {}, 'Cargo e valores comerciais'),
+      searchSelect({ name: 'jobRoleId', label: 'Cargo', required: true, value: order.jobRoleId,
+        options: roles.filter((j) => j.active || j.id === order.jobRoleId).map((j) => ({ value: j.id, label: j.name })),
+        placeholder: 'Digite o nome do cargo para pesquisar', emptyText: 'Nenhum cargo encontrado' }),
+      el('div', { class: 'linha-campos' },
+        moneyField({ name: 'monthlyValue', label: 'Valor mensal de venda', value: v.monthlyValue ?? '',
+          help: 'Base do valor diário (÷30). Dispensado em contrato só de R&S.' }),
+        moneyField({ name: 'feeValue', label: 'Fee R&S (informativo)', value: v.feeValue ?? '' }),
+        field({ name: 'rateValidFrom', label: 'Início da vigência do valor', type: 'date', required: true, value: v.validFrom ?? '' })),
+      el('p', { class: 'texto-fraco texto-pequeno mb-0' },
+        'Alterados num pedido já validado, cargo e valores vão para a Controladoria; o pedido segue com o valor atual até a validação.')),
+    el('div', { class: 'linha-campos' },
+      field({ name: 'clientRequestDate', label: 'Solicitação do cliente', type: 'date', required: true, value: s.clientRequestDate }),
+      field({ name: 'desiredStartDate', label: 'Início desejado', type: 'date', required: true, value: s.desiredStartDate }),
+      field({ name: 'registeredAt', label: 'Data de registro', type: 'date', required: true, value: s.registeredAt }),
+      cfg.clientDecided
+        ? field({ name: 'clientDecisionDate', label: s.approvalStatus === 'NOT_APPROVED' ? 'Recusa do cliente' : 'Aprovação do cliente',
+          type: 'date', required: true, value: s.clientDecisionDate ?? '' })
+        : ''),
+    el('div', { class: 'linha-campos' }, ...termFields(order.termType, order.termEndDate, order.termDurationDays)),
+    field({ name: 'notes', label: 'Observações', type: 'textarea', value: order.notes ?? '', attributes: { maxlength: '2000' } }),
+    field({ name: 'jobDescription', label: 'Descrição da vaga', type: 'textarea', value: order.jobDescription ?? '',
+      attributes: { maxlength: '4000', rows: '5' } }),
+    el('p', { class: 'texto-fraco texto-pequeno mb-0' },
+      'Modalidade, vigência e início desejado atualizam as posições ainda em aberto; preenchidas e encerradas ficam como estão. '
+      + 'O contrato não muda; a quantidade segue com "Acrescentar posições" e "Reduzir posições".'));
+
+  const reviewArea = el('div', { class: 'oculto' });
+  const body = el('div', {}, form, reviewArea);
+  const num = (x) => (orNull(x) === null ? null : Number(x));
+  const payload = () => {
+    const d = formData(form);
+    requireFields(d, {
+      modality: 'A modalidade', workLocationId: 'O local', jobRoleId: 'O cargo', rateValidFrom: 'O início da vigência do valor',
+      clientRequestDate: 'A data da solicitação', desiredStartDate: 'O início desejado', registeredAt: 'A data de registro',
+      ...(cfg.clientDecided ? { clientDecisionDate: 'A data da decisão do cliente' } : {}),
+    });
+    return {
+      modality: d.modality, jobRoleId: d.jobRoleId, workLocationId: d.workLocationId,
+      clientRequestDate: d.clientRequestDate, desiredStartDate: d.desiredStartDate, registeredAt: d.registeredAt,
+      clientDecisionDate: cfg.clientDecided ? d.clientDecisionDate : null,
+      termType: d.termType,
+      termEndDate: d.termType === 'FIXED_END' ? orNull(d.termEndDate) : null,
+      termDurationDays: d.termType === 'PRESERVED_DURATION' ? intOrNull(d.termDurationDays) : null,
+      notes: orNull(d.notes), jobDescription: orNull(d.jobDescription),
+      monthlyValue: num(d.monthlyValue), feeValue: num(d.feeValue), rateValidFrom: orNull(d.rateValidFrom),
+    };
+  };
+
+  let pending = null;
+  const backButton = button('Voltar e editar', () => step(1), 'secundario oculto');
+  const reviewButton = button('Revisar alterações', review);
+  const saveButton = button('Confirmar e salvar', save, 'oculto');
+  const reference = modal({
+    title: `Editar pedido ${s.number}`,
+    body,
+    wide: true,
+    footer: [button('Cancelar', () => reference.close(), 'secundario'), backButton, reviewButton, saveButton],
+  });
+
+  function step(n) {
+    form.classList.toggle('oculto', n !== 1);
+    reviewArea.classList.toggle('oculto', n !== 2);
+    backButton.classList.toggle('oculto', n !== 2);
+    saveButton.classList.toggle('oculto', n !== 2);
+    reviewButton.classList.toggle('oculto', n !== 1);
+  }
+
+  function showError(error) {
+    step(1);
+    form.querySelector('.mensagem.erro')?.remove();
+    form.prepend(applyErrors(form, error));
+  }
+
+  async function review() {
+    reviewButton.disabled = true;
+    form.querySelector('.mensagem.erro')?.remove();
+    try {
+      pending = payload();
+      const result = await api.post(`/api/orders/${s.id}/admin-edit/preview`, pending);
+      clear(reviewArea).append(
+        el('p', {}, `Confira as alterações do pedido ${s.number} antes de salvar:`),
+        table([
+          { title: 'Campo', field: 'label' },
+          { title: 'Antes', render: (c) => el('span', { class: 'texto-livre' }, c.before) },
+          { title: 'Depois', render: (c) => el('strong', { class: 'texto-livre' }, c.after) },
+        ], result.changes, { dense: true }),
+        result.impacts.length
+          ? el('div', { class: `mensagem ${result.revalidation ? 'alerta' : 'info'}` }, el('strong', {}, 'Efeitos da edição'),
+            el('ul', {}, ...result.impacts.map((t) => el('li', {}, t))))
+          : '',
+        field({ name: 'justification', label: 'Justificativa da alteração', type: 'textarea', required: true,
+          help: 'Fica no histórico do pedido com o administrador, a data e os campos alterados.' }),
+      );
+      step(2);
+    } catch (error) {
+      showError(error);
+    } finally {
+      reviewButton.disabled = false;
+    }
+  }
+
+  async function save() {
+    const justification = reviewArea.querySelector('textarea').value.trim();
+    const block = reviewArea.querySelector('[data-campo="justification"]');
+    block.querySelector('.erro-campo')?.remove();
+    if (!justification) {
+      block.classList.add('com-erro');
+      block.append(el('div', { class: 'erro-campo' }, 'Informe a justificativa da alteração.'));
+      return;
+    }
+    saveButton.disabled = true;
+    try {
+      const updated = await api.post(`/api/orders/${s.id}/admin-edit`, { ...pending, justification });
+      reference.close();
+      toast(`Pedido ${s.number} atualizado.`, 'sucesso');
+      reload(updated);
+    } catch (error) {
+      if (error.fields?.justification) {
+        block.classList.add('com-erro');
+        block.append(el('div', { class: 'erro-campo' }, error.fields.justification));
+      } else {
+        showError(error);
+      }
+    } finally {
+      saveButton.disabled = false;
+    }
+  }
 }
 
 /** Quantidade vigente e a composição: solicitada no registro, acréscimos e reduções do quadro. */

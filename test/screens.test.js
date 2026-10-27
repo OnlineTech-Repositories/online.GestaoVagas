@@ -1477,3 +1477,39 @@ test('Cargo do pedido com pesquisa: filtra em qualquer parte, sem acento nem mai
   await wait(200); // o fechamento espera um instante (clique na opção chega antes)
   assert.deepEqual([hidden.value, input.value], [expected[1].id, expected[1].name]);
 });
+
+test('Editar pedido (ADMIN): revisa os campos alterados, pede justificativa e mostra o histórico', async (t) => {
+  if (skip(t)) return;
+  await signIn('admin@demo.local');
+  const orders = await apiModule.api.get('/api/orders', { approvalStatus: 'APPROVED' });
+  const target = (orders.items ?? orders).find((o) => !o.isLegacy);
+  const root = await open(`/pedidos/${target.id}`, 'Pedido');
+  [...root.querySelectorAll('button')].find((b) => b.textContent === 'Editar pedido').click();
+  await wait(150);
+  const area = document.getElementById('modal-area');
+  assert.match(area.textContent, /Editar pedido/);
+  // O DOM mínimo não deriva o valor do select da opção marcada: repõe os valores atuais.
+  const detail = await apiModule.api.get(`/api/orders/${target.id}`);
+  for (const [name, value] of [['modality', detail.summary.modality], ['workLocationId', detail.workLocationId], ['termType', detail.termType]]) {
+    area.querySelector(`[data-campo="${name}"]`).querySelector('select').value = value;
+  }
+  area.querySelector('[data-campo="notes"]').querySelector('textarea').value = 'Observação corrigida pelo administrador.';
+  [...area.querySelectorAll('button')].find((b) => b.textContent === 'Revisar alterações').click();
+  await wait(200);
+  assert.match(area.textContent, /Confira as alterações/);
+  assert.match(area.textContent, /Observação corrigida pelo administrador/);
+  const saveButton = [...area.querySelectorAll('button')].find((b) => b.textContent === 'Confirmar e salvar');
+  saveButton.click();
+  assert.match(area.textContent, /Informe a justificativa da alteração/);
+  area.querySelector('[data-campo="justification"]').querySelector('textarea').value = 'Texto anterior estava incompleto.';
+  saveButton.click();
+  await wait(250);
+  const updated = document.getElementById('app');
+  assert.match(updated.textContent, /Edições administrativas/);
+  assert.match(updated.textContent, /Texto anterior estava incompleto/);
+
+  await signIn('comercial@demo.local');
+  const asCommercial = await open(`/pedidos/${target.id}`, 'Pedido');
+  assert.ok(![...asCommercial.querySelectorAll('button')].some((b) => b.textContent === 'Editar pedido'), 'só o ADMIN edita');
+  assert.match(asCommercial.textContent, /Edições administrativas/, 'o histórico é consultado por quem vê o pedido');
+});

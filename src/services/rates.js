@@ -3,7 +3,7 @@ import { entity } from '../db/model.js';
 import { attachRateRefs, getById, getContract, listWithoutRate, userNames } from '../db/repository.js';
 import { formatBr, utcNow } from '../domain/dates.js';
 import { BusinessRuleError, ForbiddenError, NotFoundError } from '../domain/errors.js';
-import { Modality, NotificationTypes, OrderApprovalStatus, RateStatus, Roles } from '../domain/enums.js';
+import { Modality, NotificationTypes, RateStatus, Roles } from '../domain/enums.js';
 import { DateGuard, Permissions } from '../domain/guards.js';
 import { Input } from './input.js';
 import { rateFields } from './notice-fields.js';
@@ -25,7 +25,7 @@ export function checkRateValues(contract, monthlyValue, feeValue) {
 
 /** Valor proposto por um pedido ainda em validação: decide-se no próprio pedido (fluxo integrado de 26/10/2026). */
 function ensureNotInOrderReview(rate) {
-  if (rate.originOrder?.approvalStatus === OrderApprovalStatus.AWAITING_CONTROLLERSHIP) {
+  if (rate.originOrder?.inReview) {
     throw new BusinessRuleError(`Este valor faz parte do pedido ${rate.originOrder.number}, em validação pela Controladoria: `
       + 'valide, devolva ou ajuste pelo próprio pedido.');
   }
@@ -255,7 +255,7 @@ async function toDtos(rates) {
     order: r.originOrder ? {
       id: r.originOrder.id,
       number: r.originOrder.number,
-      inReview: r.originOrder.approvalStatus === OrderApprovalStatus.AWAITING_CONTROLLERSHIP,
+      inReview: r.originOrder.inReview,
     } : null,
   }));
 }

@@ -418,3 +418,20 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     campo sem escolher volta ao cargo que estava selecionado. Sem correspondência, aparece "Nenhum cargo encontrado"
     e "+ Cadastrar cargo" continua disponível conforme o perfil. Os cargos oferecidos seguem as regras de antes
     (catálogo ativo para o Comercial; cargos com valor validado no contrato para o NACC na carga inicial).
+40. **Edição administrativa do pedido (melhoria pedida pelo usuário em 26/10/2026):** "Editar pedido", só para o ADMIN,
+    em qualquer etapa (exceto o pedido de desligamento avulso), sem cancelar nem recriar. Edita tudo menos o contrato
+    (decisão do usuário): modalidade, cargo, local, datas (solicitação, início desejado, registro e decisão do
+    cliente), vigência, observações, descrição e valores comerciais; a quantidade segue com "Acrescentar posições" e
+    "Reduzir posições". "Revisar alterações" mostra os campos que mudam, com o valor anterior e o novo, e os efeitos
+    da edição; a gravação só acontece com a justificativa, na confirmação. O pedido não volta às etapas iniciais:
+    modalidade (meta de SLA recalculada), vigência e início desejado atualizam as posições ainda em aberto, e
+    preenchidas e encerradas ficam como estão (decisão do usuário); a data de aprovação corrigida acompanha as vagas
+    abertas nela, como na correção de datas. Cargo ou valores alterados num pedido já validado (decisão do usuário)
+    viram uma versão pendente em Valores por cargo, que a Controladoria valida ou devolve no próprio pedido. Enquanto
+    isso, o pedido segue na etapa em que está, com o cargo e o valor atuais. Validada, as posições em aberto passam
+    ao novo valor; devolvida, nada muda. O histórico da validação guarda a aprovação anterior e a nova. Se o valor
+    informado já estiver validado para o cargo, vale na hora. Com o pedido ainda em validação pela Controladoria,
+    cargo e valores seguem o fluxo de devolução e reenvio. Histórico permanente no pedido ("Edições
+    administrativas"): administrador, data e hora, justificativa, campos antes e depois e a revalidação. Todos os
+    perfis do pedido consultam; valores em R$ só quem vê valores (decisão do usuário). O log de auditoria também
+    registra a edição.

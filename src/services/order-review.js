@@ -26,6 +26,8 @@ import { validatedRateAt } from './snapshots.js';
  */
 
 export const inReview = (order) => order.approvalStatus === A.AWAITING_CONTROLLERSHIP;
+/** Alteração de cargo e valores feita pela edição administrativa, aguardando a Controladoria (o pedido segue). */
+export const inRevalidation = (order) => !inReview(order) && Boolean(order.pendingRateId);
 
 /** Valores informados no pedido; null quando nenhum veio (o pedido usa o valor validado vigente, como antes). */
 export function readCommercialValues(input) {
@@ -38,7 +40,7 @@ export function readCommercialValues(input) {
 }
 
 const same = (a, b) => (a === null || a === undefined ? null : Number(a)) === (b === null || b === undefined ? null : Number(b));
-const sameValues = (rate, v) => same(rate.monthlyValue, round2(v.monthlyValue)) && same(rate.feeValue, round2(v.feeValue))
+export const sameValues = (rate, v) => same(rate.monthlyValue, round2(v.monthlyValue)) && same(rate.feeValue, round2(v.feeValue))
   && rate.validFrom === v.validFrom;
 
 /**
@@ -101,8 +103,9 @@ export function startReview(ctx, order, rate) {
 /** Controladoria valida: o valor entra em Valores por cargo e o pedido segue para a aprovação do cliente. */
 export async function validateOrderReview(ctx, id) {
   Permissions.require(ctx.user, Roles.Controllership);
-  const order = await requireReview(ctx, id, ControllershipStatus.PENDING);
+  const order = await requireDecision(ctx, id);
   ensureNotAuthor(ctx, order);
+  if (inRevalidation(order)) return decideRevalidation(ctx, order, null);
   const rate = order.rate;
   const now = utcNow();
   if (rate.status !== RateStatus.VALIDATED) {
@@ -134,8 +137,9 @@ export async function returnOrderReview(ctx, id, body) {
   const rawReason = input.text('reason');
   input.done();
   const reason = DateGuard.requireText(rawReason, 'Informe o motivo da devolução.', 'reason');
-  const order = await requireReview(ctx, id, ControllershipStatus.PENDING);
+  const order = await requireDecision(ctx, id);
   ensureNotAuthor(ctx, order);
+  if (inRevalidation(order)) return decideRevalidation(ctx, order, reason);
   const rate = order.rate;
   const now = utcNow();
   if (rate.orderId === order.id && rate.status === RateStatus.PENDING) {
@@ -198,8 +202,67 @@ export async function resubmitOrderReview(ctx, id, body) {
   return getOrderDetail(ctx, order.id);
 }
 
-/** Aviso à Controladoria: pedido novo (ou reenviado) aguardando a validação do cargo e dos valores. */
+/**
+ * Decisão da Controladoria sobre a alteração administrativa de cargo e valores (o pedido não parou). Validada, o
+ * pedido passa ao cargo e ao valor novos e as posições em aberto recebem o valor; devolvida (`reason`), o valor
+ * proposto fica rejeitado e o pedido segue com o cargo e o valor anteriores. A validação anterior fica no histórico.
+ */
+async function decideRevalidation(ctx, order, reason) {
+  const rate = order.pendingRate;
+  const now = utcNow();
+  const editor = [...(order.reviews ?? [])].reverse().find((r) => r.action === OrderReviewAction.REVALIDATION_REQUESTED)?.userId;
+  if (reason === null) {
+    Object.assign(rate, { status: RateStatus.VALIDATED, validatedBy: ctx.user.id, validatedAt: now, rejectionReason: null });
+    order.jobRoleId = rate.jobRoleId;
+    order.jobRole = rate.jobRole ?? await getById(ctx.uow, 'JobRole', 'job_roles', rate.jobRoleId);
+    order.rateId = rate.id;
+    order.rate = rate;
+    // Todas as posições em aberto passam ao novo valor; preenchidas e encerradas ficam com o que tinham (decisão do usuário).
+    for (const p of order.positions.filter((x) => isOpen(x) && !x.exitTermination)) {
+      p.rateId = rate.id;
+      p.rate = rate;
+    }
+    order.controllershipStatus = ControllershipStatus.VALIDATED;
+    order.controllershipReason = null;
+  } else {
+    Object.assign(rate, { status: RateStatus.REJECTED, rejectionReason: reason, validatedBy: ctx.user.id, validatedAt: now });
+    const validatedBefore = (order.reviews ?? []).some((r) => r.action === OrderReviewAction.VALIDATED);
+    order.controllershipStatus = validatedBefore ? ControllershipStatus.VALIDATED : null;
+    order.controllershipReason = reason;
+  }
+  order.pendingRateId = null;
+  order.pendingRate = null;
+  order.controllershipDecidedAt = now;
+  order.controllershipDecidedBy = ctx.user.id;
+  record(ctx, order, reason === null ? OrderReviewAction.VALIDATED : OrderReviewAction.RETURNED, rate, reason);
+  const validated = reason === null;
+  await notify(ctx.uow, {
+    type: validated ? NotificationTypes.OrderReviewValidated : NotificationTypes.OrderReviewReturned,
+    entityId: order.id,
+    subject: `Alteração de valores ${validated ? 'validada' : 'devolvida'} pela Controladoria · Pedido ${order.number}`,
+    message: validated
+      ? `A Controladoria validou a alteração de cargo e valores do pedido ${order.number}: ${rate.jobRole?.name ?? order.jobRole?.name}, `
+        + `${describeValue(rate)}, vigência a partir de ${formatBr(rate.validFrom)}.`
+      : `A Controladoria devolveu a alteração de cargo e valores do pedido ${order.number}; o pedido segue com o cargo e o `
+        + `valor anteriores. Motivo: ${reason}`,
+    link: links.order(order.id),
+    email: {
+      title: `Alteração de valores ${validated ? 'validada' : 'devolvida'} pela Controladoria`,
+      summary: validated
+        ? 'O pedido passa a usar o cargo e o valor validados; as posições em aberto recebem o novo valor.'
+        : 'A alteração feita na edição administrativa foi devolvida; o pedido segue com o cargo e o valor anteriores.',
+      status: validated ? { label: 'Validada', tone: 'success' } : { label: 'Devolvida', tone: 'danger' },
+      fields: [...orderFields(order), ...valueFields(rate), ...(validated ? [] : [['Motivo da devolução', reason, { strong: true }]])],
+      button: 'Consultar pedido',
+    },
+  }, { userIds: [editor, order.contract?.commercialOwnerId].filter(Boolean) });
+  await ctx.uow.save({ action: validated ? 'VALIDATE_ORDER_REVALIDATION' : 'RETURN_ORDER_REVALIDATION', justification: reason });
+  return getOrderDetail(ctx, order.id);
+}
+
+/** Aviso à Controladoria: pedido novo, reenviado ou com alteração administrativa aguardando a validação. */
 export function notifyReviewPending(ctx, order, resubmitted = false) {
+  if (resubmitted === 'revalidation') return notifyRevalidationPending(ctx, order);
   const title = resubmitted ? 'Pedido ajustado, aguardando validação da Controladoria' : 'Pedido aguardando validação da Controladoria';
   return notify(ctx.uow, {
     type: NotificationTypes.OrderReviewPending,
@@ -222,9 +285,31 @@ export function notifyReviewPending(ctx, order, resubmitted = false) {
   }, { roles: [Roles.Controllership] });
 }
 
+function notifyRevalidationPending(ctx, order) {
+  const rate = order.pendingRate;
+  return notify(ctx.uow, {
+    type: NotificationTypes.OrderReviewPending,
+    entityId: order.id,
+    subject: `Alteração de valores aguardando validação da Controladoria · Pedido ${order.number}`,
+    message: `O Administrador alterou o cargo ou os valores do pedido ${order.number} (${order.contract?.client?.legalName}). `
+      + 'O pedido segue com o valor atual até a validação da Controladoria.',
+    link: links.order(order.id),
+    email: {
+      title: 'Alteração de valores aguardando validação da Controladoria',
+      summary: 'A edição administrativa alterou o cargo ou os valores comerciais de um pedido já validado. O pedido segue na '
+        + 'etapa em que está, com o valor atual, até a decisão da Controladoria.',
+      status: { label: 'Aguardando validação da Controladoria', tone: 'warning' },
+      fields: [...orderFields(order), ['Cargo proposto', rate.jobRole?.name], ...valueFields(rate)],
+      action: 'Controladoria: valide ou devolva a alteração no próprio pedido.',
+      button: 'Validar alteração',
+    },
+  }, { roles: [Roles.Controllership] });
+}
+
 /** Bloco "Validação da Controladoria" do detalhe: situação, valores propostos, histórico e ações permitidas. */
 export async function reviewDto(ctx, order, showMoney) {
-  const rate = order.rate;
+  // Pedidos anteriores ao fluxo integrado não gravam o valor: vale o validado vigente no registro.
+  const rate = order.rate ?? (order.isLegacy ? null : await validatedRateAt(ctx.uow, order.contractId, order.jobRoleId, order.registeredAt));
   const values = showMoney && rate ? {
     rateId: rate.id,
     jobRoleName: rate.jobRole?.name ?? order.jobRole?.name ?? '',
@@ -234,19 +319,28 @@ export async function reviewDto(ctx, order, showMoney) {
     validFrom: rate.validFrom,
     status: rate.status,
   } : null;
-  if (!order.controllershipStatus) return { values, controllership: null };
-
   const reviews = order.reviews ?? [];
+  if (!order.controllershipStatus && !reviews.length) return { values, controllership: null };
+
   const names = await userNames([...reviews.map((r) => r.userId)]);
   const roleIds = [...new Set(reviews.map((r) => r.jobRoleId).filter(Boolean))];
   const roles = roleIds.length
     ? await query(`SELECT id, name FROM job_roles WHERE id IN (${roleIds.map(() => '?').join(', ')})`, ...roleIds)
     : [];
-  const pending = inReview(order) && order.controllershipStatus === ControllershipStatus.PENDING;
+  const pending = order.controllershipStatus === ControllershipStatus.PENDING && (inReview(order) || inRevalidation(order));
+  const proposed = order.pendingRate;
   return {
     values,
     controllership: {
       status: order.controllershipStatus,
+      // Alteração administrativa aguardando a decisão (o pedido segue com `values` até lá).
+      revalidation: inRevalidation(order) ? {
+        jobRoleName: proposed?.jobRole?.name ?? null,
+        ...(showMoney && proposed ? {
+          monthlyValue: proposed.monthlyValue, feeValue: proposed.feeValue, validFrom: proposed.validFrom,
+          dailyValue: proposed.monthlyValue === null ? null : dailyOf(proposed.monthlyValue),
+        } : {}),
+      } : null,
       reason: order.controllershipReason,
       history: reviews.map((r) => ({
         action: r.action,
@@ -266,13 +360,23 @@ export async function reviewDto(ctx, order, showMoney) {
 
 // ---------------------------------------------------------------- auxiliares
 
-function record(ctx, order, action, rate, reason = null) {
+export function record(ctx, order, action, rate, reason = null) {
   order.reviews ??= [];
   order.reviews.push(entity('OrderReview', {
     orderId: order.id, action, userId: ctx.user.id, occurredAt: utcNow(), reason,
     jobRoleId: rate?.jobRoleId ?? order.jobRoleId, monthlyValue: rate?.monthlyValue ?? null,
     feeValue: rate?.feeValue ?? null, validFrom: rate?.validFrom ?? null, rateId: rate?.id ?? null,
   }));
+}
+
+/** Algo aguardando a decisão da Controladoria: o pedido em validação ou a alteração administrativa. */
+async function requireDecision(ctx, id) {
+  const order = await requireOrder(ctx, id);
+  if (order.controllershipStatus === ControllershipStatus.PENDING && (inReview(order) || inRevalidation(order))) return order;
+  if (inReview(order) && order.controllershipStatus === ControllershipStatus.RETURNED) {
+    throw new BusinessRuleError('O pedido foi devolvido para ajustes: aguarde o reenvio do Comercial.');
+  }
+  throw new BusinessRuleError('O pedido não tem cargo e valores aguardando a validação da Controladoria.');
 }
 
 async function requireReview(ctx, id, status) {
@@ -288,7 +392,7 @@ async function requireReview(ctx, id, status) {
 
 /** Quem enviou ou reenviou a solicitação (e quem criou o pedido): recebe a devolução e não pode validar. */
 const authorsOf = (order) => [...new Set([order.createdBy, ...(order.reviews ?? [])
-  .filter((r) => r.action === OrderReviewAction.SUBMITTED || r.action === OrderReviewAction.RESUBMITTED)
+  .filter((r) => [OrderReviewAction.SUBMITTED, OrderReviewAction.RESUBMITTED, OrderReviewAction.REVALIDATION_REQUESTED].includes(r.action))
   .map((r) => r.userId)].filter(Boolean))];
 
 /** Segregação, como em Valores por cargo: quem propôs o valor não o valida. */

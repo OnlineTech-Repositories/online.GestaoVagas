@@ -64,7 +64,11 @@ export async function attachRateRefs(uow, rates) {
     r.contract = contracts.find((c) => c.id === r.contractId) ?? null;
     r.jobRole = roles.find((j) => j.id === r.jobRoleId) ?? null;
     const order = orders.find((o) => o.id === r.orderId);
-    r.originOrder = order ? { id: order.id, number: Number(order.number), approvalStatus: order.approval_status } : null;
+    r.originOrder = order ? {
+      id: order.id, number: Number(order.number), approvalStatus: order.approval_status,
+      // Em validação no pedido: o pedido inteiro (fluxo do Comercial) ou esta alteração administrativa.
+      inReview: order.approval_status === 'AWAITING_CONTROLLERSHIP' || order.pending_rate_id === r.id,
+    } : null;
   }
   return rates;
 }
@@ -90,17 +94,23 @@ async function attachOrderRefs(uow, orders) {
     'ORDER BY assigned_at, id'));
   const reviews = uow.loadAll('OrderReview', await rowsIn('order_reviews', 'order_id', orders.map((o) => o.id),
     'ORDER BY occurred_at, id'));
-  const rates = uow.loadAll('ContractRate', await rowsIn('contract_rates', 'id', orders.map((o) => o.rateId).filter(Boolean)));
+  const adminEdits = uow.loadAll('OrderAdminEdit', await rowsIn('order_admin_edits', 'order_id', orders.map((o) => o.id),
+    'ORDER BY occurred_at, id'));
+  const rates = uow.loadAll('ContractRate', await rowsIn('contract_rates', 'id',
+    orders.flatMap((o) => [o.rateId, o.pendingRateId]).filter(Boolean)));
+  const rateRoles = uow.loadAll('JobRole', await rowsIn('job_roles', 'id', rates.map((r) => r.jobRoleId)));
   for (const o of orders) {
     o.contract = contracts.find((c) => c.id === o.contractId) ?? null;
     o.jobRole = roles.find((j) => j.id === o.jobRoleId) ?? null;
     o.workLocation = locations.find((l) => l.id === o.workLocationId) ?? null;
     o.rhAnalysts = analysts.filter((a) => a.orderId === o.id);
     o.reviews = reviews.filter((r) => r.orderId === o.id);
+    o.adminEdits = adminEdits.filter((e) => e.orderId === o.id);
     o.rate = rates.find((r) => r.id === o.rateId) ?? null;
-    if (o.rate) {
-      o.rate.contract ??= o.contract;
-      o.rate.jobRole ??= roles.find((j) => j.id === o.rate.jobRoleId) ?? null;
+    o.pendingRate = rates.find((r) => r.id === o.pendingRateId) ?? null;
+    for (const rate of [o.rate, o.pendingRate].filter(Boolean)) {
+      rate.contract ??= o.contract;
+      rate.jobRole ??= rateRoles.find((j) => j.id === rate.jobRoleId) ?? null;
     }
   }
   return orders;

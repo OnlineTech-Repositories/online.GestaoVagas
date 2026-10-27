@@ -153,6 +153,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_contract_rates ON contract_rates (contract_
 
 -- rate_id: valor por cargo usado no pedido. controllership_*: validação da Controladoria quando o Comercial informa
 -- valor novo ou alterado (vazia quando o pedido usou o valor já validado); controllership_reason = última devolução.
+-- pending_rate_id: cargo e valor alterados pela edição administrativa, aguardando a Controladoria (o pedido segue com
+-- rate_id até a validação).
 CREATE TABLE IF NOT EXISTS orders (
   id TEXT PRIMARY KEY,
   number INTEGER NOT NULL,
@@ -186,6 +188,7 @@ CREATE TABLE IF NOT EXISTS orders (
   controllership_decided_at TEXT,
   controllership_decided_by TEXT,
   controllership_reason TEXT,
+  pending_rate_id TEXT,
   created_at TEXT NOT NULL, created_by TEXT, updated_at TEXT, updated_by TEXT, version INTEGER NOT NULL DEFAULT 0,
   CHECK (desired_start_date >= client_request_date)
 );
@@ -208,6 +211,20 @@ CREATE TABLE IF NOT EXISTS order_reviews (
   created_at TEXT NOT NULL, created_by TEXT, updated_at TEXT, updated_by TEXT, version INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS ix_order_reviews_order ON order_reviews (order_id, occurred_at);
+
+-- Edições administrativas do pedido (ADMIN, 26/10/2026): permanentes, com a justificativa e os campos alterados
+-- (changes: JSON com rótulo, valor anterior e novo; `money` marca os valores em R$).
+CREATE TABLE IF NOT EXISTS order_admin_edits (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES orders (id),
+  user_id TEXT,
+  occurred_at TEXT NOT NULL,
+  justification TEXT NOT NULL,
+  changes TEXT NOT NULL,
+  revalidation INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL, created_by TEXT, updated_at TEXT, updated_by TEXT, version INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ix_order_admin_edits_order ON order_admin_edits (order_id, occurred_at);
 
 -- Posição: cada vaga individual do pedido. slot_number = número da vaga; cycle = 1 (vaga nova) ou 2+ (reposições).
 -- termination_id não tem chave estrangeira: positions e terminations se referenciam mutuamente.

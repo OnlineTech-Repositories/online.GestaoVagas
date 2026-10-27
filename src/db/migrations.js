@@ -32,6 +32,8 @@ export const ADDED_COLUMNS = [
   ['orders', 'controllership_decided_at', 'TEXT'],
   ['orders', 'controllership_decided_by', 'TEXT'],
   ['orders', 'controllership_reason', 'TEXT'],
+  // Edição administrativa do pedido (26/10/2026): alteração de cargo e valores aguardando a Controladoria.
+  ['orders', 'pending_rate_id', 'TEXT'],
 ];
 
 /**
@@ -58,7 +60,7 @@ export const DOTNET_DATABASE_ERROR =
 export const NO_DELETE_TABLES = [
   'clients', 'contracts', 'contract_rates', 'orders', 'positions', 'terminations', 'pauses', 'group_entities',
   'job_roles', 'work_locations', 'pause_reasons', 'sla_targets', 'system_parameters', 'users', 'order_rh_analysts',
-  'candidates', 'position_evidences', 'evidence_files', 'position_alerts', 'order_reviews',
+  'candidates', 'position_evidences', 'evidence_files', 'position_alerts', 'order_reviews', 'order_admin_edits',
 ];
 
 export async function migrate() {
