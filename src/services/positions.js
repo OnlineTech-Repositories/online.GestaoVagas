@@ -1,6 +1,6 @@
 import { inList, query, queryOne } from '../db/index.js';
 import {
-  findOpenWithCandidateCpf, getById, getPosition, listPositions as listPositionRows, userNames,
+  activeUsersByRoles, findOpenWithCandidateCpf, getById, getPosition, listPositions as listPositionRows, userNames,
 } from '../db/repository.js';
 import { calculate, isLegacyOrigin } from '../domain/calculator.js';
 import { positionDateIssues } from '../domain/date-checks.js';
@@ -387,6 +387,47 @@ export function candidateWithdrew(ctx, id, body) {
   return execute(ctx, id, Actions.CandidateWithdrew, justification, async (p) => {
     P.candidateWithdrew(p, utcNow());
     return 'CANDIDATE_WITHDREW';
+  });
+}
+
+/**
+ * Nova data de admissão antes do 1º dia (melhoria de 27/10/2026): o candidato continua na posição, a confirmação do
+ * 1º dia acompanha a nova data e a anterior fica no histórico. Antes, a única saída para o NACC era "Não compareceu",
+ * que tira o candidato e devolve a vaga ao recrutamento. Corrigida por quem não é da equipe de Admissões (ou por outro
+ * Responsável por Admissões), os demais Responsáveis por Admissões são avisados com a data anterior e a nova.
+ */
+export function correctAdmissionDate(ctx, id, body) {
+  const input = new Input(body);
+  const date = input.date('date', { message: 'Informe a nova data de admissão.' });
+  const justification = input.text('justification');
+  input.done();
+  return execute(ctx, id, Actions.CorrectAdmissionDate, justification, async (p) => {
+    DateGuard.requireText(justification, 'Informe a justificativa da nova data de admissão.', 'justification');
+    if (!P.isAdmitted(p) || !p.admissionAt) {
+      throw new BusinessRuleError('A posição não tem admissão aguardando o 1º dia: não há data de admissão a corrigir.');
+    }
+    const previous = p.admissionAt;
+    if (date === previous) throw new BusinessRuleError('A data informada é a data de admissão atual.', 'date');
+    p.admissionAt = date;
+    const recipients = (await activeUsersByRoles([Roles.Admissions])).map((u) => u.id).filter((uid) => uid !== ctx.user.id);
+    const candidate = P.activeCandidate(p);
+    await notify(ctx.uow, {
+      type: NotificationTypes.AdmissionDateCorrected,
+      entityId: p.id,
+      subject: `Data de admissão alterada · Pedido ${p.order?.number} · posição ${p.slotNumber}`,
+      message: `A data de admissão${candidate ? ` de ${candidate.fullName}` : ''} (posição ${p.order?.number}-${p.slotNumber}) `
+        + `passou de ${formatBr(previous)} para ${formatBr(date)}, por ${ctx.user.name}. Motivo: ${justification.trim()}`,
+      link: links.position(p.id),
+      email: {
+        title: 'Data de admissão alterada',
+        summary: 'A data de admissão foi corrigida; o candidato continua na posição e a confirmação do 1º dia passa para a nova data.',
+        status: { label: 'Nova data de admissão', tone: 'info' },
+        fields: [...positionFields(p), ['Candidato', candidate?.fullName ?? null], ['Data anterior', formatBr(previous)],
+          ['Nova data', formatBr(date), { strong: true }], ['Alterada por', ctx.user.name], ['Motivo', justification.trim()]],
+        button: 'Consultar posição',
+      },
+    }, { userIds: recipients });
+    return 'CORRECT_ADMISSION_DATE';
   });
 }
 

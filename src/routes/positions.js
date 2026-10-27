@@ -32,6 +32,7 @@ action('/admission', positions.registerAdmission);
 action('/admission-registration', positions.correctRegistration, 'put');
 action('/candidate-withdrawal', positions.candidateWithdrew);
 action('/admission-no-show', positions.admissionNoShow);
+action('/admission-date', positions.correctAdmissionDate, 'put');
 action('/pause', positions.startPause);
 action('/pause/end', positions.endPause);
 action('/cancellation', positions.cancelPosition);

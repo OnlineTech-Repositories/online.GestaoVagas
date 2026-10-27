@@ -179,6 +179,7 @@ export const NotificationTypes = Object.freeze({
   OrderReviewPending: 'ORDER_REVIEW_PENDING',
   OrderReviewReturned: 'ORDER_REVIEW_RETURNED',
   OrderReviewValidated: 'ORDER_REVIEW_VALIDATED',
+  AdmissionDateCorrected: 'ADMISSION_DATE_CORRECTED',
 });
 
 /** Alertas da rotina diária registrados em position_alerts (um por posição; vaga parada, um por período parado). */

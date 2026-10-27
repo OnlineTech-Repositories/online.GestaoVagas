@@ -435,3 +435,12 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     administrativas"): administrador, data e hora, justificativa, campos antes e depois e a revalidação. Todos os
     perfis do pedido consultam; valores em R$ só quem vê valores (decisão do usuário). O log de auditoria também
     registra a edição.
+41. **Correção da data de admissão antes do 1º dia (melhoria pedida pelo usuário em 27/10/2026):** ação "Corrigir data
+    de admissão" na posição em admissão ou aguardando o 1º dia, para qualquer Responsável por Admissões e para o NACC
+    (decisões do usuário), além do Administrador — sem exigir ser o autor do registro, como a correção geral de
+    datas (RN-25). Justificativa obrigatória; o candidato e a matrícula continuam, a confirmação do 1º dia passa para
+    a nova data e a anterior fica no histórico. Os Responsáveis por Admissões (exceto quem corrigiu) são avisados por
+    sino e e-mail com a data anterior, a nova, quem alterou e o motivo. A janela do "Admitido não compareceu" passou
+    a explicar que o candidato sai da posição e a vaga volta ao recrutamento, com o atalho "corrija a data de
+    admissão" para quando só a data de início mudou (decisão do usuário). Motivo: na homologação, uma mudança de
+    data foi registrada como "Não compareceu" porque só o Administrador conseguia corrigir a data de admissão.

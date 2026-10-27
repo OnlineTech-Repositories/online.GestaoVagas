@@ -1513,3 +1513,22 @@ test('Editar pedido (ADMIN): revisa os campos alterados, pede justificativa e mo
   assert.ok(![...asCommercial.querySelectorAll('button')].some((b) => b.textContent === 'Editar pedido'), 'só o ADMIN edita');
   assert.match(asCommercial.textContent, /Edições administrativas/, 'o histórico é consultado por quem vê o pedido');
 });
+
+test('"Não compareceu" orienta e leva à correção da data de admissão quando só a data mudou', async (t) => {
+  if (skip(t)) return;
+  await signIn('nacc@demo.local');
+  const list = await apiModule.api.get('/api/positions', { status: 'AWAITING_FIRST_DAY' });
+  const [target] = list.items ?? list;
+  assert.ok(target, 'há posição aguardando o 1º dia nos dados de demonstração');
+  const root = await open(`/posicoes/${target.id}`, 'Posição');
+  [...root.querySelectorAll('button')].find((b) => b.textContent === 'Admitido não compareceu').click();
+  const area = document.getElementById('modal-area');
+  assert.match(area.textContent, /Use quando o admitido não vai mais assumir a vaga/);
+  const link = [...area.querySelectorAll('a')].find((a) => a.textContent === 'corrija a data de admissão');
+  assert.ok(link, 'atalho para a correção');
+  link.dispatchEvent(new Event('click'));
+  assert.match(area.textContent, /Corrigir data de admissão/);
+  assert.match(area.textContent, /O candidato continua na posição/);
+  assert.doesNotMatch(area.textContent, /Use quando o admitido não vai mais assumir a vaga/, 'a janela do "Não compareceu" fechou');
+  area.querySelector('.modal-fechar').click();
+});

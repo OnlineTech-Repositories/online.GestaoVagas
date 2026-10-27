@@ -32,6 +32,7 @@ const TITLES = {
   ORDER_POSITIONS_STALE: 'Posições sem atualização no pedido',
   FIRST_DAY_PENDING: 'Confirmações do 1º dia pendentes',
   ADMISSION_PENDING: 'Candidato aguardando admissão',
+  ADMISSION_DATE_CORRECTED: 'Data de admissão alterada',
 };
 
 /** Notificações internas do usuário (seção 10.1); clicar abre o registro e marca como lida. */

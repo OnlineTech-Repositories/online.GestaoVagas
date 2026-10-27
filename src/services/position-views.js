@@ -30,6 +30,7 @@ export const Actions = Object.freeze({
   CorrectDates: 'CORRECT_DATES',
   CorrectCandidate: 'CORRECT_CANDIDATE',
   CorrectRegistration: 'CORRECT_REGISTRATION',
+  CorrectAdmissionDate: 'CORRECT_ADMISSION_DATE',
 });
 
 const A = Actions;
@@ -44,6 +45,9 @@ const ALLOWED_ROLES = {
   // A matrícula vem da admissão (RH do pedido) e costuma ser gerada pelo DP.
   [A.CorrectRegistration]: [Roles.Rh, Roles.RhManager, Roles.Dp, Roles.Admissions],
   [A.AdmissionNoShow]: [Roles.Rh, Roles.RhManager, Roles.Nacc, Roles.Admissions],
+  // Nova data de admissão antes do 1º dia (27/10/2026): qualquer Responsável por Admissões e o NACC, que acompanha o
+  // 1º dia (decisões do usuário), além do ADMIN. Não exige ser o autor do registro, como a correção geral (RN-25).
+  [A.CorrectAdmissionDate]: [Roles.Admissions, Roles.Nacc, Roles.Admin],
   [A.StartPause]: [Roles.Nacc],
   [A.EndPause]: [Roles.Nacc],
   [A.Cancel]: [Roles.Commercial, Roles.Nacc],
@@ -87,6 +91,7 @@ function statusAllows(p, action) {
     case A.CorrectRegistration: return isAdmitted(p);
     case A.ConfirmFirstDay: return p.status === S.AWAITING_FIRST_DAY && approved;
     case A.AdmissionNoShow: return isAdmitted(p);
+    case A.CorrectAdmissionDate: return isAdmitted(p) && Boolean(p.admissionAt);
     case A.StartPause: return isOpen(p) && p.status !== S.PAUSED;
     case A.EndPause: return p.status === S.PAUSED;
     case A.Cancel:

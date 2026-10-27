@@ -205,6 +205,7 @@ const AUDIT_ACTION = {
   CONFIRM_FIRST_DAY: '1º dia confirmado',
   CANDIDATE_WITHDREW: 'Candidato desistiu',
   ADMISSION_NO_SHOW: 'Admitido não compareceu',
+  CORRECT_ADMISSION_DATE: 'Nova data de admissão',
   START_PAUSE: 'Pausa iniciada',
   END_PAUSE: 'Pausa encerrada',
   CANCEL: 'Cancelamento',
@@ -769,8 +770,37 @@ const ACTIONS = {
   },
   CANDIDATE_WITHDREW: noteAction('Candidato desistiu', 'candidate-withdrawal',
     'A posição volta para "Em recrutamento" e a data de aprovação é limpa (o valor anterior fica no histórico).'),
-  ADMISSION_NO_SHOW: noteAction('Admitido não compareceu', 'admission-no-show',
-    'A posição volta para "Em recrutamento" e a data de admissão é limpa (o valor anterior fica no histórico).'),
+  ADMISSION_NO_SHOW: {
+    ...noteAction('Admitido não compareceu', 'admission-no-show', null),
+    danger: true,
+    // Orientação (27/10/2026): "Não compareceu" tira o candidato; mudança só de data é "Corrigir data de admissão".
+    intro: (p, openOther) => el('div', { class: 'mensagem alerta' },
+      el('strong', {}, 'Use quando o admitido não vai mais assumir a vaga.'),
+      'O candidato sai da posição, a admissão e a matrícula são limpas e a vaga volta para "Em recrutamento" '
+      + '(o registro fica no histórico). ',
+      p.allowedActions.includes('CORRECT_ADMISSION_DATE')
+        ? el('span', {}, 'Se só a data de início mudou, ', el('a', { href: '#', onclick: (event) => {
+          event.preventDefault();
+          openOther('CORRECT_ADMISSION_DATE');
+        } }, 'corrija a data de admissão'), ': o candidato continua e o 1º dia passa para a nova data.')
+        : 'Se só a data de início mudou, peça ao Responsável por Admissões a correção da data de admissão.'),
+  },
+  CORRECT_ADMISSION_DATE: {
+    title: 'Corrigir data de admissão',
+    path: 'admission-date',
+    method: 'put',
+    intro: 'O candidato continua na posição e a confirmação do 1º dia passa para a nova data. A data anterior fica no '
+      + 'histórico e os Responsáveis por Admissões são avisados.',
+    fields: (p) => [
+      el('p', { class: 'texto-suave' }, `Data de admissão atual: ${date(p.admissionAt)}.`),
+      dateField('date', 'Nova data de admissão', p.admissionAt),
+      justification(true),
+    ],
+    body: (d) => {
+      requireFields(d, { date: 'A nova data de admissão', justification: 'A justificativa' });
+      return { date: d.date, justification: d.justification };
+    },
+  },
   START_PAUSE: {
     title: 'Iniciar pausa',
     path: 'pause',
@@ -892,9 +922,14 @@ function openAction(action, p, reasons, reload) {
     return;
   }
   const config = ACTIONS[action];
-  formModal({
+  const reference = formModal({
     title: actionTitle(action, p),
-    intro: config.intro ? el('div', { class: 'mensagem info' }, config.intro) : null,
+    intro: typeof config.intro === 'function'
+      ? config.intro(p, (other) => {
+        reference.close();
+        openAction(other, p, reasons, reload);
+      })
+      : config.intro ? el('div', { class: 'mensagem info' }, config.intro) : null,
     fields: config.fields(p, reasons),
     submitText: 'Confirmar',
     danger: config.danger,
