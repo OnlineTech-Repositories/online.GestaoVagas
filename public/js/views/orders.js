@@ -98,7 +98,6 @@ export async function newOrderScreen(target) {
   // Comercial: cargo do catálogo e valores comerciais no próprio pedido (fluxo integrado de 26/10/2026). O NACC, na
   // carga inicial, segue escolhendo entre os cargos com valor já validado no contrato.
   const commercial = hasRole(state.user, 'COMMERCIAL');
-  const canCreateJobRole = commercial && hasRole(state.user, 'ADMIN');
   const [contracts, locations, catalogRoles] = await Promise.all([
     api.get('/api/contracts', { onlyActive: true }),
     api.get('/api/catalogs/work-locations'),
@@ -229,20 +228,22 @@ export async function newOrderScreen(target) {
       options: catalogRoles.filter((j) => j.active).map((j) => ({ value: j.id, label: j.name })),
       placeholder: 'Digite o nome do cargo para pesquisar',
       emptyText: 'Nenhum cargo encontrado',
-      help: canCreateJobRole ? null : 'Cargo fora da lista: peça o cadastro ao administrador.',
       onChange: () => loadRate(),
     });
     clear(jobRoleArea).append(roleField,
-      ...(canCreateJobRole ? [el('div', { class: 'barra-botoes mb-16' }, button('+ Cadastrar cargo', openNewJobRole, 'secundario pequeno'))] : []));
+      // Cargo novo no próprio pedido: o Comercial cadastra (29/10/2026); editar e inativar seguem com o ADMIN.
+      el('div', { class: 'barra-botoes mb-16' }, button('+ Cadastrar cargo', openNewJobRole, 'secundario pequeno')));
   }
 
   function openNewJobRole() {
     formModal({
       title: 'Cadastrar cargo',
-      fields: [field({ name: 'name', label: 'Nome do cargo', required: true })],
+      intro: el('p', { class: 'texto-suave' }, 'Confira na lista se o cargo já existe. O cargo novo entra no catálogo e fica '
+        + 'disponível para todos os pedidos; alterar o nome ou inativar é com o administrador.'),
+      fields: [field({ name: 'name', label: 'Nome do cargo', required: true, attributes: { maxlength: '120' } })],
       submit: async (d) => {
         requireFields(d, { name: 'O nome do cargo' });
-        const created = await api.post('/api/catalogs/job-roles', { name: d.name, active: true });
+        const created = await api.post('/api/orders/job-roles', { name: d.name });
         catalogRoles.push(created);
         catalogRoles.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
         renderCatalogRoles(created.id);

@@ -1,7 +1,7 @@
 import { query } from '../db/index.js';
 import { entity } from '../db/model.js';
 import { getById } from '../db/repository.js';
-import { BusinessRuleError, NotFoundError } from '../domain/errors.js';
+import { BusinessRuleError, NotFoundError, WarningsPendingError } from '../domain/errors.js';
 import { DemandType, Modality, Roles } from '../domain/enums.js';
 import { Cnpj, DateGuard, Permissions } from '../domain/guards.js';
 import { Input } from './input.js';
@@ -36,6 +36,46 @@ export async function listJobRoles(ctx) {
 
 export const saveJobRole = (ctx, id, body) => saveNamed(ctx, 'JobRole', 'job_roles', id, body,
   { required: 'Informe o nome do cargo.', duplicate: 'Já existe um cargo com este nome.' });
+
+/** Nome para comparar: sem acento, minúsculas e espaços simples. */
+const nameKey = (text) => String(text ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  .split(' ').filter(Boolean).join(' ');
+
+/**
+ * Cargo novo cadastrado durante a criação do pedido, pelo Comercial ou pelo Administrador (melhoria de 29/10/2026).
+ * Só cadastra: editar e inativar continua com o Administrador, em Cadastros auxiliares (decisão do usuário). Nome igual
+ * a um existente, ignorando maiúsculas e acentos, é recusado; nome parecido (um contém o outro) pede confirmação,
+ * mostrando os cargos já cadastrados. Quem cadastrou e quando ficam no log de auditoria.
+ */
+export async function createJobRoleFromOrder(ctx, body) {
+  Permissions.require(ctx.user, Roles.Commercial, Roles.Admin);
+  const input = new Input(body);
+  const name = DateGuard.requireText(input.text('name'), 'Informe o nome do cargo.', 'name').split(' ').filter(Boolean).join(' ');
+  input.done();
+  if (name.length > 120) throw new BusinessRuleError('O nome do cargo deve ter no máximo 120 caracteres.', 'name');
+
+  const key = nameKey(name);
+  const roles = await query('SELECT id, name, active FROM job_roles');
+  const same = roles.find((r) => nameKey(r.name) === key);
+  if (same) {
+    throw new BusinessRuleError(Number(same.active)
+      ? `Já existe o cargo "${same.name}": escolha-o na lista.`
+      : `Já existe o cargo "${same.name}", inativo: peça ao administrador para reativá-lo.`, 'name');
+  }
+  const similar = roles.filter((r) => Number(r.active) && key.length >= 3
+    && (nameKey(r.name).includes(key) || key.includes(nameKey(r.name))));
+  if (similar.length && !ctx.confirmWarnings) {
+    throw new WarningsPendingError([{
+      kind: 'DUPLICATE',
+      message: `Já existe cargo com nome parecido: ${similar.slice(0, 5).map((r) => `"${r.name}"`).join(', ')}. `
+        + 'Confira se não é o mesmo antes de cadastrar outro.',
+    }]);
+  }
+
+  const role = ctx.uow.add(entity('JobRole', { name, active: true }));
+  await ctx.uow.save({ action: 'CREATE_JOB_ROLE_FROM_ORDER' });
+  return named(role);
+}
 
 // ---------------------------------------------------------------- motivos de pausa
 

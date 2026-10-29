@@ -1532,3 +1532,21 @@ test('"Não compareceu" orienta e leva à correção da data de admissão quando
   assert.doesNotMatch(area.textContent, /Use quando o admitido não vai mais assumir a vaga/, 'a janela do "Não compareceu" fechou');
   area.querySelector('.modal-fechar').click();
 });
+
+test('Cadastrar cargo no pedido: o Comercial (sem ser Administrador) cadastra e o cargo já fica escolhido', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const root = await open('/pedidos/novo', 'Novo pedido');
+  const button = [...root.querySelectorAll('button')].find((b) => b.textContent === '+ Cadastrar cargo');
+  assert.ok(button, 'o Comercial vê a ação');
+  button.click();
+  const area = document.getElementById('modal-area');
+  assert.match(area.textContent, /Confira na lista se o cargo já existe/);
+  area.querySelector('[data-campo="name"]').querySelector('input').value = 'Auxiliar de Inventário';
+  [...area.querySelectorAll('button')].find((b) => b.textContent === 'Salvar').click();
+  await wait(250);
+  const block = root.querySelector('[data-campo="jobRoleId"]');
+  assert.equal(block.querySelector('input[type="text"]').value, 'Auxiliar de Inventário');
+  const created = (await apiModule.api.get('/api/catalogs/job-roles')).find((j) => j.name === 'Auxiliar de Inventário');
+  assert.equal(block.querySelector('input[name="jobRoleId"]').value, created.id);
+});

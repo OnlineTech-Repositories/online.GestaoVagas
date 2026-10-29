@@ -14,6 +14,7 @@ import {
 import { routeId } from '../services/input.js';
 import { resubmitOrderReview, returnOrderReview, validateOrderReview } from '../services/order-review.js';
 import { editOrder } from '../services/order-edit.js';
+import { createJobRoleFromOrder } from '../services/catalogs.js';
 import { ID, idParam, queryOf } from './helpers.js';
 
 export const orderRoutes = Router();
@@ -25,6 +26,8 @@ orderRoutes.get('/job-roles', route(async (req, res) => {
   const contractId = routeId(req.query.contractId);
   res.json(contractId ? await listJobRolesForContract(req.ctx, contractId) : []);
 }));
+// Cargo novo cadastrado na criação do pedido (Comercial ou Administrador).
+orderRoutes.post('/job-roles', route(async (req, res) => res.status(201).json(await createJobRoleFromOrder(req.ctx, req.body))));
 
 orderRoutes.get(`/:id${ID}`, route(async (req, res) => res.json(await getOrderDetail(req.ctx, idParam(req)))));
 

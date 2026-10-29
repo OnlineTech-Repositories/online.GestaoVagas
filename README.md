@@ -444,3 +444,9 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     a explicar que o candidato sai da posição e a vaga volta ao recrutamento, com o atalho "corrija a data de
     admissão" para quando só a data de início mudou (decisão do usuário). Motivo: na homologação, uma mudança de
     data foi registrada como "Não compareceu" porque só o Administrador conseguia corrigir a data de admissão.
+42. **Cadastro de cargo pelo Comercial no pedido (melhoria pedida pelo usuário em 29/10/2026):** o "+ Cadastrar cargo"
+    da criação do pedido passou a valer para o Comercial (antes, só para quem também era Administrador). O Comercial
+    só cadastra; alterar o nome e inativar continuam com o Administrador, em Cadastros auxiliares (decisão do usuário).
+    Nome igual a um cargo existente, ignorando maiúsculas, acentos e espaços extras, é recusado (o inativo orienta a
+    pedir a reativação ao administrador); nome parecido (um contém o outro) pede confirmação mostrando os cargos já
+    cadastrados. O cargo novo entra no catálogo, já escolhido no pedido, e o log registra quem cadastrou e quando.
