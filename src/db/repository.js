@@ -1,4 +1,5 @@
 import { CLOSED_STATUSES, PositionStatus } from '../domain/enums.js';
+import { itemOf } from '../domain/position.js';
 import { inList, query, queryOne } from './index.js';
 
 /**
@@ -60,6 +61,8 @@ export async function attachRateRefs(uow, rates) {
   const roles = uow.loadAll('JobRole', await rowsIn('job_roles', 'id', rates.map((r) => r.jobRoleId)));
   // Pedido que propôs o valor (fluxo integrado): só número e situação, sem carregar o pedido inteiro.
   const orders = await rowsIn('orders', 'id', rates.map((r) => r.orderId).filter(Boolean));
+  // Valor proposto pela edição administrativa, aguardando a Controladoria num item do pedido.
+  const pendingIds = new Set((await rowsIn('order_items', 'pending_rate_id', rates.map((r) => r.id))).map((i) => i.pending_rate_id));
   for (const r of rates) {
     r.contract = contracts.find((c) => c.id === r.contractId) ?? null;
     r.jobRole = roles.find((j) => j.id === r.jobRoleId) ?? null;
@@ -67,7 +70,7 @@ export async function attachRateRefs(uow, rates) {
     r.originOrder = order ? {
       id: order.id, number: Number(order.number), approvalStatus: order.approval_status,
       // Em validação no pedido: o pedido inteiro (fluxo do Comercial) ou esta alteração administrativa.
-      inReview: order.approval_status === 'AWAITING_CONTROLLERSHIP' || order.pending_rate_id === r.id,
+      inReview: order.approval_status === 'AWAITING_CONTROLLERSHIP' || pendingIds.has(r.id),
     } : null;
   }
   return rates;
@@ -84,11 +87,16 @@ export async function findEffectiveRate(uow, contractId, jobRoleId, date, valida
 
 // ---------------------------------------------------------------- pedidos
 
-/** Contrato (com cliente, unidade e Grupo), cargo, local de trabalho e analistas de RH do pedido. */
+/**
+ * Contrato (com cliente, unidade e Grupo), itens (cargo, valor e valor pendente de cada um), local de trabalho,
+ * analistas de RH e históricos do pedido. `order.jobRole` é o cargo do 1º item (resumo).
+ */
 async function attachOrderRefs(uow, orders) {
   const contracts = uow.loadAll('Contract', await rowsIn('contracts', 'id', orders.map((o) => o.contractId)));
   await attachContractRefs(uow, contracts);
-  const roles = uow.loadAll('JobRole', await rowsIn('job_roles', 'id', orders.map((o) => o.jobRoleId)));
+  const items = uow.loadAll('OrderItem', await rowsIn('order_items', 'order_id', orders.map((o) => o.id), 'ORDER BY sequence'));
+  const roles = uow.loadAll('JobRole', await rowsIn('job_roles', 'id',
+    [...orders.map((o) => o.jobRoleId), ...items.map((i) => i.jobRoleId)]));
   const locations = uow.loadAll('WorkLocation', await rowsIn('work_locations', 'id', orders.map((o) => o.workLocationId)));
   const analysts = uow.loadAll('OrderRhAnalyst', await rowsIn('order_rh_analysts', 'order_id', orders.map((o) => o.id),
     'ORDER BY assigned_at, id'));
@@ -97,7 +105,7 @@ async function attachOrderRefs(uow, orders) {
   const adminEdits = uow.loadAll('OrderAdminEdit', await rowsIn('order_admin_edits', 'order_id', orders.map((o) => o.id),
     'ORDER BY occurred_at, id'));
   const rates = uow.loadAll('ContractRate', await rowsIn('contract_rates', 'id',
-    orders.flatMap((o) => [o.rateId, o.pendingRateId]).filter(Boolean)));
+    items.flatMap((i) => [i.rateId, i.pendingRateId]).filter(Boolean)));
   const rateRoles = uow.loadAll('JobRole', await rowsIn('job_roles', 'id', rates.map((r) => r.jobRoleId)));
   for (const o of orders) {
     o.contract = contracts.find((c) => c.id === o.contractId) ?? null;
@@ -106,15 +114,21 @@ async function attachOrderRefs(uow, orders) {
     o.rhAnalysts = analysts.filter((a) => a.orderId === o.id);
     o.reviews = reviews.filter((r) => r.orderId === o.id);
     o.adminEdits = adminEdits.filter((e) => e.orderId === o.id);
-    o.rate = rates.find((r) => r.id === o.rateId) ?? null;
-    o.pendingRate = rates.find((r) => r.id === o.pendingRateId) ?? null;
-    for (const rate of [o.rate, o.pendingRate].filter(Boolean)) {
-      rate.contract ??= o.contract;
-      rate.jobRole ??= rateRoles.find((j) => j.id === rate.jobRoleId) ?? null;
+    o.items = items.filter((i) => i.orderId === o.id);
+    for (const item of o.items) {
+      item.jobRole = roles.find((j) => j.id === item.jobRoleId) ?? null;
+      item.rate = rates.find((r) => r.id === item.rateId) ?? null;
+      item.pendingRate = rates.find((r) => r.id === item.pendingRateId) ?? null;
+      for (const rate of [item.rate, item.pendingRate].filter(Boolean)) {
+        rate.contract ??= o.contract;
+        rate.jobRole ??= rateRoles.find((j) => j.id === rate.jobRoleId) ?? null;
+      }
     }
   }
   return orders;
 }
+
+
 
 /** Pedidos completos: referências e TODAS as posições, cada uma com desligamentos, pausas, valor e candidatos. */
 async function loadOrderAggregates(uow, rows) {
@@ -162,6 +176,7 @@ export async function attachPositionRefs(uow, positions) {
     const orders = await attachOrderRefs(uow, uow.loadAll('Order', await rowsIn('orders', 'id', missingOrders)));
     for (const p of positions) p.order ??= orders.find((o) => o.id === p.orderId) ?? null;
   }
+  for (const p of positions) p.item = itemOf(p);
 
   const terminations = uow.loadAll('Termination', [
     ...(await rowsIn('terminations', 'id', positions.map((p) => p.terminationId))),
@@ -227,7 +242,7 @@ export async function listPositions(uow, f = {}) {
   if (f.contractId) add('o.contract_id = ?', f.contractId);
   if (f.orderId) add('p.order_id = ?', f.orderId);
   if (f.modality) add('o.modality = ?', f.modality);
-  if (f.jobRoleId) add('o.job_role_id = ?', f.jobRoleId);
+  if (f.jobRoleId) add('COALESCE(i.job_role_id, o.job_role_id) = ?', f.jobRoleId);
   if (f.demandType) add('p.demand_type = ?', f.demandType);
   if (f.groupEntityId) add('c.group_entity_id = ?', f.groupEntityId);
   if (f.workLocationId) add('o.work_location_id = ?', f.workLocationId);
@@ -259,7 +274,8 @@ export async function listPositions(uow, f = {}) {
        JOIN orders o ON o.id = p.order_id
        JOIN contracts c ON c.id = o.contract_id
        JOIN clients cl ON cl.id = c.client_id
-       JOIN job_roles j ON j.id = o.job_role_id
+       LEFT JOIN order_items i ON i.id = p.order_item_id
+       JOIN job_roles j ON j.id = COALESCE(i.job_role_id, o.job_role_id)
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`,
     ...params);
   return attachPositionRefs(uow, uow.loadAll('Position', rows));
@@ -288,15 +304,18 @@ export async function searchFilled(uow, term, take) {
       ORDER BY p.employee_name LIMIT ${Number(take)}`, ...params);
   const positions = uow.loadAll('Position', rows);
   const orders = await attachOrderRefs(uow, uow.loadAll('Order', await rowsIn('orders', 'id', positions.map((p) => p.orderId))));
-  for (const p of positions) p.order = orders.find((o) => o.id === p.orderId) ?? null;
+  for (const p of positions) {
+    p.order = orders.find((o) => o.id === p.orderId) ?? null;
+    p.item = itemOf(p);
+  }
   return positions;
 }
 
 /** Posições abertas sem valor que passam a usar uma versão nova do valor (vigente na abertura). */
 export async function listWithoutRate(uow, contractId, jobRoleId, openedFrom) {
   const rows = await query(
-    `SELECT p.* FROM positions p JOIN orders o ON o.id = p.order_id
-      WHERE p.rate_id IS NULL AND o.contract_id = ? AND o.job_role_id = ? AND p.opened_at >= ?
+    `SELECT p.* FROM positions p JOIN orders o ON o.id = p.order_id LEFT JOIN order_items i ON i.id = p.order_item_id
+      WHERE p.rate_id IS NULL AND o.contract_id = ? AND COALESCE(i.job_role_id, o.job_role_id) = ? AND p.opened_at >= ?
         AND p.status NOT IN (${CLOSED_STATUSES.map(() => '?').join(', ')})`,
     contractId, jobRoleId, openedFrom, ...CLOSED_STATUSES);
   return uow.loadAll('Position', rows);

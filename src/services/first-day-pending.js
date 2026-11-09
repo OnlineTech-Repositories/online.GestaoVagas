@@ -4,6 +4,7 @@ import { addDays, diffDays, formatBr, localDateOf, today as todayDate } from '..
 import { ForbiddenError } from '../domain/errors.js';
 import { NotificationTypes, ParameterKeys, PositionStatus as S, Roles } from '../domain/enums.js';
 import { hasAnyRole } from '../domain/guards.js';
+import { roleNames } from '../domain/order.js';
 import * as P from '../domain/position.js';
 import { dataTable, mutedText, sectionTitle } from './email-layout.js';
 import { deliver, links, resolveRecipients } from './notifications.js';
@@ -53,12 +54,13 @@ export async function collectPending(uow, today) {
     const contract = order.contract;
     const head = {
       orderId: order.id, orderNumber: order.number, client: contract?.client?.legalName ?? '—', unit: unitLabel(contract),
-      contract: contract?.name ?? null, jobRole: order.jobRole?.name ?? null, workLocation: order.workLocation?.name ?? null,
+      contract: contract?.name ?? null, jobRole: roleNames(order) || null, workLocation: order.workLocation?.name ?? null,
     };
     const item = {
       positionId: p.id,
       position: `${order.number}-${p.slotNumber}${p.cycle > 1 ? ` (reposição nº ${p.cycle - 1})` : ''}`,
       slotNumber: p.slotNumber,
+      jobRole: P.jobRoleOf(p)?.name ?? null,
       employeeName: P.activeCandidate(p)?.fullName ?? null,
       registration: p.admissionRegistration ?? null,
       admissionAt: p.admissionAt,

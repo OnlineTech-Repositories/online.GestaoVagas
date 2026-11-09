@@ -101,7 +101,7 @@ export async function getPositionDetail(ctx, id) {
     orderRegisteredAt: order.registeredAt,
     desiredStartDate: p.desiredStartDate,
     orderNotes: order.notes,
-    jobDescription: order.jobDescription,
+    jobDescription: P.itemOf(p)?.jobDescription ?? order.jobDescription,
     isLegacyOrder: order.isLegacy,
     orderClientDecisionDate: order.clientDecisionDate,
     jobconvoPublished: order.jobconvoPublished,
@@ -648,6 +648,6 @@ async function notifyPosition(ctx, p, type, subject, detail, roles, email = {}) 
 
 export function describe(p) {
   const order = p.order;
-  return `${Labels.demandType[p.demandType]} — ${order.jobRole?.name} — ${order.contract?.client?.legalName} `
+  return `${Labels.demandType[p.demandType]} — ${P.jobRoleOf(p)?.name} — ${order.contract?.client?.legalName} `
     + `(pedido ${order.number}, posição ${p.slotNumber}${p.cycle > 1 ? `, reposição nº ${p.cycle - 1}` : ''})`;
 }

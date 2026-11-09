@@ -208,9 +208,28 @@ CREATE TABLE IF NOT EXISTS order_reviews (
   fee_value NUMERIC(12,2),
   valid_from TEXT,
   rate_id TEXT,
+  order_item_id TEXT,
   created_at TEXT NOT NULL, created_by TEXT, updated_at TEXT, updated_by TEXT, version INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS ix_order_reviews_order ON order_reviews (order_id, occurred_at);
+
+-- Itens do pedido (vários cargos na mesma solicitação, melhoria de 06/11/2026): cargo, quantidade solicitada (registro +
+-- acréscimos), descrição da vaga e valor por cargo de cada um; pending_rate_id = cargo e valor alterados pela edição
+-- administrativa, aguardando a Controladoria. Os pedidos anteriores viraram pedidos de um item (o id do item = o do
+-- pedido); as colunas job_role_id, quantity, job_description, rate_id e pending_rate_id de orders ficam como resumo e
+-- histórico (job_role_id = cargo do 1º item; quantity = soma dos itens).
+CREATE TABLE IF NOT EXISTS order_items (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES orders (id),
+  sequence INTEGER NOT NULL,
+  job_role_id TEXT NOT NULL REFERENCES job_roles (id),
+  quantity INTEGER NOT NULL CHECK (quantity >= 1),
+  job_description TEXT,
+  rate_id TEXT,
+  pending_rate_id TEXT,
+  created_at TEXT NOT NULL, created_by TEXT, updated_at TEXT, updated_by TEXT, version INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_order_items_sequence ON order_items (order_id, sequence);
 
 -- Edições administrativas do pedido (ADMIN, 26/10/2026): permanentes, com a justificativa e os campos alterados
 -- (changes: JSON com rótulo, valor anterior e novo; `money` marca os valores em R$).
@@ -260,9 +279,12 @@ CREATE TABLE IF NOT EXISTS positions (
   sla_target_days INTEGER,
   sla_target_source TEXT NOT NULL,
   has_retroactive_dates INTEGER NOT NULL DEFAULT 0,
+  -- Item (cargo) do pedido a que a posição pertence; a reposição herda o da origem.
+  order_item_id TEXT,
   created_at TEXT NOT NULL, created_by TEXT, updated_at TEXT, updated_by TEXT, version INTEGER NOT NULL DEFAULT 0,
   CHECK (demand_type = 'NEW' OR (origin_position_id IS NOT NULL AND termination_id IS NOT NULL))
 );
+CREATE INDEX IF NOT EXISTS ix_positions_item ON positions (order_item_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_positions_sequence ON positions (order_id, sequence);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_positions_slot_cycle ON positions (order_id, slot_number, cycle);
 CREATE INDEX IF NOT EXISTS ix_positions_status ON positions (status);

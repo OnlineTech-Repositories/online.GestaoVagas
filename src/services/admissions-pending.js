@@ -5,7 +5,7 @@ import { diffDays, formatBr, localTime, localWeekday, today as todayDate, utcNow
 import { ForbiddenError } from '../domain/errors.js';
 import { DemandType, NotificationTypes, ParameterKeys, PositionStatus as S, Roles } from '../domain/enums.js';
 import { hasAnyRole, Phone } from '../domain/guards.js';
-import { isApproved } from '../domain/order.js';
+import { isApproved, roleNames } from '../domain/order.js';
 import * as P from '../domain/position.js';
 import { UnitOfWork } from '../db/unit-of-work.js';
 import { dataTable, mutedText, renderLayout, sectionTitle } from './email-layout.js';
@@ -41,7 +41,7 @@ function head(order) {
   const contract = order.contract;
   return {
     orderId: order.id, orderNumber: order.number, client: contract?.client?.legalName ?? '—', unit: unitLabel(contract),
-    contract: contract?.name ?? null, jobRole: order.jobRole?.name ?? null, workLocation: order.workLocation?.name ?? null,
+    contract: contract?.name ?? null, jobRole: roleNames(order) || null, workLocation: order.workLocation?.name ?? null,
   };
 }
 
@@ -53,6 +53,7 @@ function itemOf(p, today) {
     positionId: p.id,
     position: `${p.order.number}-${p.slotNumber}${p.cycle > 1 ? ` (reposição nº ${p.cycle - 1})` : ''}`,
     slotNumber: p.slotNumber,
+    jobRole: P.jobRoleOf(p)?.name ?? null,
     candidateId: candidate.id,
     candidateName: candidate.fullName,
     phone: candidate.phone ? Phone.format(candidate.phone) : null,

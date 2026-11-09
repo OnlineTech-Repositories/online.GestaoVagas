@@ -34,6 +34,26 @@ export const ADDED_COLUMNS = [
   ['orders', 'controllership_reason', 'TEXT'],
   // Edição administrativa do pedido (26/10/2026): alteração de cargo e valores aguardando a Controladoria.
   ['orders', 'pending_rate_id', 'TEXT'],
+  // Vários cargos no pedido (06/11/2026): item da posição e do histórico da validação (preenchidos por DATA_MIGRATIONS).
+  ['positions', 'order_item_id', 'TEXT'],
+  ['order_reviews', 'order_item_id', 'TEXT'],
+];
+
+/**
+ * Migrações de dados, idempotentes, aplicadas depois do schema.sql (e no script de produção). Vários cargos no pedido
+ * (06/11/2026): cada pedido anterior vira um pedido de um item, com o id do próprio pedido, e as posições e o histórico
+ * da validação passam a apontar para ele. Pedidos já com itens não são tocados.
+ */
+export const DATA_MIGRATIONS = [
+  `INSERT INTO order_items (id, order_id, sequence, job_role_id, quantity, job_description, rate_id, pending_rate_id,
+     created_at, created_by, version)
+   SELECT o.id, o.id, 1, o.job_role_id, o.quantity, o.job_description, o.rate_id, o.pending_rate_id, o.created_at,
+     o.created_by, 0
+     FROM orders o WHERE NOT EXISTS (SELECT 1 FROM order_items i WHERE i.order_id = o.id);`,
+  `UPDATE positions SET order_item_id = order_id
+    WHERE order_item_id IS NULL AND EXISTS (SELECT 1 FROM order_items i WHERE i.id = positions.order_id);`,
+  `UPDATE order_reviews SET order_item_id = order_id
+    WHERE order_item_id IS NULL AND EXISTS (SELECT 1 FROM order_items i WHERE i.id = order_reviews.order_id);`,
 ];
 
 /**
@@ -61,6 +81,7 @@ export const NO_DELETE_TABLES = [
   'clients', 'contracts', 'contract_rates', 'orders', 'positions', 'terminations', 'pauses', 'group_entities',
   'job_roles', 'work_locations', 'pause_reasons', 'sla_targets', 'system_parameters', 'users', 'order_rh_analysts',
   'candidates', 'position_evidences', 'evidence_files', 'position_alerts', 'order_reviews', 'order_admin_edits',
+  'order_items',
 ];
 
 export async function migrate() {
@@ -81,6 +102,7 @@ export async function migrate() {
   await relaxColumns(postgres);
 
   await execRaw(readSchema(postgres));
+  for (const statement of DATA_MIGRATIONS) await execRaw(statement);
 
   await execRaw(postgres ? postgresTriggers() : sqliteTriggers());
 }

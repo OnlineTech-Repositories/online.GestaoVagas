@@ -42,6 +42,7 @@ const SHEET = 'Admissões';
 const COLUMNS = [
   { key: 'order', title: 'Pedido', type: 'int', width: 9 },
   { key: 'position', title: 'Vaga', width: 9 },
+  { key: 'jobRole', title: 'Cargo', width: 26, optional: true },
   { key: 'candidate', title: 'Candidato', width: 38 },
   { key: 'sex', title: 'Sexo', width: 14 },
   { key: 'phone', title: 'Telefone com DDD *', editable: true, prefilled: true, width: 19 },
@@ -112,7 +113,7 @@ export async function admissionTemplate(ctx, orderId) {
       rows: positions.map((p) => {
         const candidate = P.activeCandidate(p);
         return {
-          order: order.number, position: vaga(order, p), candidate: candidate.fullName, sex: SEX_LABELS[candidate.sex] ?? '',
+          order: order.number, position: vaga(order, p), jobRole: P.jobRoleOf(p)?.name ?? '', candidate: candidate.fullName, sex: SEX_LABELS[candidate.sex] ?? '',
           phone: candidate.phone ? Phone.format(candidate.phone) : '', birthDate: candidate.birthDate,
           cpf: candidate.cpf ? Cpf.format(candidate.cpf) : '', positionId: p.id, candidateId: candidate.id, orderId: order.id,
         };

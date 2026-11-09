@@ -8,7 +8,7 @@ import {
   TerminationType,
 } from '../domain/enums.js';
 import { Permissions } from '../domain/guards.js';
-import { newOrder } from '../domain/order.js';
+import { newOrder, newOrderItem } from '../domain/order.js';
 import * as P from '../domain/position.js';
 import { DateReview } from './date-review.js';
 import { positionFields } from './notice-fields.js';
@@ -29,7 +29,7 @@ export async function searchFilledPositions(ctx, term) {
     employeeRegistration: p.employeeRegistration ?? '',
     clientName: p.order.contract?.client?.legalName ?? '',
     contractName: p.order.contract?.name ?? '',
-    jobRoleName: p.order.jobRole?.name ?? '',
+    jobRoleName: P.jobRoleOf(p)?.name ?? '',
     workLocationName: p.order.workLocation?.name ?? '',
     firstDayAt: p.firstDayAt,
     orderNumber: p.order.number,
@@ -127,7 +127,10 @@ export async function registerLegacyTermination(ctx, body) {
   order.workLocation = location;
   // RN-14: a reposição herda o valor da origem; usa a versão vigente no dia seguinte à saída.
   const rate = await rateAt(ctx.uow, contract.id, jobRole.id, addDays(r.lastWorkedDay, 1));
-  const origin = P.createLegacyFilled(order, firstDayAt, employeeName, employeeRegistration, rate);
+  const item = newOrderItem(order, { jobRoleId: jobRole.id, quantity: 1, rateId: rate?.id ?? null });
+  item.jobRole = jobRole;
+  item.rate = rate;
+  const origin = P.createLegacyFilled(order, firstDayAt, employeeName, employeeRegistration, rate, item);
   order.positions.push(origin);
   ctx.uow.add(order);
 
@@ -160,7 +163,7 @@ async function registerCore(ctx, origin, r, isNewOrigin) {
     type: NotificationTypes.TerminationRegistered,
     entityId: replacement.id,
     subject: `Desligamento registrado · Pedido ${order.number} · ${origin.employeeName}`,
-    message: `Desligamento de ${origin.employeeName} (matrícula ${origin.employeeRegistration}), ${order.jobRole?.name} — `
+    message: `Desligamento de ${origin.employeeName} (matrícula ${origin.employeeRegistration}), ${P.jobRoleOf(origin)?.name} — `
       + `${order.contract?.client?.legalName}. Último dia trabalhado: ${formatBr(r.lastWorkedDay)}. `
       + 'Registre a decisão do cliente sobre a reposição.',
     link: links.position(replacement.id),

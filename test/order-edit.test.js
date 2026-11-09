@@ -109,7 +109,7 @@ test('valores alterados num pedido validado: revalidação pela Controladoria se
   assert.equal(saved.status, 200, JSON.stringify(saved.data));
   assert.equal(saved.data.summary.approvalStatus, 'APPROVED');
   assert.equal(saved.data.controllership.status, 'PENDING');
-  assert.equal(saved.data.controllership.revalidation.monthlyValue, oldValue + 250);
+  assert.equal(saved.data.controllership.revalidation[0].monthlyValue, oldValue + 250);
   assert.equal(Number(saved.data.values?.monthlyValue ?? oldValue), oldValue, 'o pedido segue com o valor atual');
   assert.deepEqual((await query('SELECT id, status, rate_id FROM positions WHERE order_id = ?', id)), positionsBefore, 'posições intactas');
   assert.ok((await query("SELECT 1 FROM notifications WHERE type = 'ORDER_REVIEW_PENDING' AND entity_id = ?", id)).length);

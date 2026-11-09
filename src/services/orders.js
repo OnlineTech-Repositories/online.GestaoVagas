@@ -7,8 +7,8 @@ import { calculate, isLegacyOrigin, sumValues } from '../domain/calculator.js';
 import { formatBr, today as todayDate, utcNow } from '../domain/dates.js';
 import { BusinessRuleError, ForbiddenError, NotFoundError } from '../domain/errors.js';
 import {
-  ALL_ROLES, ContractStatus, DemandType, EvidenceKind, Labels, Modality, NotificationTypes, OrderApprovalStatus, OrderStatus,
-  ParameterKeys, PositionStatus, Roles, SlaTargetSource, TermType,
+  ALL_ROLES, ContractStatus, ControllershipStatus, DemandType, EvidenceKind, Labels, Modality, NotificationTypes,
+  OrderApprovalStatus, OrderReviewAction, OrderStatus, ParameterKeys, PositionStatus, Roles, SlaTargetSource, TermType,
 } from '../domain/enums.js';
 import {
   cleanMultiline, DateGuard, EvidenceFiles, hasAnyRole, hasRole, isRhAnalyst, JOB_DESCRIPTION_MAX_LENGTH, Permissions, RhAccess,
@@ -26,12 +26,63 @@ import { toSummary } from './position-views.js';
 import { DateReview } from './date-review.js';
 import { orderFields } from './notice-fields.js';
 import { slaFor, validatedRateAt } from './snapshots.js';
-import { inReview, notifyReviewPending, readCommercialValues, resolveOrderRate, reviewDto, startReview } from './order-review.js';
+import {
+  forItem, inReview, notifyReviewPending, readCommercialValues, record, resolveOrderRate, reviewDto, startReview, syncOrderSummary,
+} from './order-review.js';
 import { adminEditsDto } from './order-edit.js';
 
 /** Pedidos: criação (RN-01 a RN-05), aprovação do cliente, JobConvo, analistas de RH e correção de datas. */
 
-/** RN-01 a RN-04: cria o pedido e as N posições NEW. */
+/** Até quantos cargos um pedido aceita (vários cargos na mesma solicitação, 06/11/2026). */
+const MAX_ITEMS = 20;
+
+/**
+ * Cargos do pedido no corpo: `items` com { jobRoleId, quantity, jobDescription, monthlyValue, feeValue,
+ * rateValidFrom } por cargo. Sem `items`, vale o formato de um cargo (o cargo, a quantidade, a descrição e os valores
+ * no próprio corpo), usado pela API e pelos pedidos anteriores. Os erros de um item levam o índice no nome do campo
+ * (ex.: jobRoleId-1), para a tela marcar o cargo certo.
+ */
+function readOrderItems(input) {
+  const raw = input.raw('items');
+  if (raw === null) {
+    return [{
+      jobRoleId: input.id('jobRoleId', { message: 'Selecione o cargo.' }),
+      quantity: input.int('quantity', { required: true, message: 'Informe a quantidade.' }),
+      jobDescription: input.text('jobDescription'),
+      values: readCommercialValues(input),
+    }];
+  }
+  if (!Array.isArray(raw) || !raw.length) {
+    input.fail('items', 'Inclua ao menos um cargo no pedido.');
+    return [];
+  }
+  return raw.map((r, index) => {
+    const it = new Input(r ?? {});
+    const item = {
+      jobRoleId: it.id('jobRoleId', { message: 'Selecione o cargo.' }),
+      quantity: it.int('quantity', { required: true, message: 'Informe a quantidade.' }),
+      jobDescription: it.text('jobDescription'),
+      values: readCommercialValues(it),
+    };
+    for (const [field, message] of Object.entries(it.errors)) input.fail(`${field}-${index}`, message);
+    return item;
+  });
+}
+
+/** Descrição da vaga: até JOB_DESCRIPTION_MAX_LENGTH caracteres, com as quebras de linha padronizadas. */
+function cleanDescription(text) {
+  const value = cleanMultiline(text);
+  if (value && value.length > JOB_DESCRIPTION_MAX_LENGTH) {
+    throw new BusinessRuleError(`A descrição da vaga deve ter no máximo ${JOB_DESCRIPTION_MAX_LENGTH} caracteres.`, 'jobDescription');
+  }
+  return value;
+}
+
+/**
+ * RN-01 a RN-04: cria o pedido, com um ou mais cargos (itens), e as posições NEW de cada cargo. O cabeçalho (contrato,
+ * modalidade, local, datas e vigência) vale para todos os cargos; cada cargo tem quantidade, descrição e valores
+ * próprios. Algum valor novo ou alterado leva o pedido inteiro à Controladoria.
+ */
 export async function createOrder(ctx, body) {
   const initialLoadOpen = await isInitialLoadOpen();
   // Matriz 4.1: só COMMERCIAL cria pedido. Na carga inicial (seção 13) o NACC também cadastra pedidos em aberto.
@@ -39,11 +90,10 @@ export async function createOrder(ctx, body) {
     throw new ForbiddenError();
   }
   const input = new Input(body);
+  const multi = Array.isArray(input.raw('items'));
   const r = {
     contractId: input.id('contractId', { message: 'Selecione o contrato.' }),
     modality: input.option('modality', Modality, { message: 'Selecione a modalidade.' }),
-    jobRoleId: input.id('jobRoleId', { message: 'Selecione o cargo.' }),
-    quantity: input.int('quantity', { required: true, message: 'Informe a quantidade.' }),
     workLocationId: input.id('workLocationId', { message: 'Selecione o local de trabalho.' }),
     clientRequestDate: input.date('clientRequestDate', { message: 'Informe a data da solicitação do cliente.' }),
     desiredStartDate: input.date('desiredStartDate', { message: 'Informe a data de início desejada.' }),
@@ -53,10 +103,8 @@ export async function createOrder(ctx, body) {
     notes: input.text('notes'),
     registeredAt: input.date('registeredAt', { required: false }),
     justification: input.text('justification'),
-    jobDescription: input.text('jobDescription'),
   };
-  // Cargo e valores comerciais (fluxo integrado de 26/10/2026): só o Comercial informa; sem eles, vale o validado.
-  const values = readCommercialValues(input);
+  const requested = readOrderItems(input);
   input.done();
 
   const today = todayDate();
@@ -68,8 +116,6 @@ export async function createOrder(ctx, body) {
   if (!contract.modalities.includes(r.modality)) {
     throw new BusinessRuleError('A modalidade selecionada não pertence ao contrato.', 'modality');
   }
-  const jobRole = await getById(ctx.uow, 'JobRole', 'job_roles', r.jobRoleId);
-  if (!jobRole?.active) throw new BusinessRuleError('Selecione um cargo ativo.', 'jobRoleId');
   const location = await getById(ctx.uow, 'WorkLocation', 'work_locations', r.workLocationId);
   if (!location?.active) throw new BusinessRuleError('Selecione um local de trabalho ativo.', 'workLocationId');
   if (location.clientId && location.clientId !== contract.clientId) {
@@ -78,31 +124,23 @@ export async function createOrder(ctx, body) {
   if (contract.contractingUnitId && location.id !== contract.contractingUnitId) {
     throw new BusinessRuleError('O pedido deste contrato usa a unidade contratante do contrato.', 'workLocationId');
   }
-  if (r.quantity < 1 || r.quantity > 1000) throw new BusinessRuleError('A quantidade deve estar entre 1 e 1000.', 'quantity');
+  if (requested.length > MAX_ITEMS) throw new BusinessRuleError(`O pedido aceita no máximo ${MAX_ITEMS} cargos.`, 'items');
+  const total = requested.reduce((sum, i) => sum + (i.quantity ?? 0), 0);
   // Continua bloqueando: é o início e o fim do mesmo registro, e o banco confere (CHECK em orders).
   if (r.desiredStartDate < r.clientRequestDate) throw new BusinessRuleError('A data de início desejada deve ser igual ou posterior à data da solicitação do cliente.', 'desiredStartDate');
   P.validateTerm(r.termType, r.termEndDate, r.termDurationDays, r.desiredStartDate);
-  const jobDescription = cleanMultiline(r.jobDescription);
-  if (jobDescription && jobDescription.length > JOB_DESCRIPTION_MAX_LENGTH) {
-    throw new BusinessRuleError(
-      `A descrição da vaga deve ter no máximo ${JOB_DESCRIPTION_MAX_LENGTH} caracteres.`, 'jobDescription');
-  }
 
   // Datas futuras ou fora de ordem avisam antes de salvar (date-review.js); o registro passado pede justificativa.
   const registeredAt = r.registeredAt ?? today;
   const review = new DateReview(ctx);
   const retroactive = await review.retroactive(registeredAt, 'A data de registro', r.justification);
 
-  // Valor do pedido: o validado vigente no registro ou, com valor novo ou alterado, uma versão para a Controladoria.
-  const { rate, review: needsReview } = await resolveOrderRate(
-    ctx, contract, jobRole, hasRole(ctx.user, Roles.Commercial) ? values : null, registeredAt);
-
   const term = P.normalizeTerm(r.termType, r.termEndDate, r.termDurationDays);
   const order = O.newOrder({
     contractId: contract.id,
     modality: r.modality,
-    jobRoleId: jobRole.id,
-    quantity: r.quantity,
+    jobRoleId: requested[0].jobRoleId,
+    quantity: total,
     workLocationId: location.id,
     clientRequestDate: r.clientRequestDate,
     desiredStartDate: r.desiredStartDate,
@@ -110,19 +148,47 @@ export async function createOrder(ctx, body) {
     termEndDate: term.endDate,
     termDurationDays: term.durationDays,
     notes: DateGuard.clean(r.notes),
-    jobDescription,
+    jobDescription: null,
     registeredAt,
   });
   order.contract = contract;
-  order.jobRole = jobRole;
   order.workLocation = location;
-  order.rateId = rate.id;
-  order.rate = rate;
-  if (needsReview) startReview(ctx, order, rate);
 
-  // Todo pedido nasce aguardando a aprovação do cliente (antes, a da Controladoria, se o valor é novo): as posições
-  // abrem (e o SLA começa) na aprovação do cliente.
-  await addNewPositions(ctx, order, r.quantity, r.desiredStartDate, null, rate, retroactive, 1);
+  // Cada cargo: ativo, sem repetir, quantidade de 1 a 1000 e o valor (o validado ou uma versão para a Controladoria).
+  const run = (index, fn) => (multi ? forItem(index, fn) : fn());
+  let needsReview = false;
+  const seen = new Set();
+  for (const [index, it] of requested.entries()) {
+    await run(index, async () => {
+      const jobRole = await getById(ctx.uow, 'JobRole', 'job_roles', it.jobRoleId);
+      if (!jobRole?.active) throw new BusinessRuleError('Selecione um cargo ativo.', 'jobRoleId');
+      if (seen.has(jobRole.id)) {
+        throw new BusinessRuleError(`O cargo ${jobRole.name} já está no pedido: some as quantidades no mesmo cargo.`, 'jobRoleId');
+      }
+      seen.add(jobRole.id);
+      if (it.quantity < 1 || it.quantity > 1000) throw new BusinessRuleError('A quantidade deve estar entre 1 e 1000.', 'quantity');
+      const jobDescription = cleanDescription(it.jobDescription);
+      // Valores por cargo: só o Comercial informa; sem eles, vale o validado vigente no registro.
+      const { rate, review: itemReview } = await resolveOrderRate(
+        ctx, contract, jobRole, hasRole(ctx.user, Roles.Commercial) ? it.values : null, registeredAt);
+      const item = O.newOrderItem(order, { jobRoleId: jobRole.id, quantity: it.quantity, jobDescription, rateId: rate.id });
+      item.jobRole = jobRole;
+      item.rate = rate;
+      needsReview ||= itemReview;
+    });
+  }
+  if (total > 1000) throw new BusinessRuleError('O pedido aceita no máximo 1000 posições no total.', 'items');
+  const items = O.itemsOf(order);
+  order.jobRole = items[0].jobRole;
+  order.rateId = items[0].rateId;
+  if (items.length === 1) order.jobDescription = items[0].jobDescription;
+  if (needsReview) startReview(ctx, order);
+
+  // Todo pedido nasce aguardando a aprovação do cliente (antes, a da Controladoria, se algum valor é novo): as posições
+  // abrem (e o SLA começa) na aprovação do cliente. As vagas seguem a ordem dos cargos.
+  for (const item of items) {
+    await addNewPositions(ctx, order, item.quantity, r.desiredStartDate, null, item.rate, retroactive, order.positions.length + 1, item);
+  }
   review.watchOrder(order, { fresh: true }).settle();
   ctx.uow.add(order);
   await ctx.uow.save({ action: 'CREATE_ORDER', justification: r.justification });
@@ -144,13 +210,22 @@ export async function createOrder(ctx, body) {
   return getOrderDetail(ctx, order.id);
 }
 
-/** RN-05: aumentar a quantidade gera novas posições, com a própria data de início desejada. */
+/**
+ * RN-05: aumentar a quantidade gera novas posições, com a própria data de início desejada, num cargo do pedido
+ * (`itemId`) ou num cargo novo (`jobRoleId`, com valores e descrição; decisão do usuário em 06/11/2026). Cargo novo
+ * com valor novo ou alterado vai para a Controladoria: no pedido ainda em validação, entra na mesma solicitação; no
+ * pedido já validado, vira uma revalidação, sem parar o pedido. Pedido de um cargo aceita o corpo sem o cargo.
+ */
 export async function addPositions(ctx, id, body) {
   Permissions.require(ctx.user, Roles.Commercial);
   const input = new Input(body);
   const quantity = input.int('quantity', { required: true, message: 'Informe a quantidade.' });
   const desiredStartDate = input.date('desiredStartDate', { message: 'Informe a data de início desejada.' });
   const justification = input.text('justification');
+  const itemId = input.id('itemId', { required: false });
+  const jobRoleId = input.id('jobRoleId', { required: false });
+  const jobDescription = input.text('jobDescription');
+  const values = readCommercialValues(input);
   input.done();
 
   const order = await requireOrder(ctx, id);
@@ -162,35 +237,79 @@ export async function addPositions(ctx, id, body) {
     throw new BusinessRuleError('O cliente não aprovou este pedido: não é possível acrescentar posições.');
   }
 
-  const sequence = await nextSequence(ctx.uow, order.id, order.positions);
   const today = todayDate();
+  const items = O.itemsOf(order);
+  let item = itemId ? items.find((i) => i.id === itemId) : null;
+  if (itemId && !item) throw new BusinessRuleError('Cargo do pedido não encontrado.', 'itemId');
+  if (!item && jobRoleId) item = items.find((i) => i.jobRoleId === jobRoleId) ?? null;
+  if (!item && !jobRoleId) {
+    if (items.length !== 1) throw new BusinessRuleError('Selecione o cargo das novas posições.', 'itemId');
+    [item] = items;
+  }
+
+  let rate;
+  let revalidation = false;
+  if (item) {
+    // Cargo do pedido: em validação, o valor proposto no item; senão, o validado vigente hoje.
+    rate = inReview(order) ? item.rate : await validatedRateAt(ctx.uow, order.contractId, item.jobRoleId, today);
+    item.quantity += quantity;
+  } else {
+    const jobRole = await getById(ctx.uow, 'JobRole', 'job_roles', jobRoleId);
+    if (!jobRole?.active) throw new BusinessRuleError('Selecione um cargo ativo.', 'jobRoleId');
+    if (items.length >= MAX_ITEMS) throw new BusinessRuleError(`O pedido aceita no máximo ${MAX_ITEMS} cargos.`, 'jobRoleId');
+    const resolved = await resolveOrderRate(ctx, order.contract, jobRole, values,
+      inReview(order) ? order.registeredAt : today);
+    rate = resolved.rate;
+    item = O.newOrderItem(order, {
+      jobRoleId: jobRole.id, quantity, jobDescription: cleanDescription(jobDescription), rateId: rate.id,
+    });
+    item.jobRole = jobRole;
+    item.rate = rate;
+    if (resolved.review) {
+      rate.orderId ??= order.id;
+      if (inReview(order)) {
+        // Entra na solicitação em andamento: a Controladoria decide com os demais cargos.
+        record(ctx, order, OrderReviewAction.SUBMITTED, item, rate);
+      } else {
+        item.pendingRateId = rate.id;
+        item.pendingRate = rate;
+        order.controllershipStatus = ControllershipStatus.PENDING;
+        record(ctx, order, OrderReviewAction.REVALIDATION_REQUESTED, item, rate);
+        revalidation = true;
+      }
+    }
+  }
+
+  const sequence = await nextSequence(ctx.uow, order.id, order.positions);
   const review = new DateReview(ctx).watchOrder(order);
-  // Pedido aprovado: as novas posições abrem hoje; aguardando aprovação: abrem quando o cliente aprovar. Em validação
-  // pela Controladoria, levam o valor proposto no pedido.
-  const rate = inReview(order) ? order.rate : await validatedRateAt(ctx.uow, order.contractId, order.jobRoleId, today);
-  await addNewPositions(ctx, order, quantity, desiredStartDate, O.isApproved(order) ? today : null, rate, false, sequence);
-  order.quantity += quantity;
+  // Pedido aprovado: as novas posições abrem hoje; aguardando aprovação: abrem quando o cliente aprovar.
+  await addNewPositions(ctx, order, quantity, desiredStartDate, O.isApproved(order) ? today : null, rate, false, sequence, item);
+  syncOrderSummary(order);
   review.settle();
 
   await notify(ctx.uow, {
     type: NotificationTypes.OrderCreated,
     entityId: order.id,
     subject: `Novas posições no pedido · Pedido ${order.number}`,
-    message: `O pedido ${order.number} (${order.jobRole?.name}, ${order.contract?.client?.legalName}) recebeu ${quantity} `
-      + `nova(s) posição(ões), início desejado em ${formatBr(desiredStartDate)}.`,
+    message: `O pedido ${order.number} (${order.contract?.client?.legalName}) recebeu ${quantity} nova(s) posição(ões) de `
+      + `${item.jobRole?.name}, início desejado em ${formatBr(desiredStartDate)}.`,
     link: links.order(order.id),
     email: {
       title: 'Novas posições no pedido',
-      summary: `O pedido recebeu ${quantity} nova(s) posição(ões).`,
+      summary: `O pedido recebeu ${quantity} nova(s) posição(ões) de ${item.jobRole?.name}.`,
       status: { label: O.isApproved(order) ? 'Abertas hoje' : 'Abrem na aprovação do cliente', tone: 'info' },
-      fields: [...orderFields(order), ['Posições acrescentadas', `+${quantity}`, { strong: true }],
-        ['Início desejado', formatBr(desiredStartDate), { strong: true }]],
+      fields: [...orderFields(order), ['Cargo das novas posições', item.jobRole?.name, { strong: true }],
+        ['Posições acrescentadas', `+${quantity}`, { strong: true }], ['Início desejado', formatBr(desiredStartDate), { strong: true }]],
       action: 'RH: inclua as novas posições no recrutamento do pedido.',
       button: 'Consultar pedido',
     },
   }, { roles: [Roles.RhManager, Roles.Nacc], userIds: O.activeRhAnalysts(order).map((a) => a.userId) });
 
   await ctx.uow.save({ action: 'ADD_POSITIONS', justification });
+  if (revalidation) {
+    await notifyReviewPending(ctx, order, 'revalidation');
+    await ctx.uow.save({ action: 'ADD_POSITIONS' });
+  }
   return getOrderDetail(ctx, order.id);
 }
 
@@ -378,7 +497,9 @@ export async function getOrderDetail(ctx, id) {
     termEndDate: order.termEndDate,
     termDurationDays: order.termDurationDays,
     notes: order.notes,
-    jobDescription: order.jobDescription,
+    // Pedido de um cargo: a descrição dele; com vários, cada cargo tem a sua (items).
+    jobDescription: O.itemsOf(order).length === 1 ? O.itemsOf(order)[0].jobDescription : null,
+    items: itemsDto(order),
     createdByName: order.createdBy ? names.get(order.createdBy) ?? null : null,
     canAddPositions: hasRole(ctx.user, Roles.Commercial) && !order.isLegacy,
     canCorrectDates: hasRole(ctx.user, Roles.Admin) || order.createdBy === ctx.user.id,
@@ -422,6 +543,7 @@ export async function getOrderDetail(ctx, id) {
       contractingUnitId: order.contract?.contractingUnitId ?? null,
       clientDecided: order.approvalStatus === OrderApprovalStatus.APPROVED || order.approvalStatus === OrderApprovalStatus.NOT_APPROVED,
       values: await currentValues(ctx, order),
+      items: await itemsForEdit(ctx, order),
     } : null,
     adminEdits: await adminEditsDto(order, showMoney),
     candidateImport: canImportCandidates(ctx.user, order) ? { pending: eligiblePositions(order).length } : null,
@@ -543,7 +665,8 @@ function notifyTeamChange(ctx, order, type, subject, intro, analysts, email) {
     entityId: order.id,
     subject: `${subject} · Pedido ${order.number}`,
     message: `Pedido ${order.number} — ${intro} Cliente: ${order.contract?.client?.legalName}. `
-      + `Unidade contratante: ${contractingUnitLabel(order)}. Cargo: ${order.jobRole?.name}. Vagas: ${quantity}.`,
+      + `Unidade contratante: ${contractingUnitLabel(order)}. ${O.itemsOf(order).length > 1 ? 'Cargos' : 'Cargo'}: ${O.roleNames(order)}. `
+      + `Vagas: ${quantity}.`,
     link: links.order(order.id),
     email: {
       title: subject, summary: intro.replace(/ Equipe atual: .*$/, ''), status: email.status, action: email.action,
@@ -628,10 +751,58 @@ export async function rejectOrder(ctx, id, body) {
 
 // ---------------------------------------------------------------- auxiliares
 
-/** Valor atual do pedido para preencher a edição: o gravado no pedido ou, nos antigos, o validado vigente no registro. */
+/** Valor atual de um item: o gravado ou, nos pedidos antigos, o validado vigente no registro. */
+async function itemRate(ctx, order, item) {
+  return item.rate ?? validatedRateAt(ctx.uow, order.contractId, item.jobRoleId, order.registeredAt);
+}
+
+/** Valor atual do 1º cargo (formato de um cargo, para quem ainda lê `adminEdit.values`). */
 async function currentValues(ctx, order) {
-  const rate = order.rate ?? await validatedRateAt(ctx.uow, order.contractId, order.jobRoleId, order.registeredAt);
+  const [first] = O.itemsOf(order);
+  const rate = first ? await itemRate(ctx, order, first) : null;
   return rate ? { monthlyValue: rate.monthlyValue, feeValue: rate.feeValue, validFrom: rate.validFrom } : null;
+}
+
+/** Cada cargo com o valor atual, para preencher a edição administrativa. */
+async function itemsForEdit(ctx, order) {
+  const list = [];
+  for (const item of O.itemsOf(order)) {
+    const rate = await itemRate(ctx, order, item);
+    list.push({
+      itemId: item.id, sequence: item.sequence, jobRoleId: item.jobRoleId, jobRoleName: item.jobRole?.name ?? '',
+      jobDescription: item.jobDescription,
+      values: rate ? { monthlyValue: rate.monthlyValue, feeValue: rate.feeValue, validFrom: rate.validFrom } : null,
+    });
+  }
+  return list;
+}
+
+/**
+ * Acompanhamento por cargo: quantidade solicitada (registro + acréscimos), reduzida, vigente, preenchidas, em aberto
+ * por etapa e encerradas sem preenchimento — sempre pelo ciclo atual de cada vaga do cargo.
+ */
+function itemsDto(order) {
+  return O.itemsOf(order).map((item) => {
+    const current = O.currentPositions(order).filter((p) => P.itemOf(p)?.id === item.id && !isLegacyOrigin(p));
+    const reduced = current.filter((p) => p.status === PositionStatus.CLOSED_HEADCOUNT_REDUCED).length;
+    const open = current.filter(P.isOpen);
+    const stages = {};
+    for (const p of open) stages[P.stageStatus(p)] = (stages[P.stageStatus(p)] ?? 0) + 1;
+    return {
+      id: item.id,
+      sequence: item.sequence,
+      jobRoleId: item.jobRoleId,
+      jobRoleName: item.jobRole?.name ?? '',
+      jobDescription: item.jobDescription,
+      quantity: item.quantity,
+      reducedQuantity: reduced,
+      currentQuantity: item.quantity - reduced,
+      filled: current.filter((p) => p.status === PositionStatus.FILLED).length,
+      open: open.length,
+      closed: current.filter((p) => P.isClosed(p) && p.status !== PositionStatus.CLOSED_HEADCOUNT_REDUCED).length,
+      stages,
+    };
+  });
 }
 
 export async function requireOrder(ctx, id) {
@@ -655,8 +826,8 @@ export function notifyEveryone(ctx, order, type, subject, intro, email = {}) {
     entityId: order.id,
     subject: `${subject} · Pedido ${order.number}`,
     message: `Pedido ${order.number} — ${intro} Cliente: ${order.contract?.client?.legalName}. `
-      + `Unidade contratante: ${contractingUnitLabel(order)}. Cargo: ${order.jobRole?.name}. Vagas: ${quantity}. `
-      + `Status: ${Labels.approvalStatus[order.approvalStatus]}.`,
+      + `Unidade contratante: ${contractingUnitLabel(order)}. ${O.itemsOf(order).length > 1 ? 'Cargos' : 'Cargo'}: ${O.roleNames(order)}. `
+      + `Vagas: ${quantity}. Status: ${Labels.approvalStatus[order.approvalStatus]}.`,
     link: links.order(order.id),
     email: {
       title: subject, summary: email.summary ?? intro, status: email.status, action: email.action, button: 'Consultar pedido',
@@ -669,14 +840,15 @@ export function notifyEveryone(ctx, order, type, subject, intro, email = {}) {
  * Cria as vagas novas. `openedAt` nulo = aguardando a aprovação (sem abertura nem meta, gravadas na aprovação);
  * `rate` = valor por cargo gravado nas posições (o do pedido na criação; nos acréscimos, o validado vigente).
  */
-async function addNewPositions(ctx, order, quantity, desiredStartDate, openedAt, rate, retroactive, firstSequence) {
+async function addNewPositions(ctx, order, quantity, desiredStartDate, openedAt, rate, retroactive, firstSequence, item = null) {
   // Vagas novas continuam a numeração das vagas do pedido (as reposições não consomem números de vaga).
   const firstSlot = Math.max(0, ...order.positions.map((p) => p.slotNumber)) + 1;
   const sla = openedAt
     ? await slaFor(order.contract, order.modality, DemandType.NEW, openedAt)
     : { days: null, source: SlaTargetSource.NONE };
   for (let i = 0; i < quantity; i += 1) {
-    const p = P.createNew(order, firstSequence + i, desiredStartDate, openedAt, rate, sla.days, sla.source, firstSlot + i);
+    const p = P.createNew(order, firstSequence + i, desiredStartDate, openedAt, rate, sla.days, sla.source, firstSlot + i,
+      item ?? O.itemsOf(order)[0] ?? null);
     if (retroactive) P.markRetroactive(p);
     order.positions.push(p);
   }
@@ -707,7 +879,8 @@ export function orderSummary(o) {
     clientName: o.contract?.client?.legalName ?? '',
     contractName: o.contract?.name ?? '',
     modality: o.modality,
-    jobRoleName: o.jobRole?.name ?? '',
+    jobRoleName: O.roleNames(o),
+    itemsCount: O.itemsOf(o).length,
     workLocationName: o.workLocation?.name ?? '',
     quantity: o.quantity,
     ...quantities(o),

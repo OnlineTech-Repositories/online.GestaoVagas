@@ -4,7 +4,7 @@ import { today as todayDate } from '../domain/dates.js';
 import { OrderApprovalStatus, RhStage, Roles, SlaSituation } from '../domain/enums.js';
 import { BusinessRuleError } from '../domain/errors.js';
 import { hasAnyRole, hasRole, Permissions } from '../domain/guards.js';
-import { activeRhAnalysts } from '../domain/order.js';
+import { activeRhAnalysts, itemsOf, roleNames } from '../domain/order.js';
 import { dateFlags } from '../domain/date-checks.js';
 import { rhStage } from '../domain/position.js';
 import { Input, isId } from './input.js';
@@ -161,7 +161,7 @@ export async function getRhDashboard(ctx, query) {
       client: order.contract?.client?.legalName ?? '',
       unit: unitLabel(order),
       contract: order.contract?.name ?? '',
-      jobRole: order.jobRole?.name ?? '',
+      jobRole: roleNames(order),
       clientRequestDate: order.clientRequestDate,
       approvalStatus: order.approvalStatus,
       analysts: analysts.map((a) => a.userName),
@@ -219,7 +219,7 @@ function buildOptions(scoped, user) {
     clients: unique(list.map((o) => [o.contract?.clientId, o.contract?.client?.legalName ?? '—'])),
     units: unique(list.map((o) => [unitKey(o), unitLabel(o)])),
     contracts: unique(list.map((o) => [o.contractId, o.contract?.name ?? '—'])),
-    jobRoles: unique(list.map((o) => [o.jobRoleId, o.jobRole?.name ?? '—'])),
+    jobRoles: unique(list.flatMap((o) => itemsOf(o).map((i) => [i.jobRoleId, i.jobRole?.name ?? '—']))),
     analysts: lockedToSelf(user) ? [] : unique(list.flatMap((o) => activeRhAnalysts(o).map((a) => [a.userId, a.userName]))),
   };
 }

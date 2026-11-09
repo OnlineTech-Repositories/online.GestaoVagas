@@ -47,9 +47,14 @@ export const ENTITIES = {
     controllershipDecidedAt: 'datetime', controllershipDecidedBy: 'text', controllershipReason: 'text',
     pendingRateId: 'text',
   }),
+  /** Item do pedido: um cargo, com quantidade, descrição e valor próprios (vários cargos por pedido, 06/11/2026). */
+  OrderItem: define('order_items', {
+    orderId: 'text', sequence: 'int', jobRoleId: 'text', quantity: 'int', jobDescription: 'text', rateId: 'text',
+    pendingRateId: 'text',
+  }),
   OrderReview: define('order_reviews', {
     orderId: 'text', action: 'text', userId: 'text', occurredAt: 'datetime', reason: 'text', jobRoleId: 'text',
-    monthlyValue: 'decimal', feeValue: 'decimal', validFrom: 'date', rateId: 'text',
+    monthlyValue: 'decimal', feeValue: 'decimal', validFrom: 'date', rateId: 'text', orderItemId: 'text',
   }, { audited: false }),
   /** Edição administrativa do pedido: quem, quando, justificativa e os campos (JSON: rótulo, antes, depois). */
   OrderAdminEdit: define('order_admin_edits', {
@@ -62,7 +67,7 @@ export const ENTITIES = {
     employeeName: 'text', employeeRegistration: 'text', firstDayJustification: 'text', firstDayConfirmedAt: 'datetime',
     firstDayConfirmedBy: 'text', closedAt: 'date', cancellationReason: 'text', termType: 'text', termEndDate: 'date',
     termDurationDays: 'int', termAdjustJustification: 'text', rateId: 'text', slaTargetDays: 'int',
-    slaTargetSource: 'text', hasRetroactiveDates: 'bool',
+    slaTargetSource: 'text', hasRetroactiveDates: 'bool', orderItemId: 'text',
   }),
   Termination: define('terminations', {
     originPositionId: 'text', lastWorkedDay: 'date', source: 'text', terminationType: 'text', notes: 'text',
@@ -106,7 +111,7 @@ export const ENTITIES = {
  * de inserção: pais antes dos filhos, por causa das chaves estrangeiras.
  */
 export const RELATIONS = {
-  Order: ['positions', 'rhAnalysts', 'reviews', 'adminEdits'],
+  Order: ['items', 'positions', 'rhAnalysts', 'reviews', 'adminEdits'],
   Position: ['exitTermination', 'pauses', 'candidates', 'evidences'],
   Termination: ['replacementPosition'],
   PositionEvidence: ['file'],
@@ -115,7 +120,7 @@ export const RELATIONS = {
 /** Ordem de inserção entre tipos (pais primeiro). */
 export const INSERT_ORDER = [
   'User', 'GroupEntity', 'Client', 'JobRole', 'WorkLocation', 'PauseReason', 'SlaTarget', 'SystemParameter', 'Contract',
-  'ContractRate', 'Order', 'OrderReview', 'OrderAdminEdit', 'Position', 'Termination', 'Pause', 'OrderRhAnalyst', 'Candidate', 'EvidenceFile',
+  'ContractRate', 'Order', 'OrderItem', 'OrderReview', 'OrderAdminEdit', 'Position', 'Termination', 'Pause', 'OrderRhAnalyst', 'Candidate', 'EvidenceFile',
   'PositionEvidence', 'PositionAlert', 'Notification', 'EmailMessage', 'JobRun',
 ];
 

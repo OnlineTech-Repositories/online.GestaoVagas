@@ -1,5 +1,5 @@
 import {
-  ADDED_COLUMNS, DOTNET_DATABASE_ERROR, DROPPED_INDEXES, postgresTriggers, readSchema, RELAXED_COLUMNS,
+  ADDED_COLUMNS, DATA_MIGRATIONS, DOTNET_DATABASE_ERROR, DROPPED_INDEXES, postgresTriggers, readSchema, RELAXED_COLUMNS,
 } from './migrations.js';
 
 /**
@@ -69,7 +69,11 @@ export function buildProductionScript() {
     '',
     readSchema(true).trim(),
     '',
-    '-- ---- 3. Gatilhos: log de auditoria somente inclusão e sem exclusão física (RN-26) ----------------------------',
+    '-- ---- 3. Migrações de dados (idempotentes) ------------------------------------------------------------------',
+    '',
+    ...DATA_MIGRATIONS,
+    '',
+    '-- ---- 4. Gatilhos: log de auditoria somente inclusão e sem exclusão física (RN-26) ----------------------------',
     '',
     postgresTriggers(),
     '',

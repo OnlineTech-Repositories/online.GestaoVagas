@@ -6,11 +6,13 @@ import {
   ControllershipStatus, DemandType, Modality, OrderApprovalStatus as A, OrderReviewAction, Roles, TermType,
 } from '../domain/enums.js';
 import { cleanMultiline, DateGuard, JOB_DESCRIPTION_MAX_LENGTH, Permissions } from '../domain/guards.js';
+import { itemsOf } from '../domain/order.js';
 import * as P from '../domain/position.js';
 import { DateReview } from './date-review.js';
 import { Input } from './input.js';
 import {
-  inReview, inRevalidation, notifyReviewPending, readCommercialValues, record, resolveOrderRate, sameValues,
+  forItem, inReview, inRevalidation, notifyReviewPending, readCommercialValues, record, resolveOrderRate, sameValues,
+  syncOrderSummary,
 } from './order-review.js';
 import { getOrderDetail, requireOrder } from './orders.js';
 import { money } from './rates.js';
@@ -21,7 +23,9 @@ import { slaFor, validatedRateAt } from './snapshots.js';
  * cancelar nem recriar. Decisões do usuário: tudo menos o contrato (a quantidade segue com "Acrescentar" e "Reduzir
  * posições"); cargo ou valores alterados num pedido já validado vão para a Controladoria sem parar o pedido (as
  * posições seguem com o valor atual até a validação); modalidade, vigência e início desejado atualizam as posições
- * ainda em aberto (preenchidas e encerradas ficam como estão).
+ * ainda em aberto (preenchidas e encerradas ficam como estão). Com vários cargos (06/11/2026), cargo, descrição e
+ * valores são editados em cada item (`items`: { itemId, jobRoleId, jobDescription, monthlyValue, feeValue,
+ * rateValidFrom }); no pedido de um cargo, o formato antigo (no próprio corpo) continua valendo.
  *
  * Duas chamadas: a prévia devolve os campos que mudam (antes e depois) e os efeitos, sem gravar; a confirmação, com
  * a justificativa, grava a mesma edição e o histórico permanente (order_admin_edits, além do log de auditoria).
@@ -29,9 +33,10 @@ import { slaFor, validatedRateAt } from './snapshots.js';
 export async function editOrder(ctx, id, body, { preview = false } = {}) {
   Permissions.require(ctx.user, Roles.Admin);
   const input = new Input(body);
+  const rawItems = input.raw('items');
+  const multi = Array.isArray(rawItems);
   const r = {
     modality: input.option('modality', Modality, { message: 'Selecione a modalidade.' }),
-    jobRoleId: input.id('jobRoleId', { message: 'Selecione o cargo.' }),
     workLocationId: input.id('workLocationId', { message: 'Selecione o local de trabalho.' }),
     clientRequestDate: input.date('clientRequestDate', { message: 'Informe a data da solicitação do cliente.' }),
     desiredStartDate: input.date('desiredStartDate', { message: 'Informe a data de início desejada.' }),
@@ -41,24 +46,34 @@ export async function editOrder(ctx, id, body, { preview = false } = {}) {
     termEndDate: input.date('termEndDate', { required: false }),
     termDurationDays: input.int('termDurationDays'),
     notes: input.text('notes'),
-    jobDescription: input.text('jobDescription'),
     justification: input.text('justification'),
   };
-  const values = readCommercialValues(input);
+  const changesIn = multi ? readItems(input, rawItems) : [{
+    itemId: null,
+    jobRoleId: input.id('jobRoleId', { message: 'Selecione o cargo.' }),
+    jobDescription: input.text('jobDescription'),
+    values: readCommercialValues(input),
+  }];
   input.done();
 
   const order = await requireOrder(ctx, id);
   if (order.isLegacy) throw new BusinessRuleError('O pedido de desligamento avulso não é editado: corrija o desligamento.');
   const contract = order.contract;
-  const currentRate = order.rate ?? await validatedRateAt(ctx.uow, order.contractId, order.jobRoleId, order.registeredAt);
-  const before = describe(order, currentRate);
+  const items = itemsOf(order);
+  if (!multi) {
+    if (items.length !== 1) throw new BusinessRuleError('Informe os dados de cada cargo do pedido.', 'items');
+    changesIn[0].itemId = items[0].id;
+  }
+  const currentRates = new Map();
+  for (const item of items) {
+    currentRates.set(item.id, item.rate ?? await validatedRateAt(ctx.uow, order.contractId, item.jobRoleId, order.registeredAt));
+  }
+  const before = describe(order, currentRates);
   const review = new DateReview(ctx).watchOrder(order);
   const impacts = [];
 
-  // ---- validações (as mesmas da criação)
+  // ---- validações do cabeçalho (as mesmas da criação)
   if (!contract.modalities.includes(r.modality)) throw new BusinessRuleError('A modalidade selecionada não pertence ao contrato.', 'modality');
-  const jobRole = await getById(ctx.uow, 'JobRole', 'job_roles', r.jobRoleId);
-  if (!jobRole || (!jobRole.active && jobRole.id !== order.jobRoleId)) throw new BusinessRuleError('Selecione um cargo ativo.', 'jobRoleId');
   const location = await getById(ctx.uow, 'WorkLocation', 'work_locations', r.workLocationId);
   if (!location || (!location.active && location.id !== order.workLocationId)) {
     throw new BusinessRuleError('Selecione um local de trabalho ativo.', 'workLocationId');
@@ -73,10 +88,6 @@ export async function editOrder(ctx, id, body, { preview = false } = {}) {
     throw new BusinessRuleError('A data de início desejada deve ser igual ou posterior à data da solicitação do cliente.', 'desiredStartDate');
   }
   P.validateTerm(r.termType, r.termEndDate, r.termDurationDays, r.desiredStartDate);
-  const jobDescription = cleanMultiline(r.jobDescription);
-  if (jobDescription && jobDescription.length > JOB_DESCRIPTION_MAX_LENGTH) {
-    throw new BusinessRuleError(`A descrição da vaga deve ter no máximo ${JOB_DESCRIPTION_MAX_LENGTH} caracteres.`, 'jobDescription');
-  }
   const decided = order.approvalStatus === A.APPROVED || order.approvalStatus === A.NOT_APPROVED;
   if (!decided && r.clientDecisionDate) {
     throw new BusinessRuleError('O cliente ainda não decidiu: não há data de aprovação a corrigir.', 'clientDecisionDate');
@@ -132,50 +143,73 @@ export async function editOrder(ctx, id, body, { preview = false } = {}) {
     termEndDate: term.endDate,
     termDurationDays: term.durationDays,
     notes: DateGuard.clean(r.notes),
-    jobDescription,
   });
   order.workLocation = location;
 
-  // ---- cargo e valores comerciais
+  // ---- cargo, descrição e valores de cada item
+  const run = (index, fn) => (multi ? forItem(index, fn) : fn());
+  const revalidatingBefore = inRevalidation(order);
   let revalidation = false;
-  const roleChanged = jobRole.id !== order.jobRoleId;
-  const valuesChanged = Boolean(values) && (!currentRate || !sameValues(currentRate, values));
-  if (roleChanged || valuesChanged) {
-    if (inReview(order)) {
-      throw new BusinessRuleError('O pedido está em validação pela Controladoria: cargo e valores são ajustados pelo fluxo da '
-        + 'validação (devolução e "Ajustar e reenviar").', 'jobRoleId');
-    }
-    if (inRevalidation(order)) {
-      throw new BusinessRuleError('Já há uma alteração de cargo e valores aguardando a Controladoria neste pedido: aguarde a decisão.', 'jobRoleId');
-    }
-    const { rate, review: needsReview } = await resolveOrderRate(ctx, contract, jobRole, values, order.registeredAt);
-    if (needsReview) {
-      rate.orderId = order.id;
-      order.pendingRateId = rate.id;
-      order.pendingRate = rate;
-      order.controllershipStatus = ControllershipStatus.PENDING;
-      record(ctx, order, OrderReviewAction.REVALIDATION_REQUESTED, rate);
-      revalidation = true;
-      impacts.push('Cargo e valores alterados vão para a validação da Controladoria. O pedido segue na etapa em que está e '
-        + 'as posições usam o valor atual até a validação; devolvida, o pedido continua com o cargo e o valor atuais.');
-    } else {
-      // Valor já validado para o cargo: vale na hora; as posições em aberto passam a usá-lo.
-      order.jobRoleId = jobRole.id;
-      order.jobRole = jobRole;
-      order.rateId = rate.id;
-      order.rate = rate;
-      rate.jobRole ??= jobRole;
-      for (const p of open.filter((x) => x.rateId !== rate.id)) {
-        p.rateId = rate.id;
-        p.rate = rate;
-        touched.add(p);
+  let appliedNow = false;
+  const seen = new Set();
+  for (const [index, change] of changesIn.entries()) {
+    await run(index, async () => {
+      const item = items.find((i) => i.id === change.itemId);
+      if (!item) throw new BusinessRuleError('Cargo do pedido não encontrado.', 'jobRoleId');
+      const jobRole = await getById(ctx.uow, 'JobRole', 'job_roles', change.jobRoleId);
+      if (!jobRole || (!jobRole.active && jobRole.id !== item.jobRoleId)) throw new BusinessRuleError('Selecione um cargo ativo.', 'jobRoleId');
+      if (seen.has(jobRole.id)) throw new BusinessRuleError(`O cargo ${jobRole.name} aparece em mais de um item do pedido.`, 'jobRoleId');
+      seen.add(jobRole.id);
+      const description = cleanMultiline(change.jobDescription);
+      if (description && description.length > JOB_DESCRIPTION_MAX_LENGTH) {
+        throw new BusinessRuleError(`A descrição da vaga deve ter no máximo ${JOB_DESCRIPTION_MAX_LENGTH} caracteres.`, 'jobDescription');
       }
-      impacts.push('O cargo e o valor informados já estão validados em Valores por cargo: valem a partir de agora.');
-    }
-  }
+      item.jobDescription = description;
 
-  const after = describe(order, order.pendingRate ?? order.rate ?? currentRate);
-  const changes = before.map((b, i) => ({ ...b, after: after[i].value })).filter((c) => c.value !== c.after)
+      const currentRate = currentRates.get(item.id);
+      const roleChanged = jobRole.id !== item.jobRoleId;
+      const valuesChanged = Boolean(change.values) && (!currentRate || !sameValues(currentRate, change.values));
+      if (!roleChanged && !valuesChanged) return;
+      if (inReview(order)) {
+        throw new BusinessRuleError('O pedido está em validação pela Controladoria: cargo e valores são ajustados pelo fluxo da '
+          + 'validação (devolução e "Ajustar e reenviar").', 'jobRoleId');
+      }
+      if (revalidatingBefore) {
+        throw new BusinessRuleError('Já há uma alteração de cargo e valores aguardando a Controladoria neste pedido: aguarde a decisão.', 'jobRoleId');
+      }
+      const { rate, review: needsReview } = await resolveOrderRate(ctx, contract, jobRole, change.values, order.registeredAt);
+      if (needsReview) {
+        rate.orderId = order.id;
+        item.pendingRateId = rate.id;
+        item.pendingRate = rate;
+        order.controllershipStatus = ControllershipStatus.PENDING;
+        record(ctx, order, OrderReviewAction.REVALIDATION_REQUESTED, item, rate);
+        revalidation = true;
+      } else {
+        // Valor já validado para o cargo: vale na hora; as posições em aberto do item passam a usá-lo.
+        Object.assign(item, { jobRoleId: jobRole.id, jobRole, rateId: rate.id, rate });
+        rate.jobRole ??= jobRole;
+        for (const p of open.filter((x) => P.itemOf(x)?.id === item.id && x.rateId !== rate.id)) {
+          p.rateId = rate.id;
+          p.rate = rate;
+          touched.add(p);
+        }
+        appliedNow = true;
+      }
+    });
+  }
+  syncOrderSummary(order);
+  order.jobDescription = items.length === 1 ? items[0].jobDescription : order.jobDescription;
+  if (revalidation) {
+    impacts.push('Cargo e valores alterados vão para a validação da Controladoria. O pedido segue na etapa em que está e '
+      + 'as posições usam o valor atual até a validação; devolvida, o pedido continua com o cargo e o valor atuais.');
+  }
+  if (appliedNow) impacts.push('O cargo e o valor informados já estão validados em Valores por cargo: valem a partir de agora.');
+
+  const afterRates = new Map(items.map((i) => [i.id, i.pendingRate ?? i.rate ?? currentRates.get(i.id)]));
+  const after = describe(order, afterRates);
+  const byKey = new Map(after.map((a) => [a.key, a]));
+  const changes = before.map((b) => ({ ...b, after: byKey.get(b.key)?.value ?? '—' })).filter((c) => c.value !== c.after)
     .map(({ key, label, value, after: next, money: isMoney }) => ({ key, label, before: value, after: next, money: Boolean(isMoney) }));
   if (!changes.length) throw new BusinessRuleError('Nenhuma alteração em relação aos dados atuais do pedido.');
   if (touched.size) {
@@ -199,6 +233,25 @@ export async function editOrder(ctx, id, body, { preview = false } = {}) {
   return getOrderDetail(ctx, order.id);
 }
 
+/** Ajustes de cada item, lidos de `items`; os erros levam o índice do item no nome do campo. */
+function readItems(input, rawItems) {
+  if (!rawItems.length) {
+    input.fail('items', 'Informe os cargos do pedido.');
+    return [];
+  }
+  return rawItems.map((raw, index) => {
+    const it = new Input(raw ?? {});
+    const change = {
+      itemId: it.id('itemId', { message: 'Cargo do pedido não encontrado.' }),
+      jobRoleId: it.id('jobRoleId', { message: 'Selecione o cargo.' }),
+      jobDescription: it.text('jobDescription'),
+      values: readCommercialValues(it),
+    };
+    for (const [field, message] of Object.entries(it.errors)) input.fail(`${field}-${index}`, message);
+    return change;
+  });
+}
+
 /** Histórico das edições para o detalhe: valores em R$ só para quem vê valores. */
 export async function adminEditsDto(order, showMoney) {
   const edits = order.adminEdits ?? [];
@@ -214,16 +267,19 @@ export async function adminEditsDto(order, showMoney) {
   }));
 }
 
-/** Retrato legível dos campos editáveis: [{ key, label, value, money }]. */
-function describe(order, rate) {
+/**
+ * Retrato legível dos campos editáveis: [{ key, label, value, money }]. Os de cada cargo levam "Cargo N — " no rótulo
+ * quando o pedido tem mais de um; no pedido de um cargo, os rótulos de sempre.
+ */
+function describe(order, rates) {
   const term = [TERM_LABELS[order.termType] ?? order.termType,
     order.termEndDate ? `até ${formatBr(order.termEndDate)}` : null,
     order.termDurationDays ? `${order.termDurationDays} dias` : null].filter(Boolean).join(' · ');
   const brl = (v) => (v === null || v === undefined ? '—' : money.format(Number(v)));
   const location = order.workLocation ? (order.workLocation.code ? `${order.workLocation.code} — ${order.workLocation.name}` : order.workLocation.name) : '—';
-  return [
+  const items = itemsOf(order);
+  const fields = [
     ['modality', 'Modalidade', MODALITY_LABELS[order.modality] ?? order.modality],
-    ['jobRole', 'Cargo', (order.pendingRate?.jobRole?.name ?? order.jobRole?.name) ?? '—'],
     ['workLocation', 'Local de trabalho', location],
     ['clientRequestDate', 'Solicitação do cliente', formatBr(order.clientRequestDate)],
     ['desiredStartDate', 'Início desejado', formatBr(order.desiredStartDate)],
@@ -231,11 +287,20 @@ function describe(order, rate) {
     ['clientDecisionDate', 'Decisão do cliente', order.clientDecisionDate ? formatBr(order.clientDecisionDate) : '—'],
     ['term', 'Vigência', term],
     ['notes', 'Observações', order.notes || '—'],
-    ['jobDescription', 'Descrição da vaga', order.jobDescription || '—'],
-    ['monthlyValue', 'Valor mensal', brl(rate?.monthlyValue), true],
-    ['feeValue', 'Fee R&S', brl(rate?.feeValue), true],
-    ['rateValidFrom', 'Início da vigência do valor', rate?.validFrom ? formatBr(rate.validFrom) : '—', true],
-  ].map(([key, label, value, isMoney]) => ({ key, label, value, money: Boolean(isMoney) }));
+  ];
+  for (const item of items) {
+    const prefix = items.length > 1 ? `Cargo ${item.sequence} — ` : '';
+    const rate = rates.get(item.id);
+    fields.push(
+      [`jobRole-${item.id}`, items.length > 1 ? `Cargo ${item.sequence}` : 'Cargo', (item.pendingRate?.jobRole?.name ?? item.jobRole?.name) ?? '—'],
+      [`jobDescription-${item.id}`, `${prefix}${prefix ? 'descrição da vaga' : 'Descrição da vaga'}`, item.jobDescription || '—'],
+      [`monthlyValue-${item.id}`, `${prefix}${prefix ? 'valor mensal' : 'Valor mensal'}`, brl(rate?.monthlyValue), true],
+      [`feeValue-${item.id}`, `${prefix}${prefix ? 'fee R&S' : 'Fee R&S'}`, brl(rate?.feeValue), true],
+      [`rateValidFrom-${item.id}`, `${prefix}${prefix ? 'início da vigência do valor' : 'Início da vigência do valor'}`,
+        rate?.validFrom ? formatBr(rate.validFrom) : '—', true],
+    );
+  }
+  return fields.map(([key, label, value, isMoney]) => ({ key, label, value, money: Boolean(isMoney) }));
 }
 
 const MODALITY_LABELS = { RS: 'R&S', MOT: 'Mão de Obra Temporária', MOE: 'Mão de Obra Efetiva', FAC: 'Facilities' };

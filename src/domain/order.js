@@ -11,6 +11,32 @@ import { cancel, activePause, isCurrentCycle, isOpen, startRecruitingFromOrder }
 
 export const isApproved = (o) => o.approvalStatus === A.APPROVED;
 
+/** Itens do pedido em ordem (vários cargos por pedido, 06/11/2026). */
+export const itemsOf = (o) => [...(o.items ?? [])].sort((a, b) => a.sequence - b.sequence);
+
+/** "Estoquista, Auxiliar de Armazém": os cargos do pedido, para avisos e listas. */
+export const roleNames = (o) => {
+  const names = [...new Set(itemsOf(o).map((i) => i.jobRole?.name).filter(Boolean))];
+  return names.length ? names.join(', ') : o.jobRole?.name ?? '';
+};
+
+/** Novo item: o cargo e a quantidade; valor e descrição são gravados por quem chama. */
+export function newOrderItem(o, props) {
+  const item = entity('OrderItem', {
+    orderId: o.id,
+    sequence: Math.max(0, ...(o.items ?? []).map((i) => i.sequence)) + 1,
+    jobDescription: null,
+    rateId: null,
+    pendingRateId: null,
+    rate: null,
+    pendingRate: null,
+    ...props,
+  });
+  o.items ??= [];
+  o.items.push(item);
+  return item;
+}
+
 /** Analistas de RH responsáveis, ativos, em ordem de nome. */
 export const activeRhAnalysts = (o) =>
   (o.rhAnalysts ?? []).filter((a) => !a.removedAt).sort((a, b) => a.userName.localeCompare(b.userName, 'pt-BR'));
@@ -150,6 +176,7 @@ export function newOrder(props) {
     termEndDate: null,
     termDurationDays: null,
     positions: [],
+    items: [],
     rhAnalysts: [],
     reviews: [],
     rateId: null,

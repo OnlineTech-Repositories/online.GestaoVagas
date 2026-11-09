@@ -66,8 +66,11 @@ function templateRows(buffer) {
   const [sheet] = readXlsx(buffer);
   const header = sheet.rows[0];
   const keys = ['order', 'position', 'approvedAt', 'fullName', 'phone', 'sex', 'justification', 'positionId', 'orderId'];
-  return sheet.rows.slice(1).map((cells) => Object.fromEntries(keys.map((k, i) => [k, cells[i] ?? null]))).filter((r) => r.positionId)
-    .map((r) => ({ ...r, header }));
+  // Pelas colunas do título: o modelo ganhou a coluna informativa "Cargo" (vários cargos por pedido, 06/11/2026).
+  const at = (i) => header.indexOf(TITLES[i]);
+  return sheet.rows.slice(1).map((cells) => ({
+    ...Object.fromEntries(keys.map((k, i) => [k, cells[at(i)] ?? null])), jobRole: cells[header.indexOf('Cargo')] ?? null,
+  })).filter((r) => r.positionId).map((r) => ({ ...r, header }));
 }
 
 /** Colunas do modelo (melhoria de 25/10/2026: telefone no lugar de nascimento e CPF, que passaram para a admissão). */
@@ -103,7 +106,9 @@ test('modelo: uma linha por posição pendente, pedido e posição bloqueados, s
   const rows = templateRows(res.buffer);
   assert.equal(rows.length, order.candidateImport.pending);
   assert.ok(rows.every((r) => r.order === order.summary.number && r.orderId === order.summary.id));
-  assert.deepEqual(rows[0].header.slice(0, TITLES.length), TITLES, 'sem nascimento nem CPF');
+  assert.deepEqual(rows[0].header.filter((t) => t !== 'Cargo').slice(0, TITLES.length), TITLES, 'sem nascimento nem CPF');
+  assert.equal(rows[0].header[2], 'Cargo', 'o cargo de cada posição, depois da vaga');
+  assert.ok(rows.every((r) => r.jobRole), 'cargo preenchido em cada linha');
 
   const sheets = readXlsx(res.buffer).map((s) => s.name);
   assert.deepEqual(sheets, ['Candidatos', 'Orientações']);

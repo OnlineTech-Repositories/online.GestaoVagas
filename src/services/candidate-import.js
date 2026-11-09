@@ -36,6 +36,7 @@ const SHEET = 'Candidatos';
 const COLUMNS = [
   { key: 'order', title: 'Pedido', type: 'int', width: 9 },
   { key: 'position', title: 'Vaga', width: 9 },
+  { key: 'jobRole', title: 'Cargo', width: 26, optional: true },
   { key: 'approvedAt', title: 'Data de aprovação *', type: 'date', editable: true, width: 18 },
   { key: 'fullName', title: 'Nome completo *', editable: true, width: 38 },
   { key: 'phone', title: 'Telefone com DDD *', editable: true, width: 19 },
@@ -105,7 +106,9 @@ export async function candidateTemplate(ctx, orderId) {
       name: SHEET,
       protect: true,
       columns: COLUMNS,
-      rows: positions.map((p) => ({ order: order.number, position: vaga(order, p), positionId: p.id, orderId: order.id })),
+      rows: positions.map((p) => ({
+        order: order.number, position: vaga(order, p), jobRole: P.jobRoleOf(p)?.name ?? '', positionId: p.id, orderId: order.id,
+      })),
       validations: [
         { key: 'sex', type: 'list', values: sexList, errorTitle: 'Sexo', error: `Escolha uma opção da lista: ${sexList.join(', ')}.` },
         { key: 'approvedAt', type: 'date', errorTitle: 'Data inválida', error: 'Informe uma data no formato dd/mm/aaaa.' },

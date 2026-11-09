@@ -450,3 +450,17 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     Nome igual a um cargo existente, ignorando maiúsculas, acentos e espaços extras, é recusado (o inativo orienta a
     pedir a reativação ao administrador); nome parecido (um contém o outro) pede confirmação mostrando os cargos já
     cadastrados. O cargo novo entra no catálogo, já escolhido no pedido, e o log registra quem cadastrou e quando.
+43. **Vários cargos no mesmo pedido (melhoria pedida pelo usuário em 06/11/2026):** o pedido tem um cabeçalho comum
+    (cliente, contrato, modalidade, unidade, local, datas e vigência) e uma lista de cargos ("+ Adicionar cargo ao
+    pedido", até 20), cada um com cargo pesquisável, quantidade, valores comerciais com vigência e descrição da vaga;
+    na criação, cada cargo pode ser removido e o total de posições é somado. O mesmo cargo não se repete no pedido
+    (some as quantidades). As posições nascem ligadas ao cargo (tabela `order_items`; `positions.order_item_id`), e
+    reposições herdam o cargo da vaga. A Controladoria valida o pedido inteiro (decisão do usuário): qualquer cargo com
+    valor novo ou alterado leva o pedido para a validação; a devolução e o reenvio cobrem todos os cargos, e o
+    histórico indica o cargo. Depois de emitido, "Acrescentar posições" escolhe um cargo do pedido ou inclui um cargo
+    novo, com as mesmas regras de valor (no pedido já validado, o cargo novo com valor novo vira revalidação, sem parar
+    o pedido); a edição administrativa altera cada cargo. O detalhe mostra, por cargo, as solicitadas, preenchidas, em
+    aberto por etapa e encerradas, com o total do pedido. Avisos, relatórios, relações de admissões e do 1º dia e as
+    planilhas de importação (nova coluna informativa "Cargo", opcional nos modelos já baixados) trazem o cargo de cada
+    posição. Os pedidos existentes viram pedidos de um cargo na migração (item com o mesmo id do pedido; posições e
+    histórico da Controladoria ligados a ele) e a API continua aceitando o formato de um cargo só.

@@ -54,6 +54,11 @@ export function rhStage(p, today = null) {
   return p.status;
 }
 
+/** Item (cargo) do pedido a que a posição pertence (vários cargos por pedido, 06/11/2026); o 1º, se não gravado. */
+export const itemOf = (p) => p.order?.items?.find((i) => i.id === p.orderItemId) ?? p.item ?? p.order?.items?.[0] ?? null;
+/** Cargo da posição: o do item; nos objetos sem itens carregados, o do pedido. */
+export const jobRoleOf = (p) => itemOf(p)?.jobRole ?? p.order?.jobRole ?? null;
+
 export const isAdmitted = (p) => p.status === S.IN_ADMISSION || p.status === S.AWAITING_FIRST_DAY;
 /** Candidato selecionado (ou em admissão) sem candidato cadastrado: dados anteriores à regra do candidato. */
 export const canRegisterMissingCandidate = (p) => !activeCandidate(p)
@@ -101,6 +106,7 @@ function base(order, props) {
     slaTargetDays: null,
     slaTargetSource: SlaTargetSource.NONE,
     hasRetroactiveDates: false,
+    orderItemId: null,
     ...props,
     order,
     termination: null,
@@ -115,8 +121,11 @@ function base(order, props) {
  * RN-02: cada posição do pedido nasce NEW/OPEN, com os valores gravados na abertura (valor por cargo e meta de SLA).
  * `openedAt` nulo = pedido aguardando a aprovação do cliente: a posição abre (e o SLA começa) na aprovação.
  */
-export function createNew(order, sequence, desiredStartDate, openedAt, rate, slaTargetDays, slaSource, slotNumber = null) {
+export function createNew(order, sequence, desiredStartDate, openedAt, rate, slaTargetDays, slaSource, slotNumber = null,
+  item = null) {
   return base(order, {
+    orderItemId: item?.id ?? null,
+    item,
     sequence,
     slotNumber: slotNumber ?? sequence,
     // Pedido com a publicação no JobConvo já informada: a posição acrescentada herda e nasce em recrutamento.
@@ -131,7 +140,7 @@ export function createNew(order, sequence, desiredStartDate, openedAt, rate, sla
 }
 
 /** D1: posição de origem já preenchida, criada pelo desligamento avulso. */
-export function createLegacyFilled(order, firstDayAt, employeeName, employeeRegistration, rate) {
+export function createLegacyFilled(order, firstDayAt, employeeName, employeeRegistration, rate, item = null) {
   if (!employeeName?.trim() || !employeeRegistration?.trim()) {
     throw new BusinessRuleError('Informe o nome e a matrícula do colaborador.', 'employeeName');
   }
@@ -146,6 +155,8 @@ export function createLegacyFilled(order, firstDayAt, employeeName, employeeRegi
     employeeRegistration: employeeRegistration.trim(),
     rateId: rate?.id ?? null,
     rate: rate ?? null,
+    orderItemId: item?.id ?? null,
+    item,
   });
 }
 
@@ -165,6 +176,9 @@ export function createReplacement(origin, termination, sequence) {
     termDurationDays: origin.termDurationDays,
     rateId: origin.rateId,
     rate: origin.rate ?? null,
+    // A reposição é a mesma vaga: mesmo item (cargo) do pedido.
+    orderItemId: origin.orderItemId ?? itemOf(origin)?.id ?? null,
+    item: itemOf(origin),
   });
   replacement.termination = termination;
   termination.replacementPosition = replacement;

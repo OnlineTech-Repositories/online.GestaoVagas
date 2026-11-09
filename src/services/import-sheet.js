@@ -19,7 +19,8 @@ export function readTemplateSheet(buffer, { sheetName, columns, templateName }) 
   const sheet = sheets.find((s) => s.name === sheetName) ?? sheets[0];
   const header = (sheet?.rows[0] ?? []).map((v) => plain(cellText(v)).replace(/\s*\*$/, ''));
   const index = Object.fromEntries(columns.map((c) => [c.key, header.indexOf(plain(c.title).replace(/\s*\*$/, ''))]));
-  const missing = columns.filter((c) => index[c.key] < 0);
+  // Coluna informativa acrescentada depois (ex.: Cargo): os modelos já baixados continuam aceitos sem ela.
+  const missing = columns.filter((c) => index[c.key] < 0 && !c.optional);
   if (missing.length) {
     throw new BusinessRuleError(`A planilha não corresponde ao modelo de ${templateName}: faltam as colunas `
       + `${missing.map((c) => `"${c.title.replace(' *', '')}"`).join(', ')}. Baixe o modelo do pedido e preencha nele.`, 'file');

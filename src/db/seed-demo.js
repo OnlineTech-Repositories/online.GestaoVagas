@@ -4,7 +4,7 @@ import {
   TerminationSource, TerminationType,
 } from '../domain/enums.js';
 import { ContractCode } from '../domain/guards.js';
-import { newOrder, recordJobconvo, setRhAnalysts } from '../domain/order.js';
+import { newOrder, newOrderItem, recordJobconvo, setRhAnalysts } from '../domain/order.js';
 import * as P from '../domain/position.js';
 import { hashPassword } from '../services/auth.js';
 import { execute, queryOne, transaction } from './index.js';
@@ -122,10 +122,17 @@ export async function seedDemoData(password) {
       ...extra,
     });
     Object.assign(o, { contract: c, jobRole, workLocation });
+    // Um cargo por pedido de demonstração (o item guarda cargo, quantidade e valor).
+    const item = newOrderItem(o, { jobRoleId: jobRole.id, quantity });
+    item.jobRole = jobRole;
     return uow.add(o);
   };
   const positions = (o, r, sla, source) => {
-    for (let i = 1; i <= o.quantity; i += 1) o.positions.push(P.createNew(o, i, o.desiredStartDate, o.registeredAt, r, sla, source));
+    const [item] = o.items;
+    Object.assign(item, { rateId: r?.id ?? null, rate: r ?? null });
+    for (let i = 1; i <= o.quantity; i += 1) {
+      o.positions.push(P.createNew(o, i, o.desiredStartDate, o.registeredAt, r, sla, source, null, item));
+    }
     return o.positions;
   };
 
@@ -209,8 +216,10 @@ export async function seedDemoData(password) {
     approvalStatus: OrderApprovalStatus.AWAITING_CLIENT_APPROVAL, clientDecisionDate: null, approvalRecordedAt: null,
     approvalRecordedBy: null,
   });
+  Object.assign(order5.items[0], { rateId: rateCleaner.id, rate: rateCleaner });
   for (let i = 1; i <= order5.quantity; i += 1) {
-    order5.positions.push(P.createNew(order5, i, order5.desiredStartDate, null, rateCleaner, null, SlaTargetSource.NONE));
+    order5.positions.push(P.createNew(order5, i, order5.desiredStartDate, null, rateCleaner, null, SlaTargetSource.NONE, null,
+      order5.items[0]));
   }
 
   // ------------------------------------------------------------ analistas de RH responsáveis

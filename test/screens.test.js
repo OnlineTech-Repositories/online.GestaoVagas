@@ -1349,16 +1349,16 @@ test('Pedido com valores comerciais: o valor aprovado vem preenchido, alterar av
   };
   pick('contractId', contract.id);
   // Cargo com pesquisa: escolhe na lista (mousedown, como o clique do mouse).
-  const roleInput = root.querySelector('[data-campo="jobRoleId"]').querySelector('input[type="text"]');
+  const roleInput = root.querySelector('[data-campo="jobRoleId-0"]').querySelector('input[type="text"]');
   roleInput.dispatchEvent(new Event('focus'));
   root.querySelector(`[data-valor="${role.id}"]`).dispatchEvent(new Event('mousedown'));
   await wait(150);
   const rate = await apiModule.api.get('/api/contract-rates/current', { contractId: contract.id, jobRoleId: role.id, date: ui.today() });
   const form = root.querySelector('form');
-  assert.equal(Number(form.querySelector('input[name="monthlyValue"]').value), Number(rate.monthlyValue), 'valor aprovado preenchido');
+  assert.equal(Number(form.querySelector('input[name="monthlyValue-0"]').value), Number(rate.monthlyValue), 'valor aprovado preenchido');
   assert.match(root.textContent, /Valor aprovado vigente desde/);
   assert.match(root.textContent, /nasce "Aguardando aprovação do cliente"/);
-  form.querySelector('input[name="monthlyValue"]').value = String(Number(rate.monthlyValue) + 1);
+  form.querySelector('input[name="monthlyValue-0"]').value = String(Number(rate.monthlyValue) + 1);
   form.dispatchEvent(new Event('input'));
   assert.match(root.textContent, /Valor diferente do aprovado vigente/);
   assert.match(root.textContent, /nasce "Aguardando aprovação da Controladoria"/);
@@ -1433,9 +1433,9 @@ test('Cargo do pedido com pesquisa: filtra em qualquer parte, sem acento nem mai
   await signIn('comercial@demo.local');
   const roles = (await apiModule.api.get('/api/catalogs/job-roles')).filter((j) => j.active);
   const root = await open('/pedidos/novo', 'Novo pedido');
-  const block = root.querySelector('[data-campo="jobRoleId"]');
+  const block = root.querySelector('[data-campo="jobRoleId-0"]');
   const input = block.querySelector('input[type="text"]');
-  const hidden = block.querySelector('input[name="jobRoleId"]');
+  const hidden = block.querySelector('input[name="jobRoleId-0"]');
   const key = (k) => input.dispatchEvent(Object.assign(new Event('keydown'), { key: k }));
   const options = () => [...block.querySelectorAll('li')].map((li) => li.textContent);
   const type = (text) => {
@@ -1545,8 +1545,70 @@ test('Cadastrar cargo no pedido: o Comercial (sem ser Administrador) cadastra e 
   area.querySelector('[data-campo="name"]').querySelector('input').value = 'Auxiliar de Inventário';
   [...area.querySelectorAll('button')].find((b) => b.textContent === 'Salvar').click();
   await wait(250);
-  const block = root.querySelector('[data-campo="jobRoleId"]');
+  const block = root.querySelector('[data-campo="jobRoleId-0"]');
   assert.equal(block.querySelector('input[type="text"]').value, 'Auxiliar de Inventário');
   const created = (await apiModule.api.get('/api/catalogs/job-roles')).find((j) => j.name === 'Auxiliar de Inventário');
-  assert.equal(block.querySelector('input[name="jobRoleId"]').value, created.id);
+  assert.equal(block.querySelector('input[name="jobRoleId-0"]').value, created.id);
+});
+
+test('Pedido com vários cargos: inclui e remove cargos, soma o total, o detalhe mostra cada cargo e o acréscimo escolhe o cargo', async (t) => {
+  if (skip(t)) return;
+  await signIn('comercial@demo.local');
+  const byText = (scope, text) => [...scope.querySelectorAll('button')].find((b) => b.textContent === text);
+  const root = await open('/pedidos/novo', 'Novo pedido');
+  const form = root.querySelector('form');
+  byText(root, '+ Adicionar cargo ao pedido').click();
+  assert.ok(root.querySelector('[data-campo="jobRoleId-1"]'), 'segundo cargo');
+  assert.match(root.textContent, /Cargo 2/);
+  form.querySelector('input[name="quantity-0"]').value = '5';
+  form.querySelector('input[name="quantity-1"]').value = '3';
+  form.dispatchEvent(new Event('input'));
+  assert.match(root.textContent, /Total do pedido: 8 posição\(ões\) em 2 cargos/);
+  byText(root, '+ Adicionar cargo ao pedido').click();
+  assert.match(root.textContent, /Total do pedido: 9 posição\(ões\) em 3 cargos/, 'as quantidades digitadas continuam');
+  const third = [...root.querySelectorAll('fieldset.item-pedido')][2];
+  byText(third, 'Remover cargo').click();
+  assert.match(root.textContent, /Total do pedido: 8 posição\(ões\) em 2 cargos/);
+  assert.equal(form.querySelector('input[name="quantity-1"]').value, '3');
+
+  // 5 + 3 no mesmo pedido (pela API, com os valores aprovados vigentes): o detalhe mostra cada cargo e o total.
+  const contracts = await apiModule.api.get('/api/contracts', { onlyActive: true });
+  let contract;
+  let roles = [];
+  for (const c of contracts.filter((x) => x.contractingUnitId)) {
+    roles = await apiModule.api.get('/api/orders/job-roles', { contractId: c.id });
+    if (roles.length >= 2) { contract = c; break; }
+  }
+  assert.ok(contract, 'contrato com dois cargos validados nos dados de demonstração');
+  const items = [];
+  for (const [role, quantity] of [[roles[0], 5], [roles[1], 3]]) {
+    const rate = await apiModule.api.get('/api/contract-rates/current', { contractId: contract.id, jobRoleId: role.id, date: ui.today() });
+    items.push({ jobRoleId: role.id, quantity, jobDescription: `Atividades de ${role.name}`,
+      monthlyValue: rate?.monthlyValue ?? null, feeValue: rate?.feeValue ?? null, rateValidFrom: rate?.validFrom ?? ui.today() });
+  }
+  const created = await apiModule.api.post('/api/orders', {
+    contractId: contract.id, modality: contract.modalities[0], workLocationId: contract.contractingUnitId,
+    clientRequestDate: ui.today(), desiredStartDate: ui.today(), termType: 'INDEFINITE', registeredAt: ui.today(), items,
+  });
+  assert.equal(created.positions.length, 8);
+  const detail = await open(`/pedidos/${created.summary.id}`, 'Pedido');
+  assert.match(detail.textContent, /Cargos do pedido/);
+  assert.match(detail.textContent, new RegExp(`1\. ${roles[0].name}`));
+  assert.match(detail.textContent, new RegExp(`2\. ${roles[1].name}`));
+  assert.match(detail.textContent, /Total do pedido: 8 solicitadas · 0 preenchidas · 8 em aberto/);
+  assert.match(detail.textContent, new RegExp(`Descrição da vaga — ${roles[1].name}`));
+
+  // Acrescentar posições: escolhe o cargo do pedido (ou um cargo novo).
+  byText(detail, 'Acrescentar posições').click();
+  await wait(150);
+  const area = document.getElementById('modal-area');
+  const target = area.querySelector('[data-campo="itemId"]').querySelector('select');
+  assert.ok([...target.querySelectorAll('option')].some((o) => o.textContent === '+ Novo cargo no pedido'));
+  target.value = created.items[1].id;
+  area.querySelector('[data-campo="quantity"]').querySelector('input').value = '2';
+  byText(area, 'Acrescentar').click();
+  await wait(250);
+  const after = await apiModule.api.get(`/api/orders/${created.summary.id}`);
+  assert.deepEqual(after.items.map((i) => i.quantity), [5, 5]);
+  assert.match(document.getElementById('app').textContent, /Total do pedido: 10 solicitadas/);
 });

@@ -95,24 +95,31 @@ export async function ordersScreen(target, _params, query) {
 // ---------------------------------------------------------------------
 
 export async function newOrderScreen(target) {
-  // Comercial: cargo do catálogo e valores comerciais no próprio pedido (fluxo integrado de 26/10/2026). O NACC, na
-  // carga inicial, segue escolhendo entre os cargos com valor já validado no contrato.
+  // Comercial: cargos do catálogo e valores comerciais no próprio pedido (fluxo integrado de 26/10/2026). O NACC, na
+  // carga inicial, segue escolhendo entre os cargos com valor já validado no contrato. Vários cargos no mesmo pedido
+  // (06/11/2026): o cabeçalho vale para todos; cada cargo tem quantidade, valores e descrição próprios.
   const commercial = hasRole(state.user, 'COMMERCIAL');
   const [contracts, locations, catalogRoles] = await Promise.all([
     api.get('/api/contracts', { onlyActive: true }),
     api.get('/api/catalogs/work-locations'),
     commercial ? api.get('/api/catalogs/job-roles') : [],
   ]);
-  const valuesArea = el('div', {});
-  const valuesNotice = el('div', {});
-  let approvedRate = null; // valor validado vigente para contrato + cargo na data de registro
-  let rateRequest = 0;
 
-  const modalityArea = el('div', {});
-  const jobRoleArea = el('div', {});
-  const jobRoleNotice = el('div', {});
+  /** Cargos que o pedido oferece: o catálogo ativo (Comercial) ou os com valor validado no contrato (NACC). */
+  let roleOptions = commercial ? catalogRoles.filter((j) => j.active) : [];
   let noJobRoles = false;
   let jobRolesRequest = 0;
+  let nextKey = 1;
+  const newItem = () => ({
+    key: nextKey++, jobRoleId: '', quantity: '1', jobDescription: '', monthlyValue: '', feeValue: '', rateValidFrom: '',
+    approvedRate: null, request: 0, valuesArea: null, noticeArea: null,
+  });
+  const items = [newItem()];
+
+  const modalityArea = el('div', {});
+  const itemsArea = el('div', {});
+  const itemsTotal = el('p', { class: 'texto-suave' });
+  const jobRoleNotice = el('div', {});
   const locationArea = el('div', {});
   const preview = el('div', {});
   const messageArea = el('div', {});
@@ -127,10 +134,11 @@ export async function newOrderScreen(target) {
     options: [{ value: '', label: 'Selecione' }, ...contracts.map((c) => ({ value: c.id, label: `${c.clientName} — ${c.name}` }))],
     help: 'Somente contratos ativos.',
   });
+  const contractId = () => contractField.querySelector('select').value;
 
   /** A modalidade e o local dependem do contrato escolhido (RN-01). */
   function syncContract() {
-    const contract = contracts.find((c) => c.id === contractField.querySelector('select').value);
+    const contract = contracts.find((c) => c.id === contractId());
     const modalities = contract?.modalities ?? [];
     clear(modalityArea).append(field({
       name: 'modality',
@@ -176,9 +184,9 @@ export async function newOrderScreen(target) {
     function renderList() {
       const term = searchInput.value.trim().toLowerCase();
       const digits = term.replace(/\D/g, '');
-      const items = existing.filter((l) => !term || `${l.code ?? ''} ${l.name}`.toLowerCase().includes(term)
+      const found = existing.filter((l) => !term || `${l.code ?? ''} ${l.name}`.toLowerCase().includes(term)
         || (digits.length >= 3 && String(l.cnpj ?? '').includes(digits)));
-      clear(listArea).append(items.length
+      clear(listArea).append(found.length
         ? table([
           { title: 'Unidade', render: (l) => locationLabel(l) },
           { title: 'CNPJ', cls: 'nowrap', render: (l) => (l.cnpj ? cnpj(l.cnpj) : '—') },
@@ -186,7 +194,7 @@ export async function newOrderScreen(target) {
             renderLocation(contract, l.id);
             reference.close();
           }, 'secundario pequeno') },
-        ], items.slice(0, 30))
+        ], found.slice(0, 30))
         : el('p', { class: 'texto-fraco texto-pequeno mb-0' },
           existing.length ? 'Nenhuma unidade encontrada com esse termo.' : 'O cliente ainda não tem unidades cadastradas.'));
     }
@@ -218,24 +226,9 @@ export async function newOrderScreen(target) {
       },
     });
   }
-  /** Comercial: todos os cargos ativos do catálogo; o valor aprovado vigente, se houver, preenche os valores. */
-  function renderCatalogRoles(selected = '') {
-    const roleField = searchSelect({
-      name: 'jobRoleId',
-      label: 'Cargo',
-      required: true,
-      value: selected,
-      options: catalogRoles.filter((j) => j.active).map((j) => ({ value: j.id, label: j.name })),
-      placeholder: 'Digite o nome do cargo para pesquisar',
-      emptyText: 'Nenhum cargo encontrado',
-      onChange: () => loadRate(),
-    });
-    clear(jobRoleArea).append(roleField,
-      // Cargo novo no próprio pedido: o Comercial cadastra (29/10/2026); editar e inativar seguem com o ADMIN.
-      el('div', { class: 'barra-botoes mb-16' }, button('+ Cadastrar cargo', openNewJobRole, 'secundario pequeno')));
-  }
 
-  function openNewJobRole() {
+  /** Cargo novo pelo pedido (Comercial; 29/10/2026), já escolhido no cargo em que foi pedido. */
+  function openNewJobRole(it) {
     formModal({
       title: 'Cadastrar cargo',
       intro: el('p', { class: 'texto-suave' }, 'Confira na lista se o cargo já existe. O cargo novo entra no catálogo e fica '
@@ -246,74 +239,133 @@ export async function newOrderScreen(target) {
         const created = await api.post('/api/orders/job-roles', { name: d.name });
         catalogRoles.push(created);
         catalogRoles.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-        renderCatalogRoles(created.id);
+        roleOptions = catalogRoles.filter((j) => j.active);
+        syncFromForm();
+        it.jobRoleId = created.id;
+        renderItems();
         toast(`Cargo ${created.name} cadastrado.`, 'sucesso');
-        await loadRate();
+        await loadRate(it);
       },
     });
   }
 
-  /** Valor mensal, fee e início da vigência; o valor aprovado vigente vem preenchido para conferência. */
-  function renderValues(rate) {
-    const registered = form ? formData(form).registeredAt : today();
-    clear(valuesArea).append(
+  // ---- cargos do pedido
+
+  /** Guarda o que foi digitado em cada cargo (antes de redesenhar a lista ao incluir ou remover um cargo). */
+  function syncFromForm() {
+    if (!form) return;
+    const d = formData(form);
+    items.forEach((it, i) => {
+      for (const key of ['jobRoleId', 'quantity', 'jobDescription', 'monthlyValue', 'feeValue', 'rateValidFrom']) {
+        if (`${key}-${i}` in d) it[key] = d[`${key}-${i}`] ?? '';
+      }
+    });
+  }
+
+  /** Valor mensal, fee e início da vigência do cargo; o valor aprovado vigente vem preenchido para conferência. */
+  function renderValues(it, i) {
+    if (!it.valuesArea) return;
+    clear(it.valuesArea).append(
       el('div', { class: 'linha-campos' },
-        moneyField({ name: 'monthlyValue', label: 'Valor mensal de venda', value: rate?.monthlyValue ?? '',
+        moneyField({ name: `monthlyValue-${i}`, label: 'Valor mensal de venda', value: it.monthlyValue,
           help: 'Base do valor diário (÷30). Dispensado em contrato só de R&S.' }),
-        moneyField({ name: 'feeValue', label: 'Fee R&S (informativo)', value: rate?.feeValue ?? '' })),
-      field({ name: 'rateValidFrom', label: 'Início da vigência do valor', type: 'date', required: true,
-        value: rate?.validFrom ?? registered ?? today() }),
+        moneyField({ name: `feeValue-${i}`, label: 'Fee R&S (informativo)', value: it.feeValue })),
+      field({ name: `rateValidFrom-${i}`, label: 'Início da vigência do valor', type: 'date', required: true,
+        value: it.rateValidFrom || (form ? formData(form).registeredAt : today()) || today() }),
     );
   }
 
-  async function loadRate() {
-    if (!commercial) return;
-    const contractId = contractField.querySelector('select').value;
-    const jobRoleId = jobRoleArea.querySelector('input[name="jobRoleId"]')?.value;
-    const request = ++rateRequest;
-    approvedRate = null;
-    if (!contractId || !jobRoleId) {
-      renderValues(null);
+  function itemCard(it, i) {
+    it.valuesArea = commercial ? el('div', {}) : null;
+    it.noticeArea = el('div', {});
+    const roleField = searchSelect({
+      name: `jobRoleId-${i}`,
+      label: 'Cargo',
+      required: true,
+      value: it.jobRoleId,
+      disabled: !roleOptions.length,
+      options: roleOptions.map((j) => ({ value: j.id, label: j.name })),
+      placeholder: roleOptions.length ? 'Digite o nome do cargo para pesquisar' : 'Escolha o contrato',
+      emptyText: 'Nenhum cargo encontrado',
+      help: !commercial && roleOptions.length ? 'Somente cargos com valor validado neste contrato (Valores por cargo).' : null,
+      onChange: (value) => {
+        it.jobRoleId = value;
+        loadRate(it);
+      },
+    });
+    const card = el('fieldset', { class: 'item-pedido', dataset: { item: String(i) } },
+      el('legend', {}, items.length > 1 ? `Cargo ${i + 1}` : 'Cargo e valores comerciais'),
+      roleField,
+      el('div', { class: 'barra-botoes mb-16' },
+        // Cargo novo no próprio pedido: o Comercial cadastra (29/10/2026); editar e inativar seguem com o ADMIN.
+        commercial ? button('+ Cadastrar cargo', () => openNewJobRole(it), 'secundario pequeno') : '',
+        items.length > 1 ? button('Remover cargo', () => removeItem(i), 'secundario pequeno') : ''),
+      field({ name: `quantity-${i}`, label: 'Quantidade de posições', type: 'number', value: it.quantity, required: true,
+        attributes: { min: '1', max: '1000' } }),
+      ...(commercial ? [it.valuesArea] : []),
+      it.noticeArea,
+      field({ name: `jobDescription-${i}`, label: 'Descrição da vaga', type: 'textarea', value: it.jobDescription,
+        attributes: { maxlength: '4000', rows: '4' },
+        help: 'Atividades, responsabilidades, requisitos e qualificações deste cargo. Vale para as posições dele.' }),
+    );
+    renderValues(it, i);
+    return card;
+  }
+
+  function renderItems() {
+    clear(itemsArea).append(...items.map(itemCard),
+      el('div', { class: 'barra-botoes mb-16' }, button('+ Adicionar cargo ao pedido', addItem, 'secundario')));
+    updatePreview();
+  }
+
+  function addItem() {
+    syncFromForm();
+    items.push(newItem());
+    renderItems();
+  }
+
+  function removeItem(index) {
+    syncFromForm();
+    items.splice(index, 1);
+    renderItems();
+  }
+
+  async function loadRate(it) {
+    if (!commercial) {
+      updatePreview();
+      return;
+    }
+    const request = ++it.request;
+    it.approvedRate = null;
+    if (!contractId() || !it.jobRoleId) {
       updatePreview();
       return;
     }
     try {
       const rate = await api.get('/api/contract-rates/current', {
-        contractId, jobRoleId, date: (form ? formData(form).registeredAt : null) || today() });
-      if (request !== rateRequest) return; // contrato, cargo ou data mudaram enquanto carregava
-      approvedRate = rate;
-      renderValues(rate);
+        contractId: contractId(), jobRoleId: it.jobRoleId, date: (form ? formData(form).registeredAt : null) || today() });
+      if (request !== it.request) return; // contrato, cargo ou data mudaram enquanto carregava
+      syncFromForm();
+      it.approvedRate = rate;
+      Object.assign(it, rate
+        ? { monthlyValue: rate.monthlyValue ?? '', feeValue: rate.feeValue ?? '', rateValidFrom: rate.validFrom }
+        : { monthlyValue: '', feeValue: '', rateValidFrom: '' });
+      renderValues(it, items.indexOf(it));
     } catch (error) {
-      if (request !== rateRequest) return;
-      renderValues(null);
-      clear(valuesNotice).append(el('div', { class: 'mensagem erro' }, error.message));
+      if (request !== it.request) return;
+      clear(it.noticeArea).append(el('div', { class: 'mensagem erro' }, error.message));
       return;
     }
     updatePreview();
   }
 
   /** Sem valor aprovado, ou com qualquer valor diferente dele: o pedido vai para a Controladoria. */
-  function needsReview(d) {
-    if (!commercial || !d.contractId || !d.jobRoleId) return false;
-    if (!approvedRate) return true;
+  function needsReview(it) {
+    if (!commercial || !contractId() || !it.jobRoleId) return false;
+    if (!it.approvedRate) return true;
     const n = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
-    return n(d.monthlyValue) !== n(approvedRate.monthlyValue) || n(d.feeValue) !== n(approvedRate.feeValue)
-      || d.rateValidFrom !== approvedRate.validFrom;
-  }
-
-  /** Cargo: desabilitado até escolher o contrato; depois, só os cargos com valor validado nesse contrato. */
-  function renderJobRoles(roles, placeholder) {
-    const disabled = !roles?.length;
-    clear(jobRoleArea).append(searchSelect({
-      name: 'jobRoleId',
-      label: 'Cargo',
-      required: true,
-      disabled,
-      options: (roles ?? []).map((j) => ({ value: j.id, label: j.name })),
-      placeholder: disabled ? placeholder ?? 'Escolha o contrato' : 'Digite o nome do cargo para pesquisar',
-      emptyText: 'Nenhum cargo encontrado',
-      help: roles?.length ? 'Somente cargos com valor validado neste contrato (Valores por cargo).' : null,
-    }));
+    return n(it.monthlyValue) !== n(it.approvedRate.monthlyValue) || n(it.feeValue) !== n(it.approvedRate.feeValue)
+      || it.rateValidFrom !== it.approvedRate.validFrom;
   }
 
   function setNoJobRoles(value) {
@@ -328,32 +380,34 @@ export async function newOrderScreen(target) {
     if (submit) submit.disabled = value;
   }
 
+  /** Contrato escolhido: o NACC recebe os cargos com valor validado nele; o Comercial, os valores aprovados de cada cargo. */
   async function loadJobRoles() {
     if (commercial) {
-      await loadRate();
+      await Promise.all(items.map(loadRate));
       return;
     }
-    const contractId = contractField.querySelector('select').value;
     const request = ++jobRolesRequest;
     setNoJobRoles(false);
-    if (!contractId) {
-      renderJobRoles(null, 'Escolha o contrato');
+    roleOptions = [];
+    if (!contractId()) {
+      renderItems();
       return;
     }
-    renderJobRoles(null, 'Carregando cargos...');
     try {
-      const roles = await api.get('/api/orders/job-roles', { contractId });
+      const roles = await api.get('/api/orders/job-roles', { contractId: contractId() });
       if (request !== jobRolesRequest) return; // o contrato mudou enquanto carregava
-      renderJobRoles(roles, roles.length ? 'Selecione' : 'Nenhum cargo disponível');
+      syncFromForm();
+      roleOptions = roles;
+      for (const it of items) if (!roles.some((j) => j.id === it.jobRoleId)) it.jobRoleId = '';
+      renderItems();
       setNoJobRoles(roles.length === 0);
     } catch (error) {
       if (request !== jobRolesRequest) return;
-      renderJobRoles(null, 'Não foi possível carregar os cargos');
       clear(jobRoleNotice).append(el('div', { class: 'mensagem erro' }, error.message));
     }
   }
 
-  // Trocar o contrato limpa o cargo escolhido e recarrega as opções.
+  // Trocar o contrato recarrega a modalidade, o local, as opções de cargo e os valores aprovados.
   contractField.querySelector('select').addEventListener('change', () => {
     syncContract();
     loadJobRoles();
@@ -372,27 +426,25 @@ export async function newOrderScreen(target) {
       : 'Padrão: hoje. Data anterior exige justificativa (RN-24).',
   });
   // O valor aprovado considerado é o vigente na data de registro.
-  registeredField.querySelector('input').addEventListener('change', () => loadRate());
-  if (commercial) renderCatalogRoles();
+  registeredField.querySelector('input').addEventListener('change', () => {
+    if (commercial) items.forEach(loadRate);
+  });
 
   form = el(
     'form',
     { novalidate: true },
     messageArea,
     contractField,
-    el('div', { class: 'linha-campos' }, modalityArea,
-      field({ name: 'quantity', label: 'Quantidade', type: 'number', value: '1', required: true, attributes: { min: '1', max: '1000' } })),
-    commercial
-      ? el('fieldset', {}, el('legend', {}, 'Cargo e valores comerciais'), jobRoleArea, valuesArea, valuesNotice)
-      : el('div', {}, jobRoleArea, jobRoleNotice),
-    field({ name: 'jobDescription', label: 'Descrição da vaga', type: 'textarea',
-      attributes: { maxlength: '4000', rows: '6' },
-      help: 'Atividades, responsabilidades, requisitos e qualificações desejadas. Vale para todas as posições do pedido.' }),
+    modalityArea,
     locationArea,
     el('div', { class: 'linha-campos' },
       field({ name: 'clientRequestDate', label: 'Data da solicitação do cliente', type: 'date', value: today(), required: true }),
       field({ name: 'desiredStartDate', label: 'Início desejado', type: 'date', value: today(), required: true })),
     el('div', { class: 'linha-campos' }, ...termFields()),
+    el('h3', { class: 'grafico-titulo' }, 'Cargos do pedido'),
+    jobRoleNotice,
+    itemsArea,
+    itemsTotal,
     field({ name: 'notes', label: 'Observações', type: 'textarea', attributes: { maxlength: '2000' } }),
     registeredField,
     justificationArea,
@@ -402,54 +454,76 @@ export async function newOrderScreen(target) {
   );
 
   function updatePreview() {
+    if (!form) return;
+    syncFromForm();
     const data = formData(form);
-    const quantity = Math.min(Math.max(Number(data.quantity) || 0, 0), 1000);
     const retroactive = !state.user.initialLoadOpen && data.registeredAt && data.registeredAt < today();
     justificationArea.classList.remove('oculto');
     if (!retroactive) justificationArea.classList.add('oculto');
 
-    const review = needsReview(data);
-    clear(valuesNotice);
-    if (commercial && data.contractId && data.jobRoleId) {
-      valuesNotice.append(!approvedRate
+    const roleName = (id) => roleOptions.find((j) => j.id === id)?.name ?? 'Cargo a escolher';
+    const quantityOf = (it) => Math.min(Math.max(Number(it.quantity) || 0, 0), 1000);
+    const total = items.reduce((sum, it) => sum + quantityOf(it), 0);
+    itemsTotal.textContent = items.length > 1
+      ? `Total do pedido: ${total} posição(ões) em ${items.length} cargos.`
+      : `Total do pedido: ${total} posição(ões).`;
+
+    let review = false;
+    for (const it of items) {
+      if (!it.noticeArea) continue;
+      clear(it.noticeArea);
+      const itemReview = needsReview(it);
+      review ||= itemReview;
+      if (!commercial || !contractId() || !it.jobRoleId) continue;
+      const rate = it.approvedRate;
+      it.noticeArea.append(!rate
         ? el('div', { class: 'mensagem alerta' },
           el('strong', {}, 'Não há valor aprovado para este cargo no contrato.'),
           'O pedido vai para a validação da Controladoria antes da aprovação do cliente.')
-        : review
+        : itemReview
           ? el('div', { class: 'mensagem alerta' },
             el('strong', {}, 'Valor diferente do aprovado vigente.'),
-            `Aprovado: ${money(approvedRate.monthlyValue)} desde ${date(approvedRate.validFrom)}. Alterado, o pedido vai para a `
+            `Aprovado: ${money(rate.monthlyValue)} desde ${date(rate.validFrom)}. Alterado, o pedido vai para a `
             + 'validação da Controladoria e o novo valor vira uma nova versão em Valores por cargo.',
-            data.rateValidFrom === approvedRate.validFrom
+            it.rateValidFrom === rate.validFrom
               ? el('div', { style: { marginTop: '6px' } }, el('strong', {}, 'Informe o início da vigência do novo valor'),
-                `(a versão aprovada já vale desde ${date(approvedRate.validFrom)}).`)
+                `(a versão aprovada já vale desde ${date(rate.validFrom)}).`)
               : '')
           : el('div', { class: 'mensagem info' },
-            el('strong', {}, `Valor aprovado vigente desde ${date(approvedRate.validFrom)}.`),
-            'Mantido sem alteração, o pedido segue direto para a aprovação do cliente.'));
+            el('strong', {}, `Valor aprovado vigente desde ${date(rate.validFrom)}.`),
+            'Mantido sem alteração, segue direto para a aprovação do cliente.'));
     }
 
-    const items = [];
-    for (let i = 1; i <= Math.min(quantity, 50); i++) {
-      items.push(el('li', {}, `Posição ${i} · Vaga nova · início desejado ${date(data.desiredStartDate)} · ${label(LABELS.termType, data.termType)}`));
+    const lines = [];
+    let slot = 0;
+    for (const it of items) {
+      for (let i = 1; i <= quantityOf(it); i += 1) {
+        slot += 1;
+        if (slot <= 50) {
+          lines.push(el('li', {}, `Posição ${slot} · ${roleName(it.jobRoleId)} · Vaga nova · início desejado `
+            + `${date(data.desiredStartDate)} · ${label(LABELS.termType, data.termType)}`));
+        }
+      }
     }
-    if (quantity > 50) items.push(el('li', { class: 'texto-fraco' }, `… e mais ${quantity - 50} posição(ões)`));
+    if (total > 50) lines.push(el('li', { class: 'texto-fraco' }, `… e mais ${total - 50} posição(ões)`));
     clear(preview).append(
       review
         ? el('div', { class: 'mensagem alerta' },
           el('strong', {}, 'O pedido nasce "Aguardando aprovação da Controladoria".'),
-          'A Controladoria valida o cargo e os valores ou devolve para ajustes. Validado, o pedido segue para a aprovação do '
+          'A Controladoria valida os cargos e os valores ou devolve para ajustes. Validado, o pedido segue para a aprovação do '
           + 'cliente e todos os usuários são notificados; o SLA das posições começa na aprovação do cliente.')
         : el('div', { class: 'mensagem info' },
           el('strong', {}, 'O pedido nasce "Aguardando aprovação do cliente".'),
           'O Comercial ou a Controladoria registra a aprovação; o SLA das posições começa nessa data. Todos os usuários são notificados.'),
-      el('p', { class: 'texto-suave' }, `${quantity} posição(ões) serão criadas com status "Aberta".`),
-      el('ul', { class: 'lista-previa' }, items),
+      el('p', { class: 'texto-suave' }, items.length > 1
+        ? `${total} posição(ões) serão criadas com status "Aberta": ${items.map((it) => `${quantityOf(it)} de ${roleName(it.jobRoleId)}`).join(', ')}.`
+        : `${total} posição(ões) serão criadas com status "Aberta".`),
+      el('ul', { class: 'lista-previa' }, lines),
     );
   }
   form.addEventListener('input', updatePreview);
   form.addEventListener('change', updatePreview);
-  updatePreview();
+  renderItems();
   await loadJobRoles();
 
   form.addEventListener('submit', async (event) => {
@@ -457,20 +531,22 @@ export async function newOrderScreen(target) {
     const submit = form.querySelector('button[type="submit"]');
     submit.disabled = true;
     clear(messageArea);
+    syncFromForm();
     const d = formData(form);
     try {
-      if (noJobRoles) throw validationError({ jobRoleId: 'Este contrato não tem cargos com valor validado.' });
+      if (noJobRoles) throw validationError({ 'jobRoleId-0': 'Este contrato não tem cargos com valor validado.' });
       requireFields(d, {
-        contractId: 'O contrato', modality: 'A modalidade', quantity: 'A quantidade', jobRoleId: 'O cargo',
-        workLocationId: 'O local', clientRequestDate: 'A data da solicitação', desiredStartDate: 'O início desejado',
-        registeredAt: 'A data de registro', ...(commercial ? { rateValidFrom: 'O início da vigência do valor' } : {}),
+        contractId: 'O contrato', modality: 'A modalidade', workLocationId: 'O local', clientRequestDate: 'A data da solicitação',
+        desiredStartDate: 'O início desejado', registeredAt: 'A data de registro',
+        ...Object.fromEntries(items.flatMap((_, i) => [
+          [`jobRoleId-${i}`, `O cargo ${i + 1}`], [`quantity-${i}`, `A quantidade do cargo ${i + 1}`],
+          ...(commercial ? [[`rateValidFrom-${i}`, `O início da vigência do valor do cargo ${i + 1}`]] : []),
+        ])),
       });
       const num = (v) => (orNull(v) === null ? null : Number(v));
       const order = await api.post('/api/orders', {
         contractId: d.contractId,
         modality: d.modality,
-        jobRoleId: d.jobRoleId,
-        quantity: intOrNull(d.quantity),
         workLocationId: d.workLocationId,
         clientRequestDate: d.clientRequestDate,
         desiredStartDate: d.desiredStartDate,
@@ -478,10 +554,14 @@ export async function newOrderScreen(target) {
         termEndDate: d.termType === 'FIXED_END' ? orNull(d.termEndDate) : null,
         termDurationDays: d.termType === 'PRESERVED_DURATION' ? intOrNull(d.termDurationDays) : null,
         notes: orNull(d.notes),
-        jobDescription: orNull(d.jobDescription),
         registeredAt: d.registeredAt,
         justification: orNull(d.justification),
-        ...(commercial ? { monthlyValue: num(d.monthlyValue), feeValue: num(d.feeValue), rateValidFrom: d.rateValidFrom } : {}),
+        items: items.map((it) => ({
+          jobRoleId: it.jobRoleId,
+          quantity: intOrNull(it.quantity),
+          jobDescription: orNull(it.jobDescription),
+          ...(commercial ? { monthlyValue: num(it.monthlyValue), feeValue: num(it.feeValue), rateValidFrom: it.rateValidFrom } : {}),
+        })),
       });
       toast(order.summary.approvalStatus === 'AWAITING_CONTROLLERSHIP'
         ? `Pedido ${order.summary.number} criado com ${order.positions.length} posição(ões) e enviado para a validação da Controladoria.`
@@ -541,8 +621,8 @@ export async function orderDetailScreen(target, id, query) {
                 ? 'Devolvido pela Controladoria para ajustes.'
                 : 'Aguardando aprovação da Controladoria.'),
               s.controllershipStatus === 'RETURNED'
-                ? 'O Comercial ajusta o cargo ou os valores e reenvia. A aprovação do cliente e o atendimento do RH começam depois da validação.'
-                : 'A Controladoria valida o cargo e os valores comerciais ou devolve para ajustes. A aprovação do cliente e o atendimento do RH começam depois da validação.')
+                ? 'O Comercial ajusta os cargos ou os valores e reenvia. A aprovação do cliente e o atendimento do RH começam depois da validação.'
+                : 'A Controladoria valida os cargos e os valores comerciais ou devolve para ajustes. A aprovação do cliente e o atendimento do RH começam depois da validação.')
             : null,
           awaiting
             ? el('div', { class: 'mensagem alerta' },
@@ -562,7 +642,7 @@ export async function orderDetailScreen(target, id, query) {
             detail('Contrato', s.contractName),
             o.contractingUnit ? detail('Unidade contratante', o.contractingUnit) : null,
             detail('Modalidade', label(LABELS.modality, s.modality)),
-            detail('Cargo', s.jobRoleName),
+            detail((o.items?.length ?? 0) > 1 ? 'Cargos' : 'Cargo', s.jobRoleName),
             detail('Local', s.workLocationName),
             detail('Quantidade', quantityText(s)),
             detail('Situação das vagas', slotSummary(o)),
@@ -581,16 +661,14 @@ export async function orderDetailScreen(target, id, query) {
         ),
         actions.filter(Boolean).length ? actions : null,
       ),
-      o.values || o.controllership ? reviewPanel(o, reload) : null,
+      o.itemValues?.some((i) => i.rateId) || o.controllership ? reviewPanel(o, reload) : null,
       rhPanel(o, reload),
       jobconvoPanel(o, reload),
       o.candidateImport ? sheetImportPanel(o, reload, 'candidates') : null,
       o.admissionImport ? sheetImportPanel(o, reload, 'admissions') : null,
       o.firstDayBatch ? firstDayBatchPanel(o, reload) : null,
       o.adminEdits?.length ? adminEditsPanel(o) : null,
-      panel('Descrição da vaga', o.jobDescription
-        ? el('div', { class: 'texto-livre' }, o.jobDescription)
-        : el('p', { class: 'texto-fraco mb-0' }, 'Nenhuma descrição informada.')),
+      itemsPanel(o),
       panelNoPadding('Posições', slotsTable(o, highlightStale)),
     ].filter(Boolean));
   }
@@ -613,9 +691,59 @@ const REVIEW_ACTIONS = {
   VALIDATED: ['Validado pela Controladoria', 'aprovar'],
 };
 
+/**
+ * Cargos do pedido (06/11/2026): por cargo, a quantidade solicitada (registro + acréscimos), as reduzidas, as
+ * preenchidas, as em aberto por etapa e as encerradas sem preenchimento, com o total do pedido e a descrição de cada um.
+ */
+function itemsPanel(o) {
+  const items = o.items ?? [];
+  const multi = items.length > 1;
+  const stagesText = (stages) => Object.entries(stages)
+    .map(([status, n]) => `${label(LABELS.positionStatus, status)}: ${n}`).join(' · ');
+  const sum = (key) => items.reduce((total, i) => total + (i[key] ?? 0), 0);
+  const allStages = {};
+  for (const i of items) for (const [k, n] of Object.entries(i.stages ?? {})) allStages[k] = (allStages[k] ?? 0) + n;
+  const descriptions = items.map((i) => el('div', { class: 'mb-16' },
+    el('h3', { class: 'grafico-titulo' }, multi ? `Descrição da vaga — ${i.jobRoleName}` : 'Descrição da vaga'),
+    i.jobDescription
+      ? el('div', { class: 'texto-livre' }, i.jobDescription)
+      : el('p', { class: 'texto-fraco mb-0' }, 'Nenhuma descrição informada.')));
+  return panel(multi ? 'Cargos do pedido' : 'Cargo do pedido', el('div', {},
+    table([
+      { title: 'Cargo', render: (i) => (multi ? `${i.sequence}. ${i.jobRoleName}` : i.jobRoleName) },
+      {
+        title: 'Solicitadas',
+        cls: 'num',
+        render: (i) => el('div', {}, el('div', {}, String(i.currentQuantity)),
+          i.reducedQuantity ? el('div', { class: 'texto-fraco texto-pequeno' }, `${i.quantity} − ${i.reducedQuantity} reduzida(s)`) : null),
+      },
+      { title: 'Preenchidas', cls: 'num', render: (i) => String(i.filled) },
+      {
+        title: 'Em aberto',
+        render: (i) => el('div', {}, el('div', {}, String(i.open)),
+          i.open ? el('div', { class: 'texto-fraco texto-pequeno' }, stagesText(i.stages)) : null),
+      },
+      { title: 'Encerradas sem preencher', cls: 'num', render: (i) => String(i.closed) },
+      {
+        title: 'Atendimento',
+        render: (i) => (i.currentQuantity && i.filled >= i.currentQuantity
+          ? el('span', { class: 'etiqueta verde' }, 'Atendido')
+          : i.open ? el('span', { class: 'etiqueta amarela' }, `${i.open} pendente(s)`) : el('span', { class: 'texto-fraco' }, '—')),
+      },
+    ], items, { dense: true }),
+    multi
+      ? el('p', { class: 'texto-suave', style: { marginTop: '12px' } }, el('strong', {}, 'Total do pedido: '),
+        `${sum('currentQuantity')} solicitadas · ${sum('filled')} preenchidas · ${sum('open')} em aberto`
+        + `${sum('open') ? ` (${stagesText(allStages)})` : ''} · ${sum('closed')} encerradas sem preencher.`)
+      : null,
+    el('div', { style: { marginTop: '18px' } }, ...descriptions)));
+}
+
 function reviewPanel(o, reload) {
-  const v = o.values;
+  const items = o.itemValues ?? [];
+  const multi = items.length > 1;
   const c = o.controllership;
+  const prefix = (sequence) => (multi && sequence ? `Cargo ${sequence} · ` : '');
   const valueText = (x) => [x.monthlyValue !== null && x.monthlyValue !== undefined ? `${money(x.monthlyValue)} mensais` : null,
     x.feeValue !== null && x.feeValue !== undefined ? `fee ${money(x.feeValue)}` : null,
     x.validFrom ? `vigência a partir de ${date(x.validFrom)}` : null].filter(Boolean).join(' · ');
@@ -624,8 +752,10 @@ function reviewPanel(o, reload) {
     c?.canDecide ? button('Devolver para ajustes', () => openReturnReview(o, reload), 'perigo') : null,
     c?.canResubmit ? button('Ajustar e reenviar', () => openResubmitReview(o, reload)) : null,
   ].filter(Boolean);
+  const withValues = items.filter((i) => i.rateId);
+  const single = !multi ? withValues[0] : null;
   return panel(
-    'Cargo e valores comerciais',
+    multi ? 'Cargos e valores comerciais' : 'Cargo e valores comerciais',
     el('div', {},
       c?.authorBlocked
         ? el('div', { class: 'mensagem info' }, 'Você criou ou ajustou este pedido: a validação cabe a outra pessoa da Controladoria.')
@@ -633,26 +763,35 @@ function reviewPanel(o, reload) {
       c?.status === 'RETURNED' && c.reason
         ? el('div', { class: 'mensagem erro' }, el('strong', {}, 'Motivo da devolução'), c.reason)
         : null,
-      c?.revalidation
+      c?.revalidation?.length
         ? el('div', { class: 'mensagem alerta' },
           el('strong', {}, 'Alteração de cargo e valores aguardando a Controladoria.'),
-          `Proposta da edição administrativa: ${[c.revalidation.jobRoleName, valueText(c.revalidation)].filter(Boolean).join(' · ')}. `
-          + 'O pedido segue com o cargo e o valor abaixo até a validação.')
+          el('ul', { class: 'mb-0' }, ...c.revalidation.map((r) => el('li', {},
+            `${prefix(r.sequence)}${[r.jobRoleName, valueText(r)].filter(Boolean).join(' · ')}`))),
+          multi ? 'Os cargos seguem com o valor abaixo até a validação.' : 'O pedido segue com o cargo e o valor abaixo até a validação.')
         : null,
-      v ? el('div', { class: 'detalhe-grade' },
-        detail('Cargo', v.jobRoleName),
-        detail('Valor mensal', money(v.monthlyValue)),
-        detail('Valor diário (÷30)', money(v.dailyValue)),
-        detail('Fee R&S (informativo)', money(v.feeValue)),
-        detail('Início da vigência', date(v.validFrom)),
-        detail('Situação do valor', rateTag(v.status))) : null,
+      single ? el('div', { class: 'detalhe-grade' },
+        detail('Cargo', single.jobRoleName),
+        detail('Valor mensal', money(single.monthlyValue)),
+        detail('Valor diário (÷30)', money(single.dailyValue)),
+        detail('Fee R&S (informativo)', money(single.feeValue)),
+        detail('Início da vigência', date(single.validFrom)),
+        detail('Situação do valor', rateTag(single.status))) : null,
+      multi && withValues.length ? table([
+        { title: 'Cargo', render: (i) => `${i.sequence}. ${i.jobRoleName}` },
+        { title: 'Valor mensal', cls: 'num', render: (i) => money(i.monthlyValue) },
+        { title: 'Valor diário (÷30)', cls: 'num', render: (i) => money(i.dailyValue) },
+        { title: 'Fee R&S', cls: 'num', render: (i) => money(i.feeValue) },
+        { title: 'Vigência', cls: 'nowrap', render: (i) => date(i.validFrom) },
+        { title: 'Situação', render: (i) => rateTag(i.status) },
+      ], withValues, { dense: true }) : null,
       c ? el('div', {},
         el('h3', { class: 'grafico-titulo', style: { marginTop: '18px' } }, 'Validação da Controladoria'),
         el('ul', { class: 'linha-tempo' }, ...[...c.history].reverse().map((h) => el('li', { class: REVIEW_ACTIONS[h.action]?.[1] ?? '' },
           el('div', {}, el('span', { class: 'quem' }, REVIEW_ACTIONS[h.action]?.[0] ?? h.action), h.userName ? ` · ${h.userName}` : ''),
           el('div', { class: 'quando' }, dateTime(h.occurredAt)),
           h.jobRoleName || h.validFrom
-            ? el('div', { class: 'texto-pequeno' }, [h.jobRoleName, valueText(h)].filter(Boolean).join(' · '))
+            ? el('div', { class: 'texto-pequeno' }, `${prefix(h.itemSequence)}${[h.jobRoleName, valueText(h)].filter(Boolean).join(' · ')}`)
             : null,
           h.reason ? el('div', { class: 'motivo' }, h.reason) : null))))
         : el('p', { class: 'texto-fraco texto-pequeno mb-0' },
@@ -664,11 +803,14 @@ function reviewPanel(o, reload) {
 
 function openValidateReview(order, reload) {
   const s = order.summary;
+  const multi = (order.items?.length ?? 0) > 1;
   formModal({
     title: `Validar pedido ${s.number}`,
     submitText: 'Validar',
-    intro: el('p', {}, `Validar o cargo ${order.values?.jobRoleName ?? s.jobRoleName} e os valores comerciais? `
-      + 'O valor entra em Valores por cargo e o pedido segue para a aprovação do cliente; todos os usuários são notificados.'),
+    intro: el('p', {}, (multi
+      ? `Validar os cargos (${s.jobRoleName}) e os valores comerciais de cada um? `
+      : `Validar o cargo ${order.values?.jobRoleName ?? s.jobRoleName} e os valores comerciais? `)
+      + 'Os valores entram em Valores por cargo e o pedido segue para a aprovação do cliente; todos os usuários são notificados.'),
     fields: [],
     submit: async () => {
       const updated = await api.post(`/api/orders/${s.id}/controllership-validation`);
@@ -684,7 +826,7 @@ function openReturnReview(order, reload) {
     title: `Devolver pedido ${s.number} para ajustes`,
     danger: true,
     submitText: 'Devolver',
-    intro: el('p', {}, 'O Comercial é notificado com o motivo, ajusta o cargo ou os valores e reenvia a mesma solicitação.'),
+    intro: el('p', {}, 'O Comercial é notificado com o motivo, ajusta os cargos ou os valores e reenvia a mesma solicitação.'),
     fields: [field({ name: 'reason', label: 'Motivo da devolução', type: 'textarea', required: true })],
     submit: async (d) => {
       requireFields(d, { reason: 'O motivo' });
@@ -695,31 +837,44 @@ function openReturnReview(order, reload) {
   });
 }
 
+/** Ajuste de cada cargo do pedido devolvido: cargo, valores e vigência; reenvia a solicitação inteira. */
 async function openResubmitReview(order, reload) {
   const s = order.summary;
-  const roles = (await api.get('/api/catalogs/job-roles')).filter((j) => j.active || j.id === order.jobRoleId);
-  const v = order.values ?? {};
+  const items = order.itemValues ?? [];
+  const multi = items.length > 1;
+  const ids = new Set(items.map((i) => i.jobRoleId));
+  const roles = (await api.get('/api/catalogs/job-roles')).filter((j) => j.active || ids.has(j.id));
+  const itemFields = (it, i) => [
+    searchSelect({ name: `jobRoleId-${i}`, label: 'Cargo', required: true, value: it.jobRoleId,
+      options: roles.map((j) => ({ value: j.id, label: j.name })), placeholder: 'Digite o nome do cargo para pesquisar',
+      emptyText: 'Nenhum cargo encontrado' }),
+    el('div', { class: 'linha-campos' },
+      moneyField({ name: `monthlyValue-${i}`, label: 'Valor mensal de venda', value: it.monthlyValue ?? '',
+        help: 'Base do valor diário (÷30). Dispensado em contrato só de R&S.' }),
+      moneyField({ name: `feeValue-${i}`, label: 'Fee R&S (informativo)', value: it.feeValue ?? '' })),
+    field({ name: `rateValidFrom-${i}`, label: 'Início da vigência do valor', type: 'date', required: true, value: it.validFrom ?? today() }),
+  ];
   formModal({
     title: `Ajustar e reenviar o pedido ${s.number}`,
+    wide: multi,
     intro: order.controllership?.reason
       ? el('div', { class: 'mensagem erro' }, el('strong', {}, 'Motivo da devolução'), order.controllership.reason)
       : null,
-    fields: [
-      searchSelect({ name: 'jobRoleId', label: 'Cargo', required: true, value: order.jobRoleId,
-        options: roles.map((j) => ({ value: j.id, label: j.name })), placeholder: 'Digite o nome do cargo para pesquisar',
-        emptyText: 'Nenhum cargo encontrado' }),
-      el('div', { class: 'linha-campos' },
-        moneyField({ name: 'monthlyValue', label: 'Valor mensal de venda', value: v.monthlyValue ?? '',
-          help: 'Base do valor diário (÷30). Dispensado em contrato só de R&S.' }),
-        moneyField({ name: 'feeValue', label: 'Fee R&S (informativo)', value: v.feeValue ?? '' })),
-      field({ name: 'rateValidFrom', label: 'Início da vigência do valor', type: 'date', required: true, value: v.validFrom ?? today() }),
-    ],
+    fields: multi
+      ? items.map((it, i) => el('fieldset', {}, el('legend', {}, `Cargo ${it.sequence}`), ...itemFields(it, i)))
+      : itemFields(items[0] ?? {}, 0),
     submitText: 'Reenviar à Controladoria',
     submit: async (d) => {
-      requireFields(d, { jobRoleId: 'O cargo', rateValidFrom: 'O início da vigência do valor' });
+      requireFields(d, Object.fromEntries(items.flatMap((it, i) => [
+        [`jobRoleId-${i}`, multi ? `O cargo ${it.sequence}` : 'O cargo'],
+        [`rateValidFrom-${i}`, multi ? `O início da vigência do valor do cargo ${it.sequence}` : 'O início da vigência do valor'],
+      ])));
       const num = (x) => (orNull(x) === null ? null : Number(x));
       const updated = await api.post(`/api/orders/${s.id}/controllership-resubmission`, {
-        jobRoleId: d.jobRoleId, monthlyValue: num(d.monthlyValue), feeValue: num(d.feeValue), rateValidFrom: d.rateValidFrom,
+        items: items.map((it, i) => ({
+          itemId: it.itemId, jobRoleId: d[`jobRoleId-${i}`], monthlyValue: num(d[`monthlyValue-${i}`]),
+          feeValue: num(d[`feeValue-${i}`]), rateValidFrom: d[`rateValidFrom-${i}`],
+        })),
       });
       toast('Pedido reenviado para a validação da Controladoria.', 'sucesso');
       reload(updated);
@@ -759,7 +914,10 @@ async function openAdminEdit(order, reload) {
   const fixed = cfg.contractingUnitId ? locations.find((l) => l.id === cfg.contractingUnitId) : null;
   const available = fixed ? [fixed]
     : locations.filter((l) => (l.active && (!l.clientId || l.clientId === cfg.clientId)) || l.id === order.workLocationId);
-  const v = cfg.values ?? {};
+  const items = cfg.items ?? [];
+  const multi = items.length > 1;
+  const ids = new Set(items.map((i) => i.jobRoleId));
+  const roleOptions = roles.filter((j) => j.active || ids.has(j.id)).map((j) => ({ value: j.id, label: j.name }));
   const form = el('form', { novalidate: true },
     el('div', { class: 'linha-campos' },
       field({ name: 'modality', label: 'Modalidade', type: 'select', required: true, value: s.modality,
@@ -767,17 +925,19 @@ async function openAdminEdit(order, reload) {
       field({ name: 'workLocationId', label: 'Local de trabalho / unidade', type: 'select', required: true, value: order.workLocationId,
         options: available.map((l) => ({ value: l.id, label: locationLabel(l) })),
         help: fixed ? 'Unidade contratante do contrato (fixa).' : null })),
-    el('fieldset', {}, el('legend', {}, 'Cargo e valores comerciais'),
-      searchSelect({ name: 'jobRoleId', label: 'Cargo', required: true, value: order.jobRoleId,
-        options: roles.filter((j) => j.active || j.id === order.jobRoleId).map((j) => ({ value: j.id, label: j.name })),
+    ...items.map((it, i) => el('fieldset', {}, el('legend', {}, multi ? `Cargo ${it.sequence}` : 'Cargo e valores comerciais'),
+      searchSelect({ name: `jobRoleId-${i}`, label: 'Cargo', required: true, value: it.jobRoleId, options: roleOptions,
         placeholder: 'Digite o nome do cargo para pesquisar', emptyText: 'Nenhum cargo encontrado' }),
       el('div', { class: 'linha-campos' },
-        moneyField({ name: 'monthlyValue', label: 'Valor mensal de venda', value: v.monthlyValue ?? '',
+        moneyField({ name: `monthlyValue-${i}`, label: 'Valor mensal de venda', value: it.values?.monthlyValue ?? '',
           help: 'Base do valor diário (÷30). Dispensado em contrato só de R&S.' }),
-        moneyField({ name: 'feeValue', label: 'Fee R&S (informativo)', value: v.feeValue ?? '' }),
-        field({ name: 'rateValidFrom', label: 'Início da vigência do valor', type: 'date', required: true, value: v.validFrom ?? '' })),
+        moneyField({ name: `feeValue-${i}`, label: 'Fee R&S (informativo)', value: it.values?.feeValue ?? '' }),
+        field({ name: `rateValidFrom-${i}`, label: 'Início da vigência do valor', type: 'date', required: true,
+          value: it.values?.validFrom ?? '' })),
+      field({ name: `jobDescription-${i}`, label: 'Descrição da vaga', type: 'textarea', value: it.jobDescription ?? '',
+        attributes: { maxlength: '4000', rows: '4' } }),
       el('p', { class: 'texto-fraco texto-pequeno mb-0' },
-        'Alterados num pedido já validado, cargo e valores vão para a Controladoria; o pedido segue com o valor atual até a validação.')),
+        'Alterados num pedido já validado, cargo e valores vão para a Controladoria; o pedido segue com o valor atual até a validação.'))),
     el('div', { class: 'linha-campos' },
       field({ name: 'clientRequestDate', label: 'Solicitação do cliente', type: 'date', required: true, value: s.clientRequestDate }),
       field({ name: 'desiredStartDate', label: 'Início desejado', type: 'date', required: true, value: s.desiredStartDate }),
@@ -788,11 +948,9 @@ async function openAdminEdit(order, reload) {
         : ''),
     el('div', { class: 'linha-campos' }, ...termFields(order.termType, order.termEndDate, order.termDurationDays)),
     field({ name: 'notes', label: 'Observações', type: 'textarea', value: order.notes ?? '', attributes: { maxlength: '2000' } }),
-    field({ name: 'jobDescription', label: 'Descrição da vaga', type: 'textarea', value: order.jobDescription ?? '',
-      attributes: { maxlength: '4000', rows: '5' } }),
     el('p', { class: 'texto-fraco texto-pequeno mb-0' },
       'Modalidade, vigência e início desejado atualizam as posições ainda em aberto; preenchidas e encerradas ficam como estão. '
-      + 'O contrato não muda; a quantidade segue com "Acrescentar posições" e "Reduzir posições".'));
+      + 'O contrato não muda; a quantidade e os cargos novos seguem com "Acrescentar posições"; a redução, com "Reduzir posições".'));
 
   const reviewArea = el('div', { class: 'oculto' });
   const body = el('div', {}, form, reviewArea);
@@ -800,19 +958,26 @@ async function openAdminEdit(order, reload) {
   const payload = () => {
     const d = formData(form);
     requireFields(d, {
-      modality: 'A modalidade', workLocationId: 'O local', jobRoleId: 'O cargo', rateValidFrom: 'O início da vigência do valor',
+      modality: 'A modalidade', workLocationId: 'O local',
+      ...Object.fromEntries(items.flatMap((it, i) => [
+        [`jobRoleId-${i}`, multi ? `O cargo ${it.sequence}` : 'O cargo'],
+        [`rateValidFrom-${i}`, multi ? `O início da vigência do valor do cargo ${it.sequence}` : 'O início da vigência do valor'],
+      ])),
       clientRequestDate: 'A data da solicitação', desiredStartDate: 'O início desejado', registeredAt: 'A data de registro',
       ...(cfg.clientDecided ? { clientDecisionDate: 'A data da decisão do cliente' } : {}),
     });
     return {
-      modality: d.modality, jobRoleId: d.jobRoleId, workLocationId: d.workLocationId,
+      modality: d.modality, workLocationId: d.workLocationId,
       clientRequestDate: d.clientRequestDate, desiredStartDate: d.desiredStartDate, registeredAt: d.registeredAt,
       clientDecisionDate: cfg.clientDecided ? d.clientDecisionDate : null,
       termType: d.termType,
       termEndDate: d.termType === 'FIXED_END' ? orNull(d.termEndDate) : null,
       termDurationDays: d.termType === 'PRESERVED_DURATION' ? intOrNull(d.termDurationDays) : null,
-      notes: orNull(d.notes), jobDescription: orNull(d.jobDescription),
-      monthlyValue: num(d.monthlyValue), feeValue: num(d.feeValue), rateValidFrom: orNull(d.rateValidFrom),
+      notes: orNull(d.notes),
+      items: items.map((it, i) => ({
+        itemId: it.itemId, jobRoleId: d[`jobRoleId-${i}`], jobDescription: orNull(d[`jobDescription-${i}`]),
+        monthlyValue: num(d[`monthlyValue-${i}`]), feeValue: num(d[`feeValue-${i}`]), rateValidFrom: orNull(d[`rateValidFrom-${i}`]),
+      })),
     };
   };
 
@@ -1609,24 +1774,119 @@ function openJobconvo(order, reload) {
   });
 }
 
-function openAddPositions(order, reload) {
+/**
+ * Acréscimo (06/11/2026): novas posições num cargo do pedido ou num cargo novo, com os valores (o aprovado vigente vem
+ * preenchido). Cargo novo sem valor aprovado, ou com valor diferente, vai para a Controladoria: no pedido em validação,
+ * entra na mesma solicitação; no pedido já validado, vira uma revalidação, sem parar o pedido.
+ */
+async function openAddPositions(order, reload) {
+  const items = order.items ?? [];
+  const inOrder = new Set(items.map((i) => i.jobRoleId));
+  const roles = (await api.get('/api/catalogs/job-roles')).filter((j) => j.active && !inOrder.has(j.id));
+  const NEW = 'novo';
+  let approved = null;
+  let request = 0;
+  const values = { monthlyValue: '', feeValue: '', rateValidFrom: '' };
+
+  const targetField = field({
+    name: 'itemId',
+    label: 'Cargo das novas posições',
+    type: 'select',
+    required: true,
+    value: items.length === 1 ? items[0].id : '',
+    options: [...(items.length === 1 ? [] : [{ value: '', label: 'Selecione' }]),
+      ...items.map((i) => ({ value: i.id, label: `${i.jobRoleName} (${i.currentQuantity} solicitada(s))` })),
+      { value: NEW, label: '+ Novo cargo no pedido' }],
+  });
+  const valuesArea = el('div', {});
+  const noticeArea = el('div', {});
+  const newArea = el('fieldset', { class: 'oculto' }, el('legend', {}, 'Novo cargo no pedido'),
+    searchSelect({ name: 'jobRoleId', label: 'Cargo', required: true, options: roles.map((j) => ({ value: j.id, label: j.name })),
+      placeholder: 'Digite o nome do cargo para pesquisar', emptyText: 'Nenhum cargo encontrado',
+      help: 'Cargos que ainda não estão no pedido. Para mais posições de um cargo do pedido, escolha-o acima.',
+      onChange: (id) => loadRate(id) }),
+    valuesArea,
+    noticeArea,
+    field({ name: 'jobDescription', label: 'Descrição da vaga', type: 'textarea', attributes: { maxlength: '4000', rows: '4' },
+      help: 'Atividades, responsabilidades, requisitos e qualificações deste cargo.' }));
+
+  function renderValues() {
+    clear(valuesArea).append(
+      el('div', { class: 'linha-campos' },
+        moneyField({ name: 'monthlyValue', label: 'Valor mensal de venda', value: values.monthlyValue,
+          help: 'Base do valor diário (÷30). Dispensado em contrato só de R&S.' }),
+        moneyField({ name: 'feeValue', label: 'Fee R&S (informativo)', value: values.feeValue })),
+      field({ name: 'rateValidFrom', label: 'Início da vigência do valor', type: 'date', required: true,
+        value: values.rateValidFrom || today() }));
+  }
+
+  function renderNotice(jobRoleId) {
+    clear(noticeArea);
+    if (!jobRoleId) return;
+    noticeArea.append(approved
+      ? el('div', { class: 'mensagem info' }, el('strong', {}, `Valor aprovado vigente desde ${date(approved.validFrom)}.`),
+        'Mantido sem alteração, o cargo entra direto no pedido. Alterado, vai para a validação da Controladoria.')
+      : el('div', { class: 'mensagem alerta' }, el('strong', {}, 'Não há valor aprovado para este cargo no contrato.'),
+        'O cargo novo vai para a validação da Controladoria; o restante do pedido segue normalmente.'));
+  }
+
+  async function loadRate(jobRoleId) {
+    const current = ++request;
+    approved = null;
+    try {
+      const rate = jobRoleId
+        ? await api.get('/api/contract-rates/current', { contractId: order.contractId, jobRoleId, date: today() })
+        : null;
+      if (current !== request) return;
+      approved = rate;
+      Object.assign(values, rate
+        ? { monthlyValue: rate.monthlyValue ?? '', feeValue: rate.feeValue ?? '', rateValidFrom: rate.validFrom }
+        : { monthlyValue: '', feeValue: '', rateValidFrom: '' });
+      renderValues();
+      renderNotice(jobRoleId);
+    } catch (error) {
+      if (current === request) clear(noticeArea).append(el('div', { class: 'mensagem erro' }, error.message));
+    }
+  }
+
+  targetField.querySelector('select').addEventListener('change', (event) => {
+    newArea.classList.toggle('oculto', event.target.value !== NEW);
+  });
+  renderValues();
+
   formModal({
     title: 'Acrescentar posições',
+    wide: true,
     intro: el('div', { class: 'mensagem info' }, 'Para reduzir a quantidade, cancele posições individualmente (RN-05).'),
     fields: [
+      targetField,
+      newArea,
       field({ name: 'quantity', label: 'Novas posições', type: 'number', value: '1', required: true, attributes: { min: '1' } }),
       field({ name: 'desiredStartDate', label: 'Início desejado das novas posições', type: 'date', value: today(), required: true }),
       field({ name: 'justification', label: 'Observação (opcional)', type: 'textarea' }),
     ],
     submitText: 'Acrescentar',
     submit: async (d) => {
-      requireFields(d, { quantity: 'A quantidade', desiredStartDate: 'O início desejado' });
+      const isNew = d.itemId === NEW;
+      requireFields(d, {
+        itemId: 'O cargo das novas posições', quantity: 'A quantidade', desiredStartDate: 'O início desejado',
+        ...(isNew ? { jobRoleId: 'O cargo novo', rateValidFrom: 'O início da vigência do valor' } : {}),
+      });
+      const num = (x) => (orNull(x) === null ? null : Number(x));
       const updated = await api.post(`/api/orders/${order.summary.id}/positions`, {
         quantity: intOrNull(d.quantity),
         desiredStartDate: d.desiredStartDate,
         justification: orNull(d.justification),
+        ...(isNew
+          ? {
+            jobRoleId: d.jobRoleId, jobDescription: orNull(d.jobDescription),
+            monthlyValue: num(d.monthlyValue), feeValue: num(d.feeValue), rateValidFrom: d.rateValidFrom,
+          }
+          : { itemId: d.itemId }),
       });
-      toast('Posições acrescentadas.', 'sucesso');
+      toast(updated.controllership?.revalidation?.length && isNew
+        ? 'Posições acrescentadas; o cargo novo foi enviado à validação da Controladoria.'
+        : 'Posições acrescentadas.', 'sucesso');
       await reload(updated);
     },
   });

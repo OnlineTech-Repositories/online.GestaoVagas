@@ -43,7 +43,7 @@ const eligible = (order) => order.positions
 export function firstDayBatchInfo(user, order) {
   if (!canConfirmFirstDayBatch(user, order)) return null;
   const item = (p) => ({
-    positionId: p.id, position: vaga(order, p), employeeName: P.activeCandidate(p)?.fullName ?? null,
+    positionId: p.id, position: vaga(order, p), jobRole: P.jobRoleOf(p)?.name ?? null, employeeName: P.activeCandidate(p)?.fullName ?? null,
     registration: p.admissionRegistration, admissionAt: p.admissionAt,
   });
   return {

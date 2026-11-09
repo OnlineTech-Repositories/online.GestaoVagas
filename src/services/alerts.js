@@ -2,7 +2,7 @@ import { inList, query } from '../db/index.js';
 import { entity } from '../db/model.js';
 import { diffDays, formatBr, localDateOf, utcNow } from '../domain/dates.js';
 import { AlertKind, Labels, NotificationTypes, OrderApprovalStatus, PositionStatus as S, Roles, SlaSituation } from '../domain/enums.js';
-import { activeRhAnalysts } from '../domain/order.js';
+import { activeRhAnalysts, roleNames } from '../domain/order.js';
 import { dataTable, mutedText, sectionTitle } from './email-layout.js';
 import { deliver, links, notify, resolveRecipients } from './notifications.js';
 import { clientUnit, positionFields, unitLabel } from './notice-fields.js';
@@ -233,7 +233,7 @@ export function staleEvent(order, items, staleDays, current) {
         ['Cliente', contract?.client?.legalName],
         ['Unidade', unitLabel(contract)],
         ['Contrato', contract?.name],
-        ['Cargo', order.jobRole?.name],
+        [(order.items?.length ?? 0) > 1 ? 'Cargos' : 'Cargo', roleNames(order)],
         ['Local de trabalho', order.workLocation?.name],
         ['Posições vigentes do pedido', String(current)],
         ['Exigem atualização', String(total), { tone: 'warning' }],

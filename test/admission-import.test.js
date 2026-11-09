@@ -67,8 +67,14 @@ const TITLES = ['Pedido', 'Vaga', 'Candidato', 'Sexo', 'Telefone com DDD *', 'Da
 const DATE_COLUMNS = new Set(['birthDate', 'admissionAt']);
 const TEXT_COLUMNS = new Set(['phone', 'cpf', 'registration']);
 
-const templateRows = (buffer) => readXlsx(buffer)[0].rows.slice(1)
-  .map((cells) => Object.fromEntries(KEYS.map((k, i) => [k, cells[i] ?? null]))).filter((r) => r.positionId);
+// Pelas colunas do título: o modelo ganhou a coluna informativa "Cargo" (vários cargos por pedido, 06/11/2026).
+const templateRows = (buffer) => {
+  const [header, ...lines] = readXlsx(buffer)[0].rows;
+  return lines.map((cells) => ({
+    ...Object.fromEntries(KEYS.map((k, i) => [k, cells[header.indexOf(TITLES[i])] ?? null])),
+    jobRole: cells[header.indexOf('Cargo')] ?? null,
+  })).filter((r) => r.positionId);
+};
 
 /** Planilha preenchida com as colunas do modelo (a matrícula como texto, como o modelo formata a coluna). */
 const filled = (list) => generateXlsx([{
@@ -107,7 +113,8 @@ test('modelo: uma linha por posição com candidato selecionado, com pedido, vag
   const names = rows.map((r) => r.candidate);
   for (const i of [1, 2, 3]) assert.ok(names.includes(`Admitido ${i}`), `candidato ${i} no modelo`);
   assert.deepEqual(readXlsx(res.buffer).map((s) => s.name), ['Admissões', 'Orientações']);
-  assert.deepEqual(readXlsx(res.buffer)[0].rows[0].slice(0, TITLES.length), TITLES);
+  assert.deepEqual(readXlsx(res.buffer)[0].rows[0].filter((t) => t !== 'Cargo').slice(0, TITLES.length), TITLES);
+  assert.ok(rows.every((r) => r.jobRole), 'cargo de cada posição no modelo');
 
   // Telefone e sexo do cadastro para conferência; nascimento e CPF em branco para quem ainda não tem, preenchidos para quem tem.
   const first = rows.find((r) => r.candidate === 'Admitido 1');

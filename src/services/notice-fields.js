@@ -1,3 +1,5 @@
+import { roleNames } from '../domain/order.js';
+import { jobRoleOf } from '../domain/position.js';
 import { formatBr } from '../domain/dates.js';
 import { DemandType, Labels } from '../domain/enums.js';
 
@@ -26,7 +28,7 @@ export function orderFields(order) {
     ['Pedido', `Nº ${order.number}`, { strong: true }],
     ['Cliente / unidade', clientUnit(order.contract)],
     ['Contrato', order.contract?.name],
-    ['Cargo', order.jobRole?.name],
+    [(order.items?.length ?? 0) > 1 ? 'Cargos' : 'Cargo', roleNames(order)],
     ['Vagas', quantity ? String(quantity) : null],
   ];
 }
@@ -39,7 +41,7 @@ export function positionFields(p) {
     ['Tipo', Labels.demandType[p.demandType]],
     ['Cliente / unidade', clientUnit(order.contract)],
     ['Local de trabalho', order.workLocation?.name],
-    ['Cargo', order.jobRole?.name],
+    ['Cargo', jobRoleOf(p)?.name],
   ];
 }
 

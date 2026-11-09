@@ -7,7 +7,7 @@ import {
 import { BusinessRuleError, NotFoundError } from '../domain/errors.js';
 import { Permissions } from '../domain/guards.js';
 import { activeRhAnalysts } from '../domain/order.js';
-import { isCurrentCycle, isOpen, stageStatus } from '../domain/position.js';
+import { isCurrentCycle, isOpen, jobRoleOf, stageStatus } from '../domain/position.js';
 import { nextAction } from './alerts.js';
 import { Input } from './input.js';
 import { calcSettings, getInt, kpiTargets } from './parameters.js';
@@ -47,7 +47,7 @@ const L = {
 const GROUPS = {
   client: { label: 'Cliente', of: (p) => p.order.contract?.client?.legalName ?? '—' },
   contract: { label: 'Contrato', of: (p) => p.order.contract?.name ?? '—' },
-  jobRole: { label: 'Cargo', of: (p) => p.order.jobRole?.name ?? '—' },
+  jobRole: { label: 'Cargo', of: (p) => jobRoleOf(p)?.name ?? '—' },
   modality: { label: 'Modalidade', of: (p) => L.modality[p.order.modality] ?? p.order.modality },
   demandType: { label: 'Tipo de demanda', of: (p) => L.demandType[p.demandType] },
   groupEntity: { label: 'CNPJ do Grupo', of: (p) => p.order.contract?.groupEntity?.name ?? '—' },
@@ -233,7 +233,7 @@ function base(p) {
     position: `${order.number}-${p.slotNumber}${p.cycle > 1 ? ` (rep. ${p.cycle - 1})` : ''}`,
     client: order.contract?.client?.legalName ?? '',
     contract: order.contract?.name ?? '',
-    jobRole: order.jobRole?.name ?? '',
+    jobRole: jobRoleOf(p)?.name ?? '',
     modality: L.modality[order.modality] ?? order.modality,
     demandType: L.demandType[p.demandType],
     workLocation: order.workLocation?.name ?? '',
@@ -461,7 +461,7 @@ function filterRows(f, positions, names) {
     ['Cliente', pick(f.clientId, (p) => ref(p.order.contract?.client?.id, p.order.contract?.client?.legalName))],
     ['Contrato', pick(f.contractId, (p) => ref(p.order.contract?.id, p.order.contract?.name))],
     ['Modalidade', f.modality ? L.modality[f.modality] : null],
-    ['Cargo', pick(f.jobRoleId, (p) => ref(p.order.jobRole?.id, p.order.jobRole?.name))],
+    ['Cargo', pick(f.jobRoleId, (p) => ref(jobRoleOf(p)?.id, jobRoleOf(p)?.name))],
     ['Tipo de demanda', f.demandType ? L.demandType[f.demandType] : null],
     ['CNPJ do Grupo', pick(f.groupEntityId, (p) => ref(p.order.contract?.groupEntity?.id, p.order.contract?.groupEntity?.name))],
     ['Local', pick(f.workLocationId, (p) => ref(p.order.workLocation?.id, p.order.workLocation?.name))],
