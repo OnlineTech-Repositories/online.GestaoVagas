@@ -101,6 +101,22 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS ix_sessions_user ON sessions (user_id);
 
+-- Histórico de acessos (23/11/2026): login, falha, bloqueio, saída e fim da sessão, com IP e navegador. Fora do log de
+-- auditoria; a limpeza periódica apaga os registros com mais de 1 ano (LGPD). email guarda o e-mail digitado, também o
+-- das tentativas que não correspondem a um usuário.
+CREATE TABLE IF NOT EXISTS access_logs (
+  id TEXT PRIMARY KEY,
+  occurred_at TEXT NOT NULL,
+  event TEXT NOT NULL,
+  user_id TEXT REFERENCES users (id),
+  email TEXT,
+  ip TEXT,
+  user_agent TEXT,
+  detail TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_access_logs_occurred ON access_logs (occurred_at);
+CREATE INDEX IF NOT EXISTS ix_access_logs_user ON access_logs (user_id, occurred_at);
+
 CREATE TABLE IF NOT EXISTS group_entities (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -503,6 +519,12 @@ UPDATE positions SET order_item_id = order_id
     WHERE order_item_id IS NULL AND EXISTS (SELECT 1 FROM order_items i WHERE i.id = positions.order_id);
 UPDATE order_reviews SET order_item_id = order_id
     WHERE order_item_id IS NULL AND EXISTS (SELECT 1 FROM order_items i WHERE i.id = order_reviews.order_id);
+INSERT INTO access_logs (id, occurred_at, event, user_id, email, ip, user_agent, detail)
+   SELECT 'sessao-' || substr(s.token_hash, 1, 24), s.created_at, 'LOGIN', s.user_id, u.email, s.ip, s.user_agent,
+     'Recuperado da sessão aberta antes do histórico'
+     FROM sessions s JOIN users u ON u.id = s.user_id
+    WHERE NOT EXISTS (SELECT 1 FROM access_logs a
+      WHERE a.user_id = s.user_id AND a.event = 'LOGIN' AND a.occurred_at = s.created_at);
 
 -- ---- 4. Gatilhos: log de auditoria somente inclusão e sem exclusão física (RN-26) ----------------------------
 

@@ -464,3 +464,13 @@ Pontos sem regra explícita na SPEC, implementados com o padrão abaixo:
     planilhas de importação (nova coluna informativa "Cargo", opcional nos modelos já baixados) trazem o cargo de cada
     posição. Os pedidos existentes viram pedidos de um cargo na migração (item com o mesmo id do pedido; posições e
     histórico da Controladoria ligados a ele) e a API continua aceitando o formato de um cargo só.
+44. **Histórico de acessos (melhoria pedida pelo usuário em 23/11/2026):** a tabela `access_logs` registra o login, a
+    senha incorreta, o e-mail não cadastrado, o usuário inativo, o bloqueio por tentativas (e a tentativa durante o
+    bloqueio), a saída ("Sair") e o fim da sessão (inatividade, duração máxima, novo login no mesmo navegador, troca da
+    própria senha, senha redefinida pelo administrador, usuário inativado), com o IP e o navegador. Só o ADMIN consulta,
+    na aba "Histórico de acessos" de Usuários e perfis (filtros por usuário, evento e período; 100 por página), e a lista
+    de usuários ganhou a coluna "Último acesso" (decisões do usuário). Fica fora do log de auditoria e é apagado depois de
+    1 ano (LGPD). A limpeza das sessões vencidas, que existia mas nenhuma rotina chamava, passou a rodar a cada 5 minutos
+    e registra o vencimento no instante em que a sessão venceu. Na atualização, as sessões ainda gravadas viram o login
+    que as abriu ("Recuperado da sessão aberta antes do histórico"). A resposta da tela de login não muda: continua sem
+    dizer se o e-mail existe. As tentativas barradas pelo limite de logins por minuto não são registradas.

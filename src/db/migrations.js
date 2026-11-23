@@ -54,6 +54,14 @@ export const DATA_MIGRATIONS = [
     WHERE order_item_id IS NULL AND EXISTS (SELECT 1 FROM order_items i WHERE i.id = positions.order_id);`,
   `UPDATE order_reviews SET order_item_id = order_id
     WHERE order_item_id IS NULL AND EXISTS (SELECT 1 FROM order_items i WHERE i.id = order_reviews.order_id);`,
+  // Histórico de acessos (23/11/2026): as sessões ainda gravadas viram o login que as abriu (o login novo grava o evento
+  // com o mesmo instante da sessão, então não duplica).
+  `INSERT INTO access_logs (id, occurred_at, event, user_id, email, ip, user_agent, detail)
+   SELECT 'sessao-' || substr(s.token_hash, 1, 24), s.created_at, 'LOGIN', s.user_id, u.email, s.ip, s.user_agent,
+     'Recuperado da sessão aberta antes do histórico'
+     FROM sessions s JOIN users u ON u.id = s.user_id
+    WHERE NOT EXISTS (SELECT 1 FROM access_logs a
+      WHERE a.user_id = s.user_id AND a.event = 'LOGIN' AND a.occurred_at = s.created_at);`,
 ];
 
 /**

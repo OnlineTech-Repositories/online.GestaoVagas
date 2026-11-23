@@ -6,7 +6,8 @@ import { utcNow } from '../domain/dates.js';
 import { BusinessRuleError, ForbiddenError, NotFoundError } from '../domain/errors.js';
 import { ALL_ROLES, Roles } from '../domain/enums.js';
 import { DateGuard, Permissions } from '../domain/guards.js';
-import { hashPassword, passwordErrors, verifyPassword } from './auth.js';
+import { lastLogins } from './access-log.js';
+import { endUserSessions, hashPassword, passwordErrors, verifyPassword } from './auth.js';
 import { Input } from './input.js';
 
 /** Gestão de usuários e perfis (ADMIN) e troca da própria senha. */
@@ -15,7 +16,7 @@ async function rolesOf(userId) {
   return (await query('SELECT role FROM user_roles WHERE user_id = ? ORDER BY role', userId)).map((r) => r.role);
 }
 
-async function toDto(u) {
+async function toDto(u, logins = null) {
   return {
     id: u.id,
     name: u.name,
@@ -24,6 +25,7 @@ async function toDto(u) {
     active: u.active,
     mustChangePassword: u.mustChangePassword,
     lockedOut: Boolean(u.lockoutEnd && u.lockoutEnd > utcNow()),
+    ...(logins ? { lastLoginAt: logins.get(u.id) ?? null } : {}),
   };
 }
 
@@ -31,7 +33,8 @@ export async function listUsers(ctx) {
   Permissions.require(ctx.user, Roles.Admin);
   const users = ctx.uow.loadAll('User', await query('SELECT * FROM users'));
   users.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-  return Promise.all(users.map(toDto));
+  const logins = await lastLogins();
+  return Promise.all(users.map((u) => toDto(u, logins)));
 }
 
 /** Usuários ativos de um perfil (ex.: responsável comercial do contrato, analistas de RH). */
@@ -108,7 +111,7 @@ export async function resetPassword(ctx, id, body) {
   });
   await ctx.uow.save({ action: 'RESET_PASSWORD' });
   // Senha redefinida pelo administrador: as sessões abertas com a senha antiga deixam de valer.
-  await execute('DELETE FROM sessions WHERE user_id = ?', id);
+  await endUserSessions(id, 'Senha redefinida pelo administrador');
   return { userName: user.name, mustChangePassword: true, temporaryPassword: generated ? password : null };
 }
 

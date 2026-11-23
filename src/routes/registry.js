@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { route } from '../middleware.js';
+import { listAccessLogs } from '../services/access-log.js';
 import * as catalogs from '../services/catalogs.js';
 import { addClientUnit, getContractDto, listClients, listContracts, saveClient, saveContract } from '../services/clients.js';
 import { routeId } from '../services/input.js';
@@ -61,6 +62,7 @@ parameterRoutes.put('/:key', json((req) => updateParameter(req.ctx, req.params.k
 
 export const userRoutes = Router();
 userRoutes.get('/', json((req) => listUsers(req.ctx)));
+userRoutes.get('/access-logs', json((req) => listAccessLogs(req.ctx, req.query)));
 userRoutes.get('/by-role/:role', json((req) => listByRole(req.ctx, req.params.role)));
 userRoutes.post('/', route(async (req, res) => {
   // A resposta pode trazer a senha provisória gerada: o navegador e proxies não guardam cópia.

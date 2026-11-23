@@ -34,6 +34,12 @@ export const localDateOf = (instant) => isoDay.format(new Date(instant));
 export const localTime = () => hourMinute.format(nowDate());
 
 /** Dia da semana em São Paulo (0 = domingo). */
+/** Instante UTC (ISO) em que começa o dia `d` em America/Sao_Paulo (filtros de período sobre instantes). */
+export function localDayStartUtc(d) {
+  const [h, m] = hourMinute.format(new Date(`${d}T12:00:00Z`)).split(':').map(Number);
+  return new Date(Date.parse(`${d}T00:00:00Z`) + (12 * 60 - (h * 60 + m)) * 60_000).toISOString();
+}
+
 export const localWeekday = () => new Date(`${today()}T12:00:00Z`).getUTCDay();
 
 export const isDate = (value) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)

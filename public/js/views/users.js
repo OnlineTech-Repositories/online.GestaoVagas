@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import {
   el, clear, field, checkGroup, checkedValues, checkbox, table, panelNoPadding, loading, LABELS, options, requireFields,
-  validationError, toast, button, formModal, modal,
+  validationError, toast, button, formModal, modal, dateTime, today,
 } from '../ui.js';
 
 const PASSWORD_HELP = 'Mínimo de 8 caracteres, com letra maiúscula, número e caractere especial. O usuário troca no 1º acesso.';
@@ -25,6 +25,11 @@ export async function usersScreen(target) {
             el('span', { class: `etiqueta ${u.active ? 'verde' : 'cinza'}` }, u.active ? 'Ativo' : 'Inativo'),
             u.lockedOut ? el('span', { class: 'etiqueta vermelha' }, 'Bloqueado') : null,
             u.mustChangePassword ? el('span', { class: 'etiqueta amarela' }, 'Senha provisória') : null),
+        },
+        {
+          title: 'Último acesso',
+          cls: 'nowrap',
+          render: (u) => (u.lastLoginAt ? dateTime(u.lastLoginAt) : el('span', { class: 'texto-fraco' }, 'Sem registro')),
         },
       ],
       users,
@@ -93,7 +98,109 @@ export async function usersScreen(target) {
     });
   }
 
-  clear(target).append(panelNoPadding('Usuários e perfis', area, button('+ Novo usuário', () => openUser(null))));
+  // Abas: o cadastro e o histórico de acessos (23/11/2026), os dois só para o ADMIN.
+  const tabs = el('div', { class: 'abas', role: 'tablist' });
+  const body = el('div', {});
+  let current = 'usuarios';
+  async function show(tab) {
+    current = tab;
+    clear(tabs).append(...[['usuarios', 'Usuários'], ['acessos', 'Histórico de acessos']].map(([key, text]) => el('button', {
+      class: `aba ${key === current ? 'ativa' : ''}`, type: 'button', role: 'tab', 'aria-selected': String(key === current),
+      onclick: () => { if (key !== current) show(key); },
+    }, text)));
+    if (tab === 'usuarios') {
+      clear(body).append(panelNoPadding('Usuários e perfis', area, button('+ Novo usuário', () => openUser(null))));
+      await reload();
+    } else {
+      clear(body).append(loading());
+      await accessLogPanel(body);
+    }
+  }
+  clear(target).append(tabs, body);
+  await show('usuarios');
+}
+
+const ACCESS_EVENTS = {
+  LOGIN: ['Login', 'verde'],
+  LOGIN_FAILED: ['Falha no login', 'amarela'],
+  LOCKED: ['Bloqueio por tentativas', 'vermelha'],
+  LOGOUT: ['Saída', 'cinza'],
+  SESSION_EXPIRED: ['Sessão expirada', 'cinza'],
+  SESSION_ENDED: ['Sessão encerrada', 'cinza'],
+};
+
+/**
+ * Histórico de acessos: login, falha, bloqueio, saída e fim da sessão, com IP e navegador. Filtros por usuário, evento
+ * e período; 100 por página, do mais recente para o mais antigo. Registros com mais de 1 ano são apagados (LGPD).
+ */
+async function accessLogPanel(target) {
+  const users = await api.get('/api/users');
+  const filters = { userId: '', event: '', from: '', to: '', page: 1 };
+  const tableArea = el('div', {}, loading());
+  const paging = el('div', { class: 'paginacao' });
+  const note = el('p', { class: 'texto-fraco texto-pequeno', style: { margin: '0 16px 12px' } });
+
+  const filter = (name, control) => {
+    const input = control.querySelector('select, input');
+    input.addEventListener('change', () => {
+      filters[name] = input.value;
+      filters.page = 1;
+      reload();
+    });
+    return control;
+  };
+
+  async function reload() {
+    clear(tableArea).append(loading());
+    let result;
+    try {
+      result = await api.get('/api/users/access-logs', filters);
+    } catch (error) {
+      clear(tableArea).append(el('div', { class: 'mensagem erro', style: { margin: '16px' } }, error.message));
+      clear(paging);
+      return;
+    }
+    note.textContent = `Login, falha, bloqueio, saída e fim da sessão de cada usuário, com IP e navegador. Os registros `
+      + `ficam ${result.retentionDays} dias e depois são apagados. Visível só para o administrador.`;
+    clear(tableArea).append(table([
+      { title: 'Data e hora', cls: 'nowrap', render: (a) => dateTime(a.occurredAt) },
+      {
+        title: 'Usuário',
+        render: (a) => el('div', {}, el('div', {}, a.userName ?? el('span', { class: 'texto-fraco' }, 'Sem usuário cadastrado')),
+          a.email ? el('div', { class: 'texto-fraco texto-pequeno' }, a.email) : null),
+      },
+      {
+        title: 'Evento',
+        render: (a) => el('span', { class: `etiqueta ${ACCESS_EVENTS[a.event]?.[1] ?? 'cinza'}` }, ACCESS_EVENTS[a.event]?.[0] ?? a.event),
+      },
+      { title: 'Detalhe', render: (a) => a.detail ?? el('span', { class: 'texto-fraco' }, '—') },
+      { title: 'IP', cls: 'nowrap', render: (a) => a.ip ?? '—' },
+      { title: 'Navegador', cls: 'nowrap', render: (a) => a.device ?? '—' },
+    ], result.items, { dense: true, empty: 'Nenhum acesso encontrado com estes filtros.' }));
+    const first = result.total ? (result.page - 1) * result.pageSize + 1 : 0;
+    const last = Math.min(result.page * result.pageSize, result.total);
+    clear(paging).append(
+      el('span', {}, `${first}–${last} de ${result.total} registro(s)`),
+      el('div', { class: 'barra-botoes' },
+        el('button', { class: 'btn secundario pequeno', type: 'button', disabled: filters.page <= 1,
+          onclick: () => { filters.page -= 1; reload(); } }, '‹ Anterior'),
+        el('button', { class: 'btn secundario pequeno', type: 'button', disabled: last >= result.total,
+          onclick: () => { filters.page += 1; reload(); } }, 'Próxima ›')),
+    );
+  }
+
+  clear(target).append(el('section', { class: 'painel' },
+    el('div', { class: 'painel-cabecalho' }, el('h2', {}, 'Histórico de acessos')),
+    el('div', { class: 'filtros' },
+      filter('userId', field({ name: 'userId', label: 'Usuário', type: 'select',
+        options: [{ value: '', label: 'Todos' }, ...users.map((u) => ({ value: u.id, label: u.name }))] })),
+      filter('event', field({ name: 'event', label: 'Evento', type: 'select',
+        options: [{ value: '', label: 'Todos' }, ...Object.entries(ACCESS_EVENTS).map(([value, [text]]) => ({ value, label: text }))] })),
+      filter('from', field({ name: 'from', label: 'De', type: 'date', attributes: { max: today() } })),
+      filter('to', field({ name: 'to', label: 'Até', type: 'date', attributes: { max: today() } }))),
+    note,
+    el('div', { class: 'painel-corpo sem-padding' }, tableArea),
+    paging));
   await reload();
 }
 

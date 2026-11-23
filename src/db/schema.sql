@@ -45,6 +45,22 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS ix_sessions_user ON sessions (user_id);
 
+-- Histórico de acessos (23/11/2026): login, falha, bloqueio, saída e fim da sessão, com IP e navegador. Fora do log de
+-- auditoria; a limpeza periódica apaga os registros com mais de 1 ano (LGPD). email guarda o e-mail digitado, também o
+-- das tentativas que não correspondem a um usuário.
+CREATE TABLE IF NOT EXISTS access_logs (
+  id TEXT PRIMARY KEY,
+  occurred_at TEXT NOT NULL,
+  event TEXT NOT NULL,
+  user_id TEXT REFERENCES users (id),
+  email TEXT,
+  ip TEXT,
+  user_agent TEXT,
+  detail TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_access_logs_occurred ON access_logs (occurred_at);
+CREATE INDEX IF NOT EXISTS ix_access_logs_user ON access_logs (user_id, occurred_at);
+
 CREATE TABLE IF NOT EXISTS group_entities (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

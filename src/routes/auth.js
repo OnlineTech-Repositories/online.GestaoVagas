@@ -4,6 +4,7 @@ import { clearSessionCookie, issueCsrfToken, limitLogin, problem, route, setSess
 import {
   SESSION_COOKIE, checkCredentials, createSession, endOtherSessions, endSession, meDto, sessionUser,
 } from '../services/auth.js';
+import { AccessEvents } from '../services/access-log.js';
 import { changeOwnPassword } from '../services/users.js';
 
 export const authRoutes = Router();
@@ -12,9 +13,11 @@ export const authRoutes = Router();
 export const health = (_req, res) => res.json({ status: 'ok', versao: config.version });
 
 authRoutes.post('/login', limitLogin, route(async (req, res) => {
-  const { user, error } = await checkCredentials(req.body?.email, req.body?.password);
+  const { user, error } = await checkCredentials(req.body?.email, req.body?.password,
+    { ip: req.ip, userAgent: req.get('user-agent') });
   if (error) return problem(res, 401, 'Não autorizado', error);
-  await endSession(req.cookies[SESSION_COOKIE]);
+  await endSession(req.cookies[SESSION_COOKIE],
+    { event: AccessEvents.SessionEnded, detail: 'Substituída por novo login no mesmo navegador' });
   const token = await createSession(user.id, req.ip, req.get('user-agent'));
   setSessionCookie(req, res, token);
   // Token CSRF novo para a sessão recém-criada.

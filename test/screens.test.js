@@ -412,6 +412,27 @@ test('Redefinir senha: botão na edição, senha gerada por padrão e mostrada u
   dialog.querySelector('.modal-fechar').click();
 });
 
+test('Histórico de acessos: aba em Usuários com o último acesso, eventos e filtro por tipo (só ADMIN)', async (t) => {
+  if (skip(t)) return;
+  await signIn('admin@demo.local');
+  const root = await open('/usuarios', 'Usuários e perfis');
+  assert.match(root.textContent, /Último acesso/);
+  [...root.querySelectorAll('button')].find((b) => b.textContent === 'Histórico de acessos').click();
+  await wait(300);
+  assert.match(root.textContent, /ficam 365 dias e depois são apagados/);
+  assert.match(root.textContent, /Login/);
+  assert.match(root.textContent, /Administrador/);
+  const event = root.querySelector('[data-campo="event"]').querySelector('select');
+  event.value = 'LOGOUT';
+  event.dispatchEvent(new Event('change'));
+  await wait(300);
+  const rows = [...root.querySelectorAll('tbody tr')];
+  assert.ok(rows.every((tr) => /Saída/.test(tr.textContent)) || /Nenhum acesso encontrado/.test(root.textContent));
+  [...root.querySelectorAll('button')].find((b) => b.textContent === 'Usuários').click();
+  await wait(300);
+  assert.match(root.textContent, /\+ Novo usuário/);
+});
+
 test('rota sem permissão volta ao painel (a API também nega com 403)', async (t) => {
   if (skip(t)) return;
   await signIn('rh@demo.local');

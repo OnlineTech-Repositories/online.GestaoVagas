@@ -7,7 +7,9 @@ import { calculate, isLegacyOrigin } from '../domain/calculator.js';
 import { formatBr, localTime, localWeekday, today as todayDate, utcNow } from '../domain/dates.js';
 import { EmailStatus, NotificationTypes, ParameterKeys, Roles } from '../domain/enums.js';
 import { closeByContractEnd, isOpen } from '../domain/position.js';
+import { purgeOldAccessLogs } from './access-log.js';
 import { runAlerts } from './alerts.js';
+import { purgeExpiredSessions } from './auth.js';
 import { buildDigest, queueDigest } from './digest.js';
 import { EmailError, sendEmail } from './email.js';
 import { admissionsDigestTick } from './admissions-pending.js';
@@ -23,6 +25,7 @@ import { describe } from './positions.js';
  *  - Rotina diária (seção 10.2): dias úteis, a partir de DAILY_DIGEST_TIME (America/Sao_Paulo). Confere a cada
  *    minuto; se o servidor estava fora do ar no horário (o plano gratuito do Render adormece), roda ao acordar.
  *  - Caixa de saída de e-mails: a cada 30 s, até 5 tentativas por mensagem.
+ *  - Sessões vencidas e retenção do histórico de acessos (1 ano): a cada 5 minutos.
  *
  * Os timers usam unref(): não seguram o processo aberto no encerramento.
  */
@@ -44,11 +47,18 @@ export function startJobs() {
   // Resumo das admissões pendentes: horário próprio (ADMISSIONS_DIGEST_TIME), conferido a cada minuto.
   const admissions = guard('resumo das admissões', admissionsDigestTick);
   const outbox = guard('caixa de saída de e-mails', processOutbox);
-  timers = [setInterval(daily, 60_000), setInterval(admissions, 60_000), setInterval(outbox, 30_000)];
+  // Sessões vencidas (com o registro no histórico de acessos) e retenção de 1 ano do histórico (23/11/2026).
+  const sessions = guard('limpeza das sessões', async () => {
+    await purgeExpiredSessions();
+    await purgeOldAccessLogs();
+  });
+  timers = [setInterval(daily, 60_000), setInterval(admissions, 60_000), setInterval(outbox, 30_000),
+    setInterval(sessions, 5 * 60_000)];
   for (const t of timers) t.unref();
   daily();
   admissions();
   outbox();
+  sessions();
 }
 
 export function stopJobs() {

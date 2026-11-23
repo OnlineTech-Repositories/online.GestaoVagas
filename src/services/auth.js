@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { execute, query, queryOne } from '../db/index.js';
 import { utcNow } from '../domain/dates.js';
 import { ParameterKeys, SEE_AGGREGATED_VALUES, SEE_DETAILED_VALUES } from '../domain/enums.js';
+import { AccessEvents, recordAccess } from './access-log.js';
 import { getBool } from './parameters.js';
 
 /**
@@ -64,26 +65,38 @@ const LOCKED = 'Usuário bloqueado temporariamente por excesso de tentativas. Te
 
 /**
  * Confere as credenciais. Bloqueio de 15 minutos na 5ª falha seguida (a própria tentativa que bloqueia já responde
- * "bloqueado", como o Identity). As tentativas são gravadas direto no banco, fora do log de auditoria.
+ * "bloqueado", como o Identity). As tentativas são gravadas direto no banco, fora do log de auditoria; cada falha entra
+ * no histórico de acessos com o motivo (a resposta à tela continua a mesma, sem dizer se o e-mail existe).
+ * @param {{ ip?: string, userAgent?: string }} origin de onde veio a tentativa
  * @returns {{ user?: object, error?: string }}
  */
-export async function checkCredentials(email, password) {
-  const user = await queryOne('SELECT * FROM users WHERE email = ?', String(email ?? '').trim().toLowerCase());
+export async function checkCredentials(email, password, origin = {}) {
+  const typed = String(email ?? '').trim().toLowerCase();
+  const user = await queryOne('SELECT * FROM users WHERE email = ?', typed);
+  const failure = (event, detail) => recordAccess({
+    event, userId: user?.id ?? null, email: typed, ip: origin.ip, userAgent: origin.userAgent, detail });
   if (!user || !Number(user.active)) {
     verifyPassword(password ?? '', DUMMY.hash, DUMMY.salt);
+    await failure(AccessEvents.LoginFailed, user ? 'Usuário inativo' : 'E-mail não cadastrado');
     return { error: INVALID };
   }
   const now = utcNow();
-  if (user.lockout_end && user.lockout_end > now) return { error: LOCKED };
+  if (user.lockout_end && user.lockout_end > now) {
+    await failure(AccessEvents.LoginFailed, 'Usuário bloqueado temporariamente');
+    return { error: LOCKED };
+  }
 
   if (!verifyPassword(password ?? '', user.password_hash, user.password_salt)) {
     const attempts = Number(user.failed_attempts) + 1;
     if (attempts >= config.maxLoginAttempts) {
       const until = new Date(Date.parse(now) + config.lockoutMin * 60_000).toISOString();
       await execute('UPDATE users SET failed_attempts = 0, lockout_end = ? WHERE id = ?', until, user.id);
+      await failure(AccessEvents.Locked,
+        `Bloqueado por ${config.lockoutMin} min após ${config.maxLoginAttempts} senhas incorretas seguidas`);
       return { error: LOCKED };
     }
     await execute('UPDATE users SET failed_attempts = ? WHERE id = ?', attempts, user.id);
+    await failure(AccessEvents.LoginFailed, 'Senha incorreta');
     return { error: INVALID };
   }
   if (Number(user.failed_attempts) || user.lockout_end) {
@@ -94,22 +107,60 @@ export async function checkCredentials(email, password) {
 
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
+/** Abre a sessão e registra o login no histórico de acessos (no mesmo instante da sessão). */
 export async function createSession(userId, ip, userAgent) {
   const token = crypto.randomBytes(32).toString('hex');
   const now = utcNow();
   await execute(
     'INSERT INTO sessions (token_hash, user_id, created_at, last_access, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?)',
     sha256(token), userId, now, now, ip ?? null, String(userAgent ?? '').slice(0, 300) || null);
+  const user = await queryOne('SELECT email FROM users WHERE id = ?', userId);
+  await recordAccess({ event: AccessEvents.Login, userId, email: user?.email, ip, userAgent, occurredAt: now });
   return token;
 }
 
-export async function endSession(token) {
-  if (token) await execute('DELETE FROM sessions WHERE token_hash = ?', sha256(token));
+/**
+ * Apaga as sessões e registra o fim de cada uma no histórico. Só registra a que este processo apagou de fato: a
+ * limpeza periódica e a requisição que encontra a sessão vencida não duplicam o evento.
+ */
+async function closeSessions(sessions, event, detail, occurredAt = () => utcNow()) {
+  for (const s of sessions) {
+    const { changes } = await execute('DELETE FROM sessions WHERE token_hash = ?', s.token_hash);
+    if (!changes) continue;
+    await recordAccess({
+      event, userId: s.user_id, ip: s.ip, userAgent: s.user_agent, detail, occurredAt: occurredAt(s),
+      email: (await queryOne('SELECT email FROM users WHERE id = ?', s.user_id))?.email,
+    });
+  }
+}
+
+/** Encerra a sessão do cookie: "Sair" (padrão) ou outro motivo (ex.: novo login no mesmo navegador). */
+export async function endSession(token, { event = AccessEvents.Logout, detail = null } = {}) {
+  if (!token) return;
+  await closeSessions(await query('SELECT * FROM sessions WHERE token_hash = ?', sha256(token)), event, detail);
 }
 
 /** Encerra as outras sessões do usuário, mantendo a da requisição (troca da própria senha). */
 export async function endOtherSessions(userId, token) {
-  await execute('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?', userId, sha256(token ?? ''));
+  await closeSessions(await query('SELECT * FROM sessions WHERE user_id = ? AND token_hash <> ?', userId, sha256(token ?? '')),
+    AccessEvents.SessionEnded, 'Troca da própria senha');
+}
+
+/** Encerra todas as sessões do usuário (senha redefinida pelo administrador). */
+export async function endUserSessions(userId, detail) {
+  await closeSessions(await query('SELECT * FROM sessions WHERE user_id = ?', userId), AccessEvents.SessionEnded, detail);
+}
+
+/**
+ * Quando a sessão vence: 30 min sem uso ou 12 h desde o login (o que vier primeiro). O instante registrado é o do
+ * vencimento, não o da limpeza.
+ */
+function expiryOf(session) {
+  const idle = Date.parse(session.last_access) + config.sessionTimeoutMin * 60_000;
+  const max = Date.parse(session.created_at) + config.sessionMaxHours * 3_600_000;
+  return idle <= max
+    ? { at: idle, detail: `Encerrada por inatividade (${config.sessionTimeoutMin} min sem uso)` }
+    : { at: max, detail: `Duração máxima da sessão (${config.sessionMaxHours} h)` };
 }
 
 /**
@@ -124,14 +175,14 @@ export async function sessionUser(token, { renew = true } = {}) {
   const session = await queryOne('SELECT * FROM sessions WHERE token_hash = ?', hash);
   if (!session) return null;
   const now = Date.now();
-  if (now - Date.parse(session.last_access) > config.sessionTimeoutMin * 60_000
-    || now - Date.parse(session.created_at) > config.sessionMaxHours * 3_600_000) {
-    await execute('DELETE FROM sessions WHERE token_hash = ?', hash);
+  const expiry = expiryOf(session);
+  if (now > expiry.at) {
+    await closeSessions([session], AccessEvents.SessionExpired, expiry.detail, () => new Date(expiry.at).toISOString());
     return null;
   }
   const user = await queryOne('SELECT * FROM users WHERE id = ? AND active = 1', session.user_id);
   if (!user) {
-    await execute('DELETE FROM sessions WHERE token_hash = ?', hash);
+    await closeSessions([session], AccessEvents.SessionEnded, 'Usuário inativado');
     return null;
   }
   // Renova no máximo uma vez por minuto: uma escrita por requisição seria custo sem ganho.
@@ -144,10 +195,18 @@ export async function sessionUser(token, { renew = true } = {}) {
   };
 }
 
-/** Limpa as sessões vencidas (chamado pela rotina de manutenção). */
-export async function purgeExpiredSessions() {
-  const limit = new Date(Date.now() - config.sessionTimeoutMin * 60_000).toISOString();
-  await execute('DELETE FROM sessions WHERE last_access < ?', limit);
+/**
+ * Limpa as sessões vencidas e registra o vencimento de cada uma (limpeza periódica, a cada 5 minutos). Até 23/11/2026
+ * nenhuma rotina chamava esta limpeza: sessões abandonadas ficavam na tabela (só a requisição seguinte as apagava).
+ */
+export async function purgeExpiredSessions(now = Date.now()) {
+  const idleLimit = new Date(now - config.sessionTimeoutMin * 60_000).toISOString();
+  const maxLimit = new Date(now - config.sessionMaxHours * 3_600_000).toISOString();
+  const expired = await query('SELECT * FROM sessions WHERE last_access < ? OR created_at < ?', idleLimit, maxLimit);
+  for (const s of expired) {
+    const expiry = expiryOf(s);
+    await closeSessions([s], AccessEvents.SessionExpired, expiry.detail, () => new Date(expiry.at).toISOString());
+  }
 }
 
 /** O usuário da sessão como a tela consome (GET /api/auth/me). */
